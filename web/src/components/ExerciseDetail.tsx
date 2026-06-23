@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Dumbbell, ListChecks, Lightbulb, AlertTriangle, Wind, Target, Sparkles } from "lucide-react";
+import { Dumbbell, ListChecks, Lightbulb, AlertTriangle, Wind, Target, Sparkles, RefreshCw } from "lucide-react";
 import type { Exercise, ExerciseGuide } from "@/lib/types";
 import { guideFor, hasGuide, genericGuide } from "@/lib/guides";
 import { useStore } from "@/lib/store";
@@ -27,6 +27,7 @@ export function ExerciseDetail({
   const fetchExerciseGuide = useStore((s) => s.fetchExerciseGuide);
   const [aiGuide, setAiGuide] = useState<ExerciseGuide | null>(null);
   const [loadingGuide, setLoadingGuide] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const name = exercise?.name;
   const builtIn = name ? hasGuide(name) : false;
@@ -59,11 +60,36 @@ export function ExerciseDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, name, builtIn]);
 
+  const handleRefresh = () => {
+    if (!exercise || refreshing) return;
+    setRefreshing(true);
+    fetchExerciseGuide({
+      name: exercise.name,
+      muscleGroup: exercise.muscleGroup,
+      equipment: exercise.equipment !== "—" ? exercise.equipment : undefined,
+      force: true,
+    })
+      .then((res) => setAiGuide(res.guide ?? genericGuide))
+      .catch(() => {/* keep existing guide */})
+      .finally(() => setRefreshing(false));
+  };
+
   if (!exercise) return null;
 
   const g: ExerciseGuide = builtIn ? guideFor(exercise.name) : cached ?? aiGuide ?? genericGuide;
   // Only the AI path (no hand-written guide, nothing cached yet) shows a loader.
   const showLoader = !builtIn && !cached && !aiGuide && loadingGuide;
+
+  const refreshAction = !builtIn ? (
+    <button
+      onClick={handleRefresh}
+      disabled={refreshing}
+      title="Regenerate guide"
+      className="ml-auto rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+    >
+      <RefreshCw className={`h-3.5 w-3.5${refreshing ? " animate-spin" : ""}`} />
+    </button>
+  ) : null;
 
   return (
     <Modal open={open} onClose={onClose} title={exercise.name}>
@@ -119,7 +145,7 @@ export function ExerciseDetail({
 
         {!showLoader && (
           <>
-            <Section icon={<ListChecks className="h-4 w-4" />} title="How to perform">
+            <Section icon={<ListChecks className="h-4 w-4" />} title="How to perform" action={refreshAction}>
               <div className="mb-3 flex items-center justify-center rounded-2xl border border-border bg-secondary/30 p-2">
                 <StickDemo
                   name={exercise.name}
@@ -164,10 +190,12 @@ export function ExerciseDetail({
 function Section({
   icon,
   title,
+  action,
   children,
 }: {
   icon: ReactNode;
   title: string;
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -175,6 +203,7 @@ function Section({
       <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
         <span className="text-muted-foreground">{icon}</span>
         {title}
+        {action}
       </div>
       {children}
     </div>

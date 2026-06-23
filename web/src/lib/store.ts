@@ -52,7 +52,7 @@ interface AppState {
 
   // exercises
   addCustomExercise: (e: { name: string; muscleGroup: Exercise["muscleGroup"]; equipment: string }) => Promise<Exercise>;
-  fetchExerciseGuide: (e: { name: string; muscleGroup?: Exercise["muscleGroup"]; equipment?: string }) => Promise<Exercise>;
+  fetchExerciseGuide: (e: { name: string; muscleGroup?: Exercise["muscleGroup"]; equipment?: string; force?: boolean }) => Promise<Exercise>;
 
   // active workout
   startWorkout: (routine?: Routine) => void;

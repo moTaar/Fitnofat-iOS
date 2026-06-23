@@ -293,18 +293,20 @@ dataRouter.post(
         name: z.string().min(1),
         muscleGroup: z.string().optional(),
         equipment: z.string().optional(),
+        force: z.boolean().optional(),
       })
       .parse(req.body);
     const slug = slugify(body.name);
 
-    // Return the cached guide if we've already generated it for this user.
+    // Return the cached guide if we've already generated it for this user
+    // (unless the caller explicitly forces a regeneration).
     const { data: existing } = await supabaseAdmin
       .from("exercises")
       .select("*")
       .eq("user_id", userId)
       .eq("slug", slug)
       .maybeSingle();
-    if (existing?.guide) {
+    if (existing?.guide && !body.force) {
       res.json(rowToExercise(existing));
       return;
     }
