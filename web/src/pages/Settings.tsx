@@ -184,13 +184,13 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
       onClick={onClick}
       aria-checked={on}
       role="switch"
-      className={`relative h-7 w-12 rounded-full overflow-hidden transition-colors duration-200 tap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+      className={`relative h-7 w-12 rounded-full transition-colors duration-200 tap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
         on ? "bg-primary" : "bg-secondary"
       }`}
     >
       <span
-        className={`absolute top-1 h-5 w-5 rounded-full shadow-md transition-transform duration-200 ${
-          on ? "translate-x-6 bg-white" : "translate-x-1 bg-muted-foreground/60"
+        className={`absolute left-0 top-1 h-5 w-5 rounded-full shadow-md transition-transform duration-200 ${
+          on ? "translate-x-[26px] bg-white" : "translate-x-[4px] bg-muted-foreground/60"
         }`}
       />
     </button>
