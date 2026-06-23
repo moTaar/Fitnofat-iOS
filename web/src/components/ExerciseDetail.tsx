@@ -11,9 +11,10 @@ import { StickDemo } from "@/components/StickDemo";
 // A bottom-sheet that explains how to perform an exercise correctly:
 // target muscles, step-by-step execution, form cues, common mistakes, breathing.
 //
-// Guide resolution order: a hand-written guide in the seed library → a cached
-// AI guide (for exercises the AI invented) → lazily generate one via AI on the
-// first view, falling back to a generic guide if generation fails.
+// Guide resolution order (when user hasn't refreshed):
+//   hand-written seed library → cached AI guide → lazy-generate → generic fallback
+// After user taps ↻, the fresh AI guide replaces even the hand-written one so the
+// stickman and steps can be corrected without a code change.
 export function ExerciseDetail({
   exercise,
   open,
@@ -28,12 +29,22 @@ export function ExerciseDetail({
   const [aiGuide, setAiGuide] = useState<ExerciseGuide | null>(null);
   const [loadingGuide, setLoadingGuide] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // Set to true when the user explicitly hits ↻ so the AI guide overrides
+  // the hardcoded seed-library guide for built-in exercises too.
+  const [userRefreshed, setUserRefreshed] = useState(false);
 
   const name = exercise?.name;
   const builtIn = name ? hasGuide(name) : false;
   // Prefer a freshly cached library copy (it may already carry an AI guide).
   const cached = exercise ? exercises.find((e) => e.id === exercise.id)?.guide : undefined;
 
+  // Reset per-exercise state when a different exercise is opened.
+  useEffect(() => {
+    setAiGuide(null);
+    setUserRefreshed(false);
+  }, [name]);
+
+  // Auto-fetch for exercises not in the seed library (only once per open).
   useEffect(() => {
     if (!open || !exercise || builtIn) return;
     const existing = cached ?? aiGuide;
@@ -69,18 +80,29 @@ export function ExerciseDetail({
       equipment: exercise.equipment !== "—" ? exercise.equipment : undefined,
       force: true,
     })
-      .then((res) => setAiGuide(res.guide ?? genericGuide))
+      .then((res) => {
+        setAiGuide(res.guide ?? genericGuide);
+        setUserRefreshed(true);
+      })
       .catch(() => {/* keep existing guide */})
       .finally(() => setRefreshing(false));
   };
 
   if (!exercise) return null;
 
-  const g: ExerciseGuide = builtIn ? guideFor(exercise.name) : cached ?? aiGuide ?? genericGuide;
+  // After a manual refresh the AI guide wins over the hardcoded seed library
+  // so users can correct wrong stickman / steps for any exercise.
+  const g: ExerciseGuide =
+    userRefreshed
+      ? (aiGuide ?? cached ?? genericGuide)
+      : builtIn
+        ? guideFor(exercise.name)
+        : (cached ?? aiGuide ?? genericGuide);
+
   // Only the AI path (no hand-written guide, nothing cached yet) shows a loader.
   const showLoader = !builtIn && !cached && !aiGuide && loadingGuide;
 
-  const refreshAction = !builtIn ? (
+  const refreshAction = (
     <button
       onClick={handleRefresh}
       disabled={refreshing}
@@ -89,7 +111,7 @@ export function ExerciseDetail({
     >
       <RefreshCw className={`h-3.5 w-3.5${refreshing ? " animate-spin" : ""}`} />
     </button>
-  ) : null;
+  );
 
   return (
     <Modal open={open} onClose={onClose} title={exercise.name}>
