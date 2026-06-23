@@ -511,8 +511,18 @@ Note: only include "equipmentMix" when equipment is "mixed". List the specific i
 
 Do NOT include [SUGGESTIONS: ...] on the [DONE] line.`;
 
+// Focus topic-detection on the actual question, not the recap of the previous
+// answer. Replies usually open with an acknowledgement (e.g. "Got it, a mix of
+// calisthenics and cardio!") that echoes earlier keywords — matching on the full
+// text would wrongly classify an EQUIPMENT question as a workout-style one.
+function questionText(text: string): string {
+  const sentences = text.split(/(?<=[?!.])\s+/);
+  const questions = sentences.filter((s) => s.includes("?"));
+  return (questions.length ? questions.join(" ") : text).toLowerCase();
+}
+
 function detectOnboardingSuggestions(text: string): string[] | undefined {
-  const t = text.toLowerCase();
+  const t = questionText(text);
   if (/what.*goal|your goal\?|fitness goal|main goal|primary goal|trying to achieve|\baim\b|\baims\b|what.*objective|what.*looking to/.test(t))
     return ["Build muscle", "Lose weight", "Get stronger", "Stay fit"];
   if (/workout style|training style|type of (workout|training)|calisthenics|weightlifting|cardio|yoga|pilates/.test(t))
