@@ -1,0 +1,19 @@
+{
+  "name": "forgefit",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Fitness tracking application with server and web components",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces",
+    "build": "npm run build --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "server:dev": "npm run dev --workspace=server",
+    "web:dev": "npm run dev --workspace=web",
+    "server:build": "npm run build --workspace=server",
+    "web:build": "npm run build --workspace=web"
+  }
+}
