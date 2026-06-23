@@ -5,6 +5,7 @@ import { guideFor } from "@/lib/guides";
 import { Modal } from "@/components/ui/modal";
 import { Badge } from "@/components/ui/misc";
 import { MuscleMap } from "@/components/MuscleMap";
+import { StickDemo } from "@/components/StickDemo";
 
 // A bottom-sheet that explains how to perform an exercise correctly:
 // target muscles, step-by-step execution, form cues, common mistakes, breathing.
@@ -63,6 +64,9 @@ export function ExerciseDetail({
         )}
 
         <Section icon={<ListChecks className="h-4 w-4" />} title="How to perform">
+          <div className="mb-3 flex items-center justify-center rounded-2xl border border-border bg-secondary/30 p-2">
+            <StickDemo name={exercise.name} className="h-40 w-40" />
+          </div>
           <ol className="space-y-2">
             {g.steps.map((s, i) => (
               <li key={i} className="flex gap-2.5 text-sm">
