@@ -7,7 +7,7 @@ import {
 import { useStore } from "@/lib/store";
 import { api } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import type { Equipment, Experience, Goal, UserProfile } from "@/lib/types";
+import type { Equipment, Experience, Goal, UserProfile, WorkoutCategory } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { SegmentedControl, Spinner, Progress } from "@/components/ui/misc";
@@ -33,7 +33,16 @@ const EXPERIENCE: { label: string; value: Experience; sub: string }[] = [
   { label: "Advanced", value: "advanced", sub: "3+ yrs" },
 ];
 
-const TOTAL_STEPS = 5;
+const CATEGORIES: { label: string; value: WorkoutCategory; sub: string; emoji: string }[] = [
+  { label: "Calisthenics", value: "calisthenics", sub: "Push-ups, pull-ups…", emoji: "🤸" },
+  { label: "Weightlifting", value: "weightlifting", sub: "Barbells & DBs", emoji: "🏋️" },
+  { label: "Cardio", value: "cardio", sub: "Run, cycle, row…", emoji: "🏃" },
+  { label: "Yoga / Pilates", value: "yoga_pilates", sub: "Mobility & core", emoji: "🧘" },
+  { label: "Mixed", value: "mixed", sub: "Best of all worlds", emoji: "⚡" },
+  { label: "Other", value: "other", sub: "Tell the AI coach", emoji: "✨" },
+];
+
+const TOTAL_STEPS = 6;
 
 export function Onboarding() {
   const navigate = useNavigate();
@@ -54,6 +63,7 @@ export function Onboarding() {
   const [profile, setProfile] = useState<UserProfile>({
     name: "",
     goal: "hypertrophy",
+    category: "mixed",
     equipment: "full_gym",
     experience: "beginner",
     daysPerWeek: 3,
@@ -302,6 +312,28 @@ export function Onboarding() {
         )}
 
         {step === 2 && (
+          <Section icon={Sparkles} title="What's your preferred workout style?" subtitle="We'll design your routines around what you enjoy most.">
+            <div className="grid grid-cols-2 gap-2">
+              {CATEGORIES.map((c) => (
+                <button
+                  key={c.value}
+                  onClick={() => update("category", c.value)}
+                  className={`flex flex-col items-center gap-1.5 rounded-2xl border-2 p-4 text-center tap transition-colors ${
+                    profile.category === c.value
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-card text-foreground"
+                  }`}
+                >
+                  <span className="text-2xl">{c.emoji}</span>
+                  <span className="text-sm font-semibold leading-tight">{c.label}</span>
+                  <span className="text-[11px] text-muted-foreground leading-tight">{c.sub}</span>
+                </button>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {step === 3 && (
           <Section icon={Dumbbell} title="What equipment do you have?" subtitle="We'll only program moves you can actually do.">
             <SegmentedControl
               columns={2}
@@ -323,7 +355,7 @@ export function Onboarding() {
           </Section>
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <Section icon={Calendar} title="How often can you train?" subtitle="Be realistic — consistency beats intensity.">
             <Label>Days per week</Label>
             <div className="mt-2">
@@ -362,7 +394,7 @@ export function Onboarding() {
           </Section>
         )}
 
-        {step === 4 && (
+        {step === 5 && (
           <Section icon={Sparkles} title="Almost there!" subtitle="A couple of optional details to fine-tune your plan.">
             <div className="space-y-4">
               <div>

@@ -3,6 +3,7 @@
 export type Goal = "strength" | "hypertrophy" | "weight_loss" | "endurance" | "general";
 export type Equipment = "full_gym" | "dumbbells" | "bodyweight" | "home_gym";
 export type Experience = "beginner" | "intermediate" | "advanced";
+export type WorkoutCategory = "calisthenics" | "weightlifting" | "cardio" | "yoga_pilates" | "mixed" | "other";
 export type MuscleGroup =
   | "Chest" | "Back" | "Shoulders" | "Biceps" | "Triceps"
   | "Legs" | "Glutes" | "Core" | "Cardio" | "Full Body";
@@ -12,6 +13,7 @@ export interface UserProfile {
   goal: Goal;
   equipment: Equipment;
   experience: Experience;
+  category: WorkoutCategory;
   daysPerWeek: number;
   sessionMinutes: number;
   bodyweightKg?: number;

@@ -12,6 +12,7 @@ create table if not exists public.profiles (
   user_id        uuid primary key references auth.users (id) on delete cascade,
   name           text,
   goal           text not null default 'general',
+  category       text not null default 'mixed',
   equipment      text not null default 'full_gym',
   experience     text not null default 'beginner',
   days_per_week  int  not null default 3,

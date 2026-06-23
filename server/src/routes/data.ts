@@ -22,6 +22,7 @@ const profileSchema = z.object({
   goal: z.enum(["strength", "hypertrophy", "weight_loss", "endurance", "general"]),
   equipment: z.enum(["full_gym", "dumbbells", "bodyweight", "home_gym"]),
   experience: z.enum(["beginner", "intermediate", "advanced"]),
+  category: z.enum(["calisthenics", "weightlifting", "cardio", "yoga_pilates", "mixed", "other"]).optional().default("mixed"),
   daysPerWeek: z.number().int().min(1).max(7),
   sessionMinutes: z.number().int().min(10).max(240),
   bodyweightKg: z.number().optional(),

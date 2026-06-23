@@ -65,11 +65,21 @@ const EQUIPMENT_TEXT: Record<string, string> = {
   bodyweight: "bodyweight only (no equipment)",
 };
 
+const CATEGORY_TEXT: Record<string, string> = {
+  calisthenics: "Calisthenics / bodyweight movement (push-ups, pull-ups, dips, L-sits, handstands, etc.)",
+  weightlifting: "Weightlifting / barbell & dumbbell training (compounds + accessories)",
+  cardio: "Cardiovascular training (running, cycling, rowing, jump rope, HIIT)",
+  yoga_pilates: "Yoga & Pilates (mobility, flexibility, core stability, breath work)",
+  mixed: "Mixed / balanced (combine strength, cardio, and mobility work across the week)",
+  other: "Open / no strong preference — choose what best fits the goal",
+};
+
 const SYSTEM = `You are an elite strength & conditioning coach and certified personal trainer.
 You design safe, evidence-based, progressively-overloaded training programs.
 You ALWAYS return valid JSON that matches the provided schema exactly — no prose outside JSON.
 Use realistic starting weights for the experience level (use 0 weight for bodyweight movements).
-Pick exercises that fit the available equipment. Distribute volume sensibly across the week.
+Pick exercises that fit the available equipment AND the athlete's preferred workout style/category.
+Distribute volume sensibly across the week.
 muscleGroup MUST be one of: Chest, Back, Shoulders, Biceps, Triceps, Legs, Glutes, Core, Cardio, Full Body.`;
 
 function generatePrompt(p: UserProfile): string {
@@ -78,6 +88,7 @@ function generatePrompt(p: UserProfile): string {
 Athlete profile:
 - Name: ${p.name || "Athlete"}
 - Primary goal: ${goalLabel(p.goal)}
+- Preferred workout style: ${CATEGORY_TEXT[p.category ?? "mixed"]}
 - Experience: ${p.experience}
 - Equipment available: ${EQUIPMENT_TEXT[p.equipment]}
 - Training days per week: ${p.daysPerWeek}
@@ -87,7 +98,7 @@ ${p.bodyweightKg ? `- Bodyweight: ${p.bodyweightKg} ${p.units}` : ""}
 ${p.notes ? `- Notes / limitations: ${p.notes}` : ""}
 
 Produce exactly ${p.daysPerWeek} distinct routines (one per training day).
-Each routine should contain 4-7 exercises appropriate to the goal.
+Each routine should contain 4-7 exercises that strongly reflect the athlete's preferred workout style.
 Provide a concise "summary" (2-3 sentences) explaining the program design rationale.`;
 }
 
@@ -96,6 +107,7 @@ function refreshPrompt(p: UserProfile, analytics: string): string {
 
 Athlete profile:
 - Goal: ${goalLabel(p.goal)}
+- Preferred workout style: ${CATEGORY_TEXT[p.category ?? "mixed"]}
 - Experience: ${p.experience}
 - Equipment: ${EQUIPMENT_TEXT[p.equipment]}
 - Days per week: ${p.daysPerWeek}
@@ -106,7 +118,7 @@ ${analytics}
 
 Apply intelligent progression:
 - Increase load/reps on exercises that are progressing well (progressive overload).
-- Swap out exercises that have STALLED (no progress / plateaued) for effective alternatives.
+- Swap out exercises that have STALLED (no progress / plateaued) for effective alternatives that still match the preferred workout style.
 - Keep the same number of routines (${p.daysPerWeek}).
 - In "summary", explicitly explain what you changed and why (mention specific exercises).`;
 }
@@ -221,20 +233,22 @@ export interface ChatReply {
 const CHAT_SYSTEM = `You are ForgeFit's friendly AI personal-training coach doing a short onboarding interview.
 Ask ONE concise, friendly question at a time to learn:
 1. Primary fitness goal (strength / muscle / weight loss / endurance / general fitness)
-2. Available equipment (full gym / home gym with barbell & rack / dumbbells only / bodyweight only)
-3. Training experience level (beginner <1yr / intermediate 1–3yr / advanced 3+yr)
-4. Days per week they can train (1–6)
-5. Target session length in minutes (30 / 45 / 60 / 90)
-6. Preferred weight units (kg or lb)
+2. Preferred workout style / category (calisthenics / weightlifting / cardio / yoga-pilates / mixed / other)
+3. Available equipment (full gym / home gym with barbell & rack / dumbbells only / bodyweight only)
+4. Training experience level (beginner <1yr / intermediate 1–3yr / advanced 3+yr)
+5. Days per week they can train (1–6)
+6. Target session length in minutes (30 / 45 / 60 / 90)
+7. Preferred weight units (kg or lb)
 
 Optional (ask only if the conversation feels natural):
-7. Their name
-8. Any injuries or preferences
+8. Their name
+9. Any injuries or preferences
 
 IMPORTANT — after every question (not at [DONE]), append a suggestions line on its own line:
 [SUGGESTIONS: option1 | option2 | option3 | option4]
 Tailor the options to the question. Examples:
 - Goal question → [SUGGESTIONS: Build muscle | Lose weight | Get stronger | Stay fit]
+- Category question → [SUGGESTIONS: Calisthenics | Weightlifting | Mixed | Cardio]
 - Equipment question → [SUGGESTIONS: Full gym | Home gym | Dumbbells only | Bodyweight only]
 - Experience question → [SUGGESTIONS: Beginner (<1 yr) | Intermediate (1–3 yrs) | Advanced (3+ yrs)]
 - Days/week question → [SUGGESTIONS: 3 days | 4 days | 5 days | 2 days]
@@ -244,9 +258,9 @@ Tailor the options to the question. Examples:
 - Injuries/preferences question → [SUGGESTIONS: No injuries | Skip]
 Use 2–5 short options that cover the most common answers. Keep each option under 25 chars.
 
-Once you have answers for items 1–6, end with a short friendly closing sentence then:
+Once you have answers for items 1–7, end with a short friendly closing sentence then:
 [DONE]
-{"goal":"<strength|hypertrophy|weight_loss|endurance|general>","equipment":"<full_gym|home_gym|dumbbells|bodyweight>","experience":"<beginner|intermediate|advanced>","daysPerWeek":<1-6>,"sessionMinutes":<30|45|60|90>,"units":"<kg|lb>","name":"<name or empty string>","notes":"<notes or empty string>"}
+{"goal":"<strength|hypertrophy|weight_loss|endurance|general>","category":"<calisthenics|weightlifting|cardio|yoga_pilates|mixed|other>","equipment":"<full_gym|home_gym|dumbbells|bodyweight>","experience":"<beginner|intermediate|advanced>","daysPerWeek":<1-6>,"sessionMinutes":<30|45|60|90>,"units":"<kg|lb>","name":"<name or empty string>","notes":"<notes or empty string>"}
 
 Do NOT include [SUGGESTIONS: ...] on the [DONE] line.`;
 
@@ -256,7 +270,7 @@ export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply
     return {
       type: "done",
       text: "Great! Let me build your program now.",
-      profile: { name: "", goal: "general", equipment: "full_gym", experience: "beginner", daysPerWeek: 3, sessionMinutes: 60, units: "kg", notes: "" },
+      profile: { name: "", goal: "general", category: "mixed", equipment: "full_gym", experience: "beginner", daysPerWeek: 3, sessionMinutes: 60, units: "kg", notes: "" },
     };
   }
 
@@ -293,9 +307,11 @@ export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply
     const closingText = raw.slice(0, doneIdx).trim();
     try {
       const p = JSON.parse(jsonStr);
+      const VALID_CATS = ["calisthenics","weightlifting","cardio","yoga_pilates","mixed","other"];
       const profile: UserProfile = {
         name: p.name ?? "",
         goal: p.goal ?? "general",
+        category: VALID_CATS.includes(p.category) ? p.category : "mixed",
         equipment: p.equipment ?? "full_gym",
         experience: p.experience ?? "beginner",
         daysPerWeek: Number(p.daysPerWeek) || 3,
@@ -332,11 +348,13 @@ export interface CoachReply {
 }
 
 function coachSystem(p: UserProfile, routines: unknown): string {
+  const catLabel = CATEGORY_TEXT[p.category ?? "mixed"] ?? "Mixed training";
   return `You are ForgeFit's ongoing AI personal coach for an athlete who has ALREADY completed onboarding.
 You already know everything about them — NEVER re-ask onboarding questions (goal, equipment, days, etc.).
 
 Athlete profile (JSON):
 ${JSON.stringify(p)}
+Preferred workout style: ${catLabel}
 
 Their current routines (JSON):
 ${JSON.stringify(routines)}

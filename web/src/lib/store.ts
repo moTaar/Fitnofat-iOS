@@ -162,6 +162,7 @@ export const useStore = create<AppState>()(
               ? {
                   name: data.profile.name,
                   goal: data.profile.goal,
+                  category: data.profile.category ?? "mixed",
                   equipment: data.profile.equipment,
                   experience: data.profile.experience,
                   daysPerWeek: data.profile.daysPerWeek,
