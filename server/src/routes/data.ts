@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { asyncHandler, requireAuth, AuthedRequest } from "../middleware";
-import { generateProgram, refreshProgram, chatOnboarding, chatCoach, generateExerciseGuide, type ChatMessage } from "../gemini";
+import { generateProgram, refreshProgram, chatOnboarding, chatCoach, generateExerciseGuide, identifyExercise, type ChatMessage } from "../gemini";
 import { buildRefreshSummary, SessionLite } from "../analytics";
 import { slugify } from "../util";
 import {
@@ -278,6 +278,49 @@ dataRouter.post(
         { onConflict: "user_id,slug" }
       )
       .select().single();
+    if (error) throw new Error(error.message);
+    res.status(201).json(rowToExercise(data));
+  })
+);
+
+// ── AI exercise assist (name → muscle group + equipment + guide in one shot) ──
+dataRouter.post(
+  "/exercises/ai-assist",
+  asyncHandler(async (req, res) => {
+    const userId = uid(req as AuthedRequest);
+    const { name } = z.object({ name: z.string().min(1) }).parse(req.body);
+    const slug = slugify(name);
+
+    // Return cached result if we already have a fully AI-identified entry.
+    const { data: existing } = await supabaseAdmin
+      .from("exercises")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("slug", slug)
+      .maybeSingle();
+    if (existing?.guide && existing?.muscle_group && existing?.equipment) {
+      res.json(rowToExercise(existing));
+      return;
+    }
+
+    const { muscleGroup, equipment, guide } = await identifyExercise(name);
+
+    const { data, error } = await supabaseAdmin
+      .from("exercises")
+      .upsert(
+        {
+          user_id: userId,
+          slug,
+          name,
+          muscle_group: muscleGroup,
+          equipment,
+          guide,
+          source: "custom",
+        },
+        { onConflict: "user_id,slug" }
+      )
+      .select()
+      .single();
     if (error) throw new Error(error.message);
     res.status(201).json(rowToExercise(data));
   })

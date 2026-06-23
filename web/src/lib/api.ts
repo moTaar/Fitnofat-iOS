@@ -178,6 +178,9 @@ export const api = {
   exerciseGuide: (e: { name: string; muscleGroup?: string; equipment?: string; force?: boolean }) =>
     request<Exercise>("/api/exercises/guide", { method: "POST", body: JSON.stringify(e) }),
 
+  aiAssistExercise: (name: string) =>
+    request<Exercise>("/api/exercises/ai-assist", { method: "POST", body: JSON.stringify({ name }) }),
+
   saveWorkouts: (workouts: unknown) =>
     request<WorkoutSession[]>("/api/workouts", { method: "POST", body: JSON.stringify(workouts) }),
 

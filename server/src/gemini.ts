@@ -485,10 +485,11 @@ Ask ONE concise, friendly question at a time to learn:
 5. Days per week they can train (1–6)
 6. Target session length in minutes (30 / 45 / 60 / 90)
 7. Preferred weight units (kg or lb)
+8. Current body weight — ask for a number in the unit they just chose (e.g. "75 kg" or "165 lb"). Mention they can skip if they'd rather not share. This is used to calibrate starting loads and progressions.
 
 Optional (ask only if the conversation feels natural):
-8. Their name
-9. Any injuries or preferences
+9. Their name
+10. Any injuries or preferences
 
 IMPORTANT — after every question (not at [DONE]), append a suggestions line on its own line:
 [SUGGESTIONS: option1 | option2 | option3 | option4]
@@ -500,14 +501,17 @@ Tailor the options to the question. Examples:
 - Days/week question → [SUGGESTIONS: 3 days | 4 days | 5 days | 2 days]
 - Session length question → [SUGGESTIONS: 45 min | 60 min | 30 min | 90 min]
 - Units question → [SUGGESTIONS: kg | lb]
+- Body weight question → [SUGGESTIONS: Skip]
 - Name question → [SUGGESTIONS: Skip]
 - Injuries/preferences question → [SUGGESTIONS: No injuries | Skip]
 Use 2–5 short options that cover the most common answers. Keep each option under 25 chars.
 
-Once you have answers for items 1–7, end with a short friendly closing sentence then:
+Once you have answers for items 1–8, end with a short friendly closing sentence then:
 [DONE]
-{"goal":"<strength|hypertrophy|weight_loss|endurance|general>","category":"<calisthenics|weightlifting|cardio|yoga_pilates|mixed|other>","equipment":"<full_gym|home_gym|dumbbells|bodyweight|resistance_bands|machines|kettlebells|mixed|other>","equipmentMix":["item1","item2"],"experience":"<beginner|intermediate|advanced>","daysPerWeek":<1-6>,"sessionMinutes":<30|45|60|90>,"units":"<kg|lb>","name":"<name or empty string>","notes":"<notes or empty string>"}
-Note: only include "equipmentMix" when equipment is "mixed". List the specific items the user mentioned (e.g. ["Dumbbells","Resistance bands","Bodyweight"]).
+{"goal":"<strength|hypertrophy|weight_loss|endurance|general>","category":"<calisthenics|weightlifting|cardio|yoga_pilates|mixed|other>","equipment":"<full_gym|home_gym|dumbbells|bodyweight|resistance_bands|machines|kettlebells|mixed|other>","equipmentMix":["item1","item2"],"experience":"<beginner|intermediate|advanced>","daysPerWeek":<1-6>,"sessionMinutes":<30|45|60|90>,"units":"<kg|lb>","bodyweightKg":<number or null>,"name":"<name or empty string>","notes":"<notes or empty string>"}
+Notes:
+- Only include "equipmentMix" when equipment is "mixed". List the specific items the user mentioned (e.g. ["Dumbbells","Resistance bands","Bodyweight"]).
+- "bodyweightKg" stores the numeric value the user gave (e.g. 75 for "75 kg", 165 for "165 lb"). Set to null if skipped.
 
 Do NOT include [SUGGESTIONS: ...] on the [DONE] line.`;
 
@@ -535,6 +539,8 @@ function detectOnboardingSuggestions(text: string): string[] | undefined {
     return ["3 days", "4 days", "5 days", "2 days"];
   if (/\bkg\b|\blb\b|pound|kilogram|weight unit|track.*weight/.test(t))
     return ["kg", "lb"];
+  if (/body.?weight|how much.*weigh|current.*weight|weigh.*current|your weight|what.*weight/.test(t))
+    return ["Skip"];
   if (/how long.*session|session.*(length|long|duration)|each.*session|per.*session|\bminutes? per\b|\bminute.*session\b/.test(t))
     return ["45 min", "60 min", "30 min", "90 min"];
   return undefined;
@@ -595,6 +601,7 @@ export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply
         daysPerWeek: Number(p.daysPerWeek) || 3,
         sessionMinutes: Number(p.sessionMinutes) || 60,
         units: p.units === "lb" ? "lb" : "kg",
+        bodyweightKg: p.bodyweightKg != null ? Number(p.bodyweightKg) || undefined : undefined,
         notes: p.notes ?? "",
       };
       return { type: "done", text: closingText || "Perfect, building your program now!", profile };
@@ -882,6 +889,105 @@ function fallbackGuide(muscleGroup?: string): ExerciseGuide {
     mistakes: ["Using momentum to move the weight.", "Cutting the range of motion short."],
     breathing: "Exhale during the effort, inhale on the return.",
   };
+}
+
+// ── AI exercise identification (name → muscle group + equipment + guide) ─────
+// Single-pass call: takes just a name, returns everything needed to populate
+// the exercises table. Used by the "AI Assist" button in ExercisePicker.
+
+const MUSCLE_GROUPS_ENUM = [
+  "Chest", "Back", "Shoulders", "Biceps", "Triceps",
+  "Legs", "Glutes", "Core", "Cardio", "Full Body",
+] as const;
+
+const identifySchema = {
+  type: "object",
+  properties: {
+    muscleGroup: { type: "string", enum: [...MUSCLE_GROUPS_ENUM] },
+    equipment: { type: "string" },
+    guide: {
+      type: "object",
+      properties: {
+        primaryMuscles: { type: "array", items: { type: "string" } },
+        secondaryMuscles: { type: "array", items: { type: "string" } },
+        steps: { type: "array", items: { type: "string" } },
+        cues: { type: "array", items: { type: "string" } },
+        mistakes: { type: "array", items: { type: "string" } },
+        breathing: { type: "string" },
+        pattern: { type: "string", enum: [...GUIDE_PATTERNS] },
+        load: { type: "string", enum: [...GUIDE_LOADS] },
+        prop: { type: "string", enum: [...GUIDE_PROPS] },
+      },
+      required: ["primaryMuscles", "steps", "cues", "mistakes", "breathing", "pattern", "load", "prop"],
+    },
+  },
+  required: ["muscleGroup", "equipment", "guide"],
+};
+
+const IDENTIFY_SYSTEM = `You are an elite strength & conditioning coach.
+Given an exercise name, return a JSON object with three fields:
+1. "muscleGroup": the single primary muscle group from the allowed enum.
+2. "equipment": short description of typical equipment (e.g. "Barbell", "Dumbbell", "Bodyweight", "Cable", "Machine", "Resistance Band").
+3. "guide": a complete how-to guide for the exercise.
+
+Guide rules — be specific to THIS exercise:
+- primaryMuscles / secondaryMuscles: exact muscles trained; use: Chest, Upper Chest, Front Delts, Side Delts, Rear Delts, Shoulders, Traps, Biceps, Triceps, Forearms, Lats, Back, Upper Back, Lower Back, Abs, Core, Obliques, Quads, Hamstrings, Glutes, Calves (or "Cardio").
+- steps: 2–4 short ordered execution instructions.
+- cues: 2–3 form tips for quality/safety.
+- mistakes: 2–3 common errors.
+- breathing: one short sentence on the breathing pattern.
+- pattern: movement archetype — squat | hinge | press_flat | press_over | raise | row | pulldown | curl | extension | lunge | bridge | core | leg_machine | calf | cardio.
+- load: "bar" | "db" | "none".
+- prop: "bench" | "seat" | "floor" | "none".
+Return ONLY valid JSON — no prose outside the JSON object.`;
+
+export async function identifyExercise(name: string): Promise<{
+  muscleGroup: MuscleGroup;
+  equipment: string;
+  guide: ExerciseGuide;
+}> {
+  const key = config.geminiApiKey.trim();
+  if (!key) {
+    return { muscleGroup: "Full Body", equipment: "Other", guide: fallbackGuide() };
+  }
+
+  const prompt = `Identify this exercise and write a complete guide: "${name}"`;
+
+  try {
+    const res = await fetch(ENDPOINT(config.geminiModel, key), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: IDENTIFY_SYSTEM }] },
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.3,
+          responseMimeType: "application/json",
+          responseSchema: identifySchema,
+        },
+      }),
+    });
+    if (!res.ok) {
+      if (res.status === 429) throw new Error("QUOTA_EXCEEDED");
+      throw new Error(`Gemini identify error ${res.status}`);
+    }
+    const data: any = await res.json();
+    const text: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error("Gemini returned an empty identify response.");
+    const parsed = JSON.parse(text);
+    const muscleGroup = (MUSCLE_GROUPS_ENUM as readonly string[]).includes(parsed.muscleGroup)
+      ? (parsed.muscleGroup as MuscleGroup)
+      : "Full Body";
+    const equipment =
+      typeof parsed.equipment === "string" && parsed.equipment.trim()
+        ? parsed.equipment.trim()
+        : "Other";
+    const guide = normalizeGuide(parsed.guide ?? {}, muscleGroup);
+    return { muscleGroup, equipment, guide };
+  } catch (err) {
+    if (err instanceof Error && err.message === "QUOTA_EXCEEDED") throw err;
+    return { muscleGroup: "Full Body", equipment: "Other", guide: fallbackGuide() };
+  }
 }
 
 // ── Local deterministic fallback (works with no Gemini key) ───────────────────

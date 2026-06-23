@@ -52,6 +52,7 @@ interface AppState {
 
   // exercises
   addCustomExercise: (e: { name: string; muscleGroup: Exercise["muscleGroup"]; equipment: string }) => Promise<Exercise>;
+  receiveExercise: (exercise: Exercise) => void;
   fetchExerciseGuide: (e: { name: string; muscleGroup?: Exercise["muscleGroup"]; equipment?: string; force?: boolean }) => Promise<Exercise>;
 
   // active workout
@@ -262,6 +263,14 @@ export const useStore = create<AppState>()(
             : [...s.exercises, exercise],
         }));
         return exercise;
+      },
+
+      receiveExercise: (exercise) => {
+        set((s) => ({
+          exercises: s.exercises.some((x) => x.id === exercise.id)
+            ? s.exercises.map((x) => (x.id === exercise.id ? exercise : x))
+            : [...s.exercises, exercise],
+        }));
       },
 
       fetchExerciseGuide: async (e) => {

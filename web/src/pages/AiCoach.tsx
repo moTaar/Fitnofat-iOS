@@ -42,6 +42,7 @@ export function AiCoach() {
   const [mixSelected, setMixSelected] = useState<string[]>([]);
   const [equipMixPicker, setEquipMixPicker] = useState(false);
   const [equipMixSelected, setEquipMixSelected] = useState<string[]>([]);
+  const [equipOtherText, setEquipOtherText] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -162,6 +163,7 @@ export function AiCoach() {
     }
     if (!coachMode && s === "Custom mix") {
       setEquipMixSelected([]);
+      setEquipOtherText("");
       setEquipMixPicker(true);
       return;
     }
@@ -176,9 +178,12 @@ export function AiCoach() {
 
   const handleEquipMixConfirm = () => {
     setEquipMixPicker(false);
-    const label = equipMixSelected.length > 0
-      ? `Custom mix (${equipMixSelected.join(", ")})`
-      : "Custom mix";
+    const custom = equipOtherText
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const all = [...equipMixSelected, ...custom];
+    const label = all.length > 0 ? `Custom mix (${all.join(", ")})` : "Custom mix";
     void sendText(label);
   };
 
@@ -368,7 +373,34 @@ export function AiCoach() {
                 </button>
               );
             })}
+            {/* Other chip — reveals a free-text input when active */}
+            <button
+              onClick={() =>
+                setEquipMixSelected((prev) =>
+                  prev.includes("Other") ? prev.filter((x) => x !== "Other") : [...prev, "Other"]
+                )
+              }
+              className={cn(
+                "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors tap",
+                equipMixSelected.includes("Other")
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
+              )}
+            >
+              Other
+            </button>
           </div>
+          {equipMixSelected.includes("Other") && (
+            <input
+              autoFocus
+              type="text"
+              value={equipOtherText}
+              onChange={(e) => setEquipOtherText(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleEquipMixConfirm()}
+              placeholder="e.g. TRX, Sandbag, Gymnastics rings"
+              className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          )}
           <Button size="sm" className="w-full" onClick={handleEquipMixConfirm}>
             Confirm selection
           </Button>
