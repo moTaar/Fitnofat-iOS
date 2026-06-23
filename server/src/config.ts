@@ -20,5 +20,5 @@ export const config = {
   supabaseAnonKey: required("SUPABASE_ANON_KEY"),
   supabaseServiceKey: required("SUPABASE_SERVICE_ROLE_KEY"),
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
-  geminiModel: process.env.GEMINI_MODEL ?? "gemini-2.0-flash",
+  geminiModel: process.env.GEMINI_MODEL ?? "gemini-2.5-flash",
 };
