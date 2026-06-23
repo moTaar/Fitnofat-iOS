@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Check, Plus, X, Timer, MoreVertical, Trash2, Flag, ChevronLeft,
+  Check, Plus, X, Timer, MoreVertical, Trash2, Flag, ChevronLeft, Info,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useNow } from "@/lib/hooks";
@@ -10,6 +10,7 @@ import type { Exercise, WorkoutSession } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { ExercisePicker } from "@/components/ExercisePicker";
+import { ExerciseDetail } from "@/components/ExerciseDetail";
 import { RestTimerBar } from "@/components/RestTimerBar";
 
 // Find the most recent completed set for a given exercise+set index.
@@ -34,6 +35,7 @@ export function ActiveWorkout() {
   const navigate = useNavigate();
   const active = useStore((s) => s.active);
   const history = useStore((s) => s.history);
+  const exercises = useStore((s) => s.exercises);
   const units = useStore((s) => s.profile?.units ?? "kg");
   const logSet = useStore((s) => s.logSet);
   const addSetToExercise = useStore((s) => s.addSetToExercise);
@@ -48,6 +50,7 @@ export function ActiveWorkout() {
   const [confirmFinish, setConfirmFinish] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [menuFor, setMenuFor] = useState<number | null>(null);
+  const [detail, setDetail] = useState<Exercise | null>(null);
 
   const prev = usePrevious(history);
   const now = useNow(!!active, 1000);
@@ -136,11 +139,29 @@ export function ActiveWorkout() {
           return (
             <div key={`${ex.exerciseId}-${exIdx}`} className="rounded-2xl border border-border bg-card">
               <div className="flex items-center justify-between p-3 pb-2">
-                <div>
-                  <h3 className="font-semibold leading-tight">{ex.name}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    {ex.muscleGroup} · {ex.restSeconds}s rest
-                  </p>
+                <div className="flex items-center gap-2">
+                  <div>
+                    <h3 className="font-semibold leading-tight">{ex.name}</h3>
+                    <p className="text-xs text-muted-foreground">
+                      {ex.muscleGroup} · {ex.restSeconds}s rest
+                    </p>
+                  </div>
+                  <button
+                    onClick={() =>
+                      setDetail(
+                        exercises.find((e) => e.id === ex.exerciseId) ?? {
+                          id: ex.exerciseId,
+                          name: ex.name,
+                          muscleGroup: ex.muscleGroup,
+                          equipment: "—",
+                        }
+                      )
+                    }
+                    className="rounded-full p-1 text-muted-foreground hover:bg-accent tap"
+                    title="How to perform"
+                  >
+                    <Info className="h-4 w-4" />
+                  </button>
                 </div>
                 <button
                   onClick={() => setMenuFor(menuFor === exIdx ? null : exIdx)}
@@ -263,6 +284,7 @@ export function ActiveWorkout() {
 
       <RestTimerBar />
       <ExercisePicker open={picker} onClose={() => setPicker(false)} onPick={onPick} />
+      <ExerciseDetail exercise={detail} open={!!detail} onClose={() => setDetail(null)} />
 
       <Modal open={confirmFinish} onClose={() => setConfirmFinish(false)} title="Finish workout?">
         <p className="text-sm text-muted-foreground">

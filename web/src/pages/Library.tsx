@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
-import { Search, Plus, Dumbbell, Check } from "lucide-react";
+import { Search, Plus, Dumbbell, Check, ChevronRight } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { MUSCLE_GROUPS } from "@/lib/exercises";
-import type { MuscleGroup } from "@/lib/types";
+import type { Exercise, MuscleGroup } from "@/lib/types";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/misc";
 import { Modal } from "@/components/ui/modal";
+import { ExerciseDetail } from "@/components/ExerciseDetail";
 import { cn } from "@/lib/utils";
 
 export function LibraryPage() {
@@ -19,6 +20,7 @@ export function LibraryPage() {
   const [newName, setNewName] = useState("");
   const [newGroup, setNewGroup] = useState<MuscleGroup>("Chest");
   const [newEquip, setNewEquip] = useState("Barbell");
+  const [detail, setDetail] = useState<Exercise | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -94,19 +96,21 @@ export function LibraryPage() {
             </h2>
             <div className="space-y-1.5">
               {items.map((e) => (
-                <div
+                <button
                   key={e.id}
-                  className="flex items-center gap-3 rounded-xl border border-border bg-card p-3"
+                  onClick={() => setDetail(e)}
+                  className="flex w-full items-center gap-3 rounded-xl border border-border bg-card p-3 text-left tap hover:border-muted-foreground/40"
                 >
                   <div className="rounded-lg bg-secondary p-2 text-muted-foreground">
                     <Dumbbell className="h-4 w-4" />
                   </div>
                   <div className="flex-1">
                     <p className="font-medium leading-tight">{e.name}</p>
-                    <p className="text-xs text-muted-foreground">{e.equipment}</p>
+                    <p className="text-xs text-muted-foreground">{e.equipment} · How to</p>
                   </div>
                   {e.isCustom && <Badge variant="outline">Custom</Badge>}
-                </div>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                </button>
               ))}
             </div>
           </div>
@@ -115,6 +119,8 @@ export function LibraryPage() {
           <p className="py-10 text-center text-sm text-muted-foreground">No exercises found.</p>
         )}
       </div>
+
+      <ExerciseDetail exercise={detail} open={!!detail} onClose={() => setDetail(null)} />
 
       <Modal open={creating} onClose={() => setCreating(false)} title="New exercise">
         <div className="space-y-4">

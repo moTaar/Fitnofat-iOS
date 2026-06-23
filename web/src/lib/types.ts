@@ -37,6 +37,16 @@ export interface Exercise {
   instructions?: string;
 }
 
+// How-to guidance for performing an exercise with correct form.
+export interface ExerciseGuide {
+  primaryMuscles: string[];
+  secondaryMuscles?: string[];
+  steps: string[]; // ordered execution instructions
+  cues: string[]; // form tips that improve quality / safety
+  mistakes: string[]; // common errors to avoid
+  breathing?: string;
+}
+
 // A planned set inside a routine (the prescription)
 export interface PlannedSet {
   targetReps: number;
