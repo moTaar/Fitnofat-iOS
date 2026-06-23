@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, Send, RotateCcw } from "lucide-react";
+import { Sparkles, Send, RotateCcw, AlertTriangle, ClipboardList } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useStore } from "@/lib/store";
 import { api } from "@/lib/api";
@@ -19,6 +19,7 @@ export function AiCoach() {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -34,12 +35,18 @@ export function AiCoach() {
   const startConversation = async () => {
     setMessages([]);
     setDone(false);
+    setQuotaExceeded(false);
     setLoading(true);
     try {
       const reply = await api.aiChat([]);
       setMessages([{ role: "model", content: reply.text }]);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't reach the AI coach.");
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("QUOTA_EXCEEDED")) {
+        setQuotaExceeded(true);
+      } else {
+        toast.error(msg || "Couldn't reach the AI coach.");
+      }
     } finally {
       setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 100);
@@ -74,10 +81,14 @@ export function AiCoach() {
         }
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "AI error — please try again.");
-      // roll back the unsent user message so user can retry
-      setMessages(next.slice(0, -1));
-      setInput(text);
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("QUOTA_EXCEEDED")) {
+        setQuotaExceeded(true);
+      } else {
+        toast.error(msg || "AI error — please try again.");
+        setMessages(next.slice(0, -1));
+        setInput(text);
+      }
     } finally {
       if (!generating) setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 50);
@@ -109,6 +120,25 @@ export function AiCoach() {
           Restart
         </button>
       </div>
+
+      {/* Quota exceeded banner */}
+      {quotaExceeded && (
+        <div className="flex flex-col gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+          <div className="flex gap-3">
+            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500 mt-0.5" />
+            <div>
+              <p className="font-semibold text-amber-500">Gemini quota exceeded</p>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Your API key has hit its free-tier limit. The AI chat is unavailable until the quota resets (usually within a few hours or the next day). You can still generate a program using the quick form — it works offline too.
+              </p>
+            </div>
+          </div>
+          <Button onClick={() => navigate("/onboarding")} className="w-full">
+            <ClipboardList className="h-4 w-4" />
+            Use quick setup form
+          </Button>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 space-y-3 overflow-y-auto no-scrollbar pb-2">

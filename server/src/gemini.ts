@@ -159,6 +159,7 @@ async function callGemini(prompt: string): Promise<AIProgramResponse> {
 
   if (!res.ok) {
     const body = await res.text();
+    if (res.status === 429) throw new Error("NO_API_KEY"); // reuse local fallback
     throw new Error(`Gemini API error ${res.status}: ${body.slice(0, 300)}`);
   }
   const data: any = await res.json();
@@ -263,6 +264,7 @@ export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply
 
   if (!res.ok) {
     const body = await res.text();
+    if (res.status === 429) throw new Error("QUOTA_EXCEEDED");
     throw new Error(`Gemini chat error ${res.status}: ${body.slice(0, 300)}`);
   }
 
