@@ -40,6 +40,7 @@ export function AiCoach() {
   const [quotaExceeded, setQuotaExceeded] = useState(false);
   const [mixPicker, setMixPicker] = useState(false);
   const [mixSelected, setMixSelected] = useState<string[]>([]);
+  const [mixOtherText, setMixOtherText] = useState("");
   const [equipMixPicker, setEquipMixPicker] = useState(false);
   const [equipMixSelected, setEquipMixSelected] = useState<string[]>([]);
   const [equipOtherText, setEquipOtherText] = useState("");
@@ -172,7 +173,12 @@ export function AiCoach() {
 
   const handleMixConfirm = () => {
     setMixPicker(false);
-    const label = mixSelected.length > 0 ? `Mixed (${mixSelected.join(", ")})` : "Mixed";
+    const parts = [...mixSelected.filter((x) => x !== "Other")];
+    if (mixSelected.includes("Other") && mixOtherText.trim()) {
+      parts.push(mixOtherText.trim());
+    }
+    const label = parts.length > 0 ? `Mixed (${parts.join(", ")})` : "Mixed";
+    setMixOtherText("");
     void sendText(label);
   };
 
@@ -319,7 +325,7 @@ export function AiCoach() {
         <div className="mb-2 rounded-2xl border border-border bg-card p-4 space-y-3">
           <p className="text-sm font-semibold">Which styles do you want to mix?</p>
           <div className="flex flex-wrap gap-2">
-            {MIX_OPTIONS.map((opt) => {
+            {[...MIX_OPTIONS, "Other"].map((opt) => {
               const checked = mixSelected.includes(opt);
               return (
                 <button
@@ -341,6 +347,15 @@ export function AiCoach() {
               );
             })}
           </div>
+          {mixSelected.includes("Other") && (
+            <input
+              autoFocus
+              value={mixOtherText}
+              onChange={(e) => setMixOtherText(e.target.value)}
+              placeholder="e.g. Piloxing, CrossFit, Martial arts…"
+              className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          )}
           <Button size="sm" className="w-full" onClick={handleMixConfirm}>
             Confirm selection
           </Button>
