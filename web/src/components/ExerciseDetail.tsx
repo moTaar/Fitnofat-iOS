@@ -1,14 +1,19 @@
-import type { ReactNode } from "react";
-import { Dumbbell, ListChecks, Lightbulb, AlertTriangle, Wind, Target } from "lucide-react";
-import type { Exercise } from "@/lib/types";
-import { guideFor } from "@/lib/guides";
+import { useEffect, useState, type ReactNode } from "react";
+import { Dumbbell, ListChecks, Lightbulb, AlertTriangle, Wind, Target, Sparkles } from "lucide-react";
+import type { Exercise, ExerciseGuide } from "@/lib/types";
+import { guideFor, hasGuide, genericGuide } from "@/lib/guides";
+import { useStore } from "@/lib/store";
 import { Modal } from "@/components/ui/modal";
-import { Badge } from "@/components/ui/misc";
+import { Badge, Spinner } from "@/components/ui/misc";
 import { MuscleMap } from "@/components/MuscleMap";
 import { StickDemo } from "@/components/StickDemo";
 
 // A bottom-sheet that explains how to perform an exercise correctly:
 // target muscles, step-by-step execution, form cues, common mistakes, breathing.
+//
+// Guide resolution order: a hand-written guide in the seed library → a cached
+// AI guide (for exercises the AI invented) → lazily generate one via AI on the
+// first view, falling back to a generic guide if generation fails.
 export function ExerciseDetail({
   exercise,
   open,
@@ -18,8 +23,47 @@ export function ExerciseDetail({
   open: boolean;
   onClose: () => void;
 }) {
+  const exercises = useStore((s) => s.exercises);
+  const fetchExerciseGuide = useStore((s) => s.fetchExerciseGuide);
+  const [aiGuide, setAiGuide] = useState<ExerciseGuide | null>(null);
+  const [loadingGuide, setLoadingGuide] = useState(false);
+
+  const name = exercise?.name;
+  const builtIn = name ? hasGuide(name) : false;
+  // Prefer a freshly cached library copy (it may already carry an AI guide).
+  const cached = exercise ? exercises.find((e) => e.id === exercise.id)?.guide : undefined;
+
+  useEffect(() => {
+    if (!open || !exercise || builtIn) return;
+    const existing = cached ?? aiGuide;
+    if (existing) return;
+    let cancelled = false;
+    setLoadingGuide(true);
+    fetchExerciseGuide({
+      name: exercise.name,
+      muscleGroup: exercise.muscleGroup,
+      equipment: exercise.equipment !== "—" ? exercise.equipment : undefined,
+    })
+      .then((res) => {
+        if (!cancelled) setAiGuide(res.guide ?? genericGuide);
+      })
+      .catch(() => {
+        if (!cancelled) setAiGuide(genericGuide);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingGuide(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, name, builtIn]);
+
   if (!exercise) return null;
-  const g = guideFor(exercise.name);
+
+  const g: ExerciseGuide = builtIn ? guideFor(exercise.name) : cached ?? aiGuide ?? genericGuide;
+  // Only the AI path (no hand-written guide, nothing cached yet) shows a loader.
+  const showLoader = !builtIn && !cached && !aiGuide && loadingGuide;
 
   return (
     <Modal open={open} onClose={onClose} title={exercise.name}>
@@ -33,7 +77,17 @@ export function ExerciseDetail({
           {exercise.isCustom && <Badge variant="muted">Custom</Badge>}
         </div>
 
-        {(g.primaryMuscles.length > 0 || g.secondaryMuscles?.length) && (
+        {showLoader && (
+          <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-primary/30 bg-primary/10 py-8 text-sm font-medium text-primary">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4" />
+              <Spinner className="h-4 w-4" />
+            </div>
+            Generating a how-to guide for this exercise…
+          </div>
+        )}
+
+        {!showLoader && (g.primaryMuscles.length > 0 || g.secondaryMuscles?.length) && (
           <Section icon={<Target className="h-4 w-4" />} title="Muscles worked">
             <div className="rounded-2xl border border-border bg-secondary/30 p-3">
               <MuscleMap
@@ -63,34 +117,38 @@ export function ExerciseDetail({
           </Section>
         )}
 
-        <Section icon={<ListChecks className="h-4 w-4" />} title="How to perform">
-          <div className="mb-3 flex items-center justify-center rounded-2xl border border-border bg-secondary/30 p-2">
-            <StickDemo name={exercise.name} className="h-40 w-40" />
-          </div>
-          <ol className="space-y-2">
-            {g.steps.map((s, i) => (
-              <li key={i} className="flex gap-2.5 text-sm">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">
-                  {i + 1}
-                </span>
-                <span className="text-foreground/90">{s}</span>
-              </li>
-            ))}
-          </ol>
-        </Section>
+        {!showLoader && (
+          <>
+            <Section icon={<ListChecks className="h-4 w-4" />} title="How to perform">
+              <div className="mb-3 flex items-center justify-center rounded-2xl border border-border bg-secondary/30 p-2">
+                <StickDemo name={exercise.name} className="h-40 w-40" />
+              </div>
+              <ol className="space-y-2">
+                {g.steps.map((s, i) => (
+                  <li key={i} className="flex gap-2.5 text-sm">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">
+                      {i + 1}
+                    </span>
+                    <span className="text-foreground/90">{s}</span>
+                  </li>
+                ))}
+              </ol>
+            </Section>
 
-        <Section icon={<Lightbulb className="h-4 w-4" />} title="Form tips">
-          <BulletList items={g.cues} dotClass="bg-success" />
-        </Section>
+            <Section icon={<Lightbulb className="h-4 w-4" />} title="Form tips">
+              <BulletList items={g.cues} dotClass="bg-success" />
+            </Section>
 
-        <Section icon={<AlertTriangle className="h-4 w-4" />} title="Common mistakes">
-          <BulletList items={g.mistakes} dotClass="bg-destructive" />
-        </Section>
+            <Section icon={<AlertTriangle className="h-4 w-4" />} title="Common mistakes">
+              <BulletList items={g.mistakes} dotClass="bg-destructive" />
+            </Section>
 
-        {g.breathing && (
-          <Section icon={<Wind className="h-4 w-4" />} title="Breathing">
-            <p className="text-sm text-foreground/90">{g.breathing}</p>
-          </Section>
+            {g.breathing && (
+              <Section icon={<Wind className="h-4 w-4" />} title="Breathing">
+                <p className="text-sm text-foreground/90">{g.breathing}</p>
+              </Section>
+            )}
+          </>
         )}
       </div>
     </Modal>

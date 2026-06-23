@@ -20,11 +20,26 @@ const GOALS: { label: string; value: Goal; sub: string }[] = [
   { label: "General", value: "general", sub: "Stay fit" },
 ];
 
-const EQUIPMENT: { label: string; value: Equipment; sub: string }[] = [
-  { label: "Full Gym", value: "full_gym", sub: "Everything" },
-  { label: "Home Gym", value: "home_gym", sub: "Barbell + rack" },
-  { label: "Dumbbells", value: "dumbbells", sub: "DBs only" },
-  { label: "Bodyweight", value: "bodyweight", sub: "No equipment" },
+const EQUIPMENT: { label: string; value: Equipment; sub: string; emoji: string }[] = [
+  { label: "Full Gym", value: "full_gym", sub: "Barbells, machines…", emoji: "🏟️" },
+  { label: "Home Gym", value: "home_gym", sub: "Barbell + rack", emoji: "🏠" },
+  { label: "Dumbbells", value: "dumbbells", sub: "DBs & bench", emoji: "🪆" },
+  { label: "Bodyweight", value: "bodyweight", sub: "No equipment", emoji: "🤸" },
+  { label: "Resistance Bands", value: "resistance_bands", sub: "Bands only", emoji: "🪢" },
+  { label: "Machines", value: "machines", sub: "Cables & machines", emoji: "⚙️" },
+  { label: "Kettlebells", value: "kettlebells", sub: "KBs only", emoji: "🔔" },
+  { label: "Custom Mix", value: "mixed", sub: "Pick your own", emoji: "🎛️" },
+];
+
+const EQUIPMENT_MIX_OPTIONS = [
+  "Bodyweight",
+  "Dumbbells",
+  "Resistance bands",
+  "Kettlebells",
+  "Barbell",
+  "Cables / machines",
+  "Pull-up bar",
+  "Bench",
 ];
 
 const EXPERIENCE: { label: string; value: Experience; sub: string }[] = [
@@ -335,12 +350,57 @@ export function Onboarding() {
 
         {step === 3 && (
           <Section icon={Dumbbell} title="What equipment do you have?" subtitle="We'll only program moves you can actually do.">
-            <SegmentedControl
-              columns={2}
-              options={EQUIPMENT.map((e) => ({ label: e.label, value: e.value, sublabel: e.sub }))}
-              value={profile.equipment}
-              onChange={(v) => update("equipment", v)}
-            />
+            <div className="grid grid-cols-2 gap-2">
+              {EQUIPMENT.map((e) => (
+                <button
+                  key={e.value}
+                  type="button"
+                  onClick={() => update("equipment", e.value)}
+                  className={`flex flex-col items-center gap-1.5 rounded-2xl border-2 p-4 text-center tap transition-colors ${
+                    profile.equipment === e.value
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-card text-foreground"
+                  }`}
+                >
+                  <span className="text-2xl">{e.emoji}</span>
+                  <span className="text-sm font-semibold leading-tight">{e.label}</span>
+                  <span className="text-[11px] text-muted-foreground leading-tight">{e.sub}</span>
+                </button>
+              ))}
+            </div>
+
+            {profile.equipment === "mixed" && (
+              <div className="mt-4 space-y-2">
+                <p className="text-sm font-medium">Which equipment will you use?</p>
+                <div className="flex flex-wrap gap-2">
+                  {EQUIPMENT_MIX_OPTIONS.map((opt) => {
+                    const checked = profile.equipmentMix?.includes(opt) ?? false;
+                    return (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() =>
+                          update(
+                            "equipmentMix",
+                            checked
+                              ? (profile.equipmentMix ?? []).filter((x) => x !== opt)
+                              : [...(profile.equipmentMix ?? []), opt]
+                          )
+                        }
+                        className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors tap ${
+                          checked
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="mt-6">
               <Label>Experience level</Label>
               <div className="mt-2">

@@ -52,6 +52,7 @@ interface AppState {
 
   // exercises
   addCustomExercise: (e: { name: string; muscleGroup: Exercise["muscleGroup"]; equipment: string }) => Promise<Exercise>;
+  fetchExerciseGuide: (e: { name: string; muscleGroup?: Exercise["muscleGroup"]; equipment?: string }) => Promise<Exercise>;
 
   // active workout
   startWorkout: (routine?: Routine) => void;
@@ -164,6 +165,7 @@ export const useStore = create<AppState>()(
                   goal: data.profile.goal,
                   category: data.profile.category ?? "mixed",
                   equipment: data.profile.equipment,
+                  equipmentMix: data.profile.equipmentMix,
                   experience: data.profile.experience,
                   daysPerWeek: data.profile.daysPerWeek,
                   sessionMinutes: data.profile.sessionMinutes,
@@ -257,6 +259,16 @@ export const useStore = create<AppState>()(
         set((s) => ({
           exercises: s.exercises.some((x) => x.id === exercise.id)
             ? s.exercises.map((x) => (x.id === exercise.id ? exercise : x))
+            : [...s.exercises, exercise],
+        }));
+        return exercise;
+      },
+
+      fetchExerciseGuide: async (e) => {
+        const exercise = await api.exerciseGuide(e);
+        set((s) => ({
+          exercises: s.exercises.some((x) => x.id === exercise.id)
+            ? s.exercises.map((x) => (x.id === exercise.id ? { ...x, ...exercise } : x))
             : [...s.exercises, exercise],
         }));
         return exercise;

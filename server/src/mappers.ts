@@ -14,6 +14,7 @@ export function rowToProfile(row: any): UserProfile & { onboarded: boolean } {
     name: row.name ?? "",
     goal: row.goal,
     equipment: row.equipment,
+    equipmentMix: row.equipment_mix ?? undefined,
     experience: row.experience,
     category: row.category ?? "mixed",
     daysPerWeek: row.days_per_week,
@@ -30,6 +31,7 @@ export function profileToRow(userId: string, p: Partial<UserProfile> & { onboard
   if (p.name !== undefined) row.name = p.name;
   if (p.goal !== undefined) row.goal = p.goal;
   if (p.equipment !== undefined) row.equipment = p.equipment;
+  if (p.equipmentMix !== undefined) row.equipment_mix = p.equipmentMix;
   if (p.experience !== undefined) row.experience = p.experience;
   if (p.category !== undefined) row.category = p.category;
   if (p.daysPerWeek !== undefined) row.days_per_week = p.daysPerWeek;
@@ -93,7 +95,8 @@ export function rowToExercise(row: any) {
     name: row.name,
     muscleGroup: row.muscle_group,
     equipment: row.equipment,
-    isCustom: true,
+    isCustom: row.source !== "ai",
+    guide: row.guide ?? undefined,
   };
 }
 

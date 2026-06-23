@@ -10,6 +10,9 @@ import { cn } from "@/lib/utils";
 
 type ChatMsg = { role: "user" | "model"; content: string; suggestions?: string[] };
 
+const MIX_OPTIONS = ["Calisthenics", "Weightlifting", "Cardio", "Yoga / Pilates"];
+const EQUIPMENT_MIX_OPTIONS = ["Bodyweight", "Dumbbells", "Resistance bands", "Kettlebells", "Barbell", "Cables / machines", "Pull-up bar", "Bench"];
+
 const COACH_SUGGESTIONS = [
   "Adjust my routines",
   "Make my program harder",
@@ -35,6 +38,10 @@ export function AiCoach() {
   const [done, setDone] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
+  const [mixPicker, setMixPicker] = useState(false);
+  const [mixSelected, setMixSelected] = useState<string[]>([]);
+  const [equipMixPicker, setEquipMixPicker] = useState(false);
+  const [equipMixSelected, setEquipMixSelected] = useState<string[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -148,7 +155,31 @@ export function AiCoach() {
       navigate("/routines");
       return;
     }
+    if (!coachMode && s === "Mixed") {
+      setMixSelected([]);
+      setMixPicker(true);
+      return;
+    }
+    if (!coachMode && s === "Custom mix") {
+      setEquipMixSelected([]);
+      setEquipMixPicker(true);
+      return;
+    }
     void sendText(s);
+  };
+
+  const handleMixConfirm = () => {
+    setMixPicker(false);
+    const label = mixSelected.length > 0 ? `Mixed (${mixSelected.join(", ")})` : "Mixed";
+    void sendText(label);
+  };
+
+  const handleEquipMixConfirm = () => {
+    setEquipMixPicker(false);
+    const label = equipMixSelected.length > 0
+      ? `Custom mix (${equipMixSelected.join(", ")})`
+      : "Custom mix";
+    void sendText(label);
   };
 
   // Only the most recent model message shows chips.
@@ -277,6 +308,72 @@ export function AiCoach() {
 
         <div ref={bottomRef} />
       </div>
+
+      {/* Mix style picker */}
+      {mixPicker && (
+        <div className="mb-2 rounded-2xl border border-border bg-card p-4 space-y-3">
+          <p className="text-sm font-semibold">Which styles do you want to mix?</p>
+          <div className="flex flex-wrap gap-2">
+            {MIX_OPTIONS.map((opt) => {
+              const checked = mixSelected.includes(opt);
+              return (
+                <button
+                  key={opt}
+                  onClick={() =>
+                    setMixSelected((prev) =>
+                      checked ? prev.filter((x) => x !== opt) : [...prev, opt]
+                    )
+                  }
+                  className={cn(
+                    "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors tap",
+                    checked
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
+                  )}
+                >
+                  {opt}
+                </button>
+              );
+            })}
+          </div>
+          <Button size="sm" className="w-full" onClick={handleMixConfirm}>
+            Confirm selection
+          </Button>
+        </div>
+      )}
+
+      {/* Equipment mix picker */}
+      {equipMixPicker && (
+        <div className="mb-2 rounded-2xl border border-border bg-card p-4 space-y-3">
+          <p className="text-sm font-semibold">Which equipment will you use?</p>
+          <div className="flex flex-wrap gap-2">
+            {EQUIPMENT_MIX_OPTIONS.map((opt) => {
+              const checked = equipMixSelected.includes(opt);
+              return (
+                <button
+                  key={opt}
+                  onClick={() =>
+                    setEquipMixSelected((prev) =>
+                      checked ? prev.filter((x) => x !== opt) : [...prev, opt]
+                    )
+                  }
+                  className={cn(
+                    "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors tap",
+                    checked
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
+                  )}
+                >
+                  {opt}
+                </button>
+              );
+            })}
+          </div>
+          <Button size="sm" className="w-full" onClick={handleEquipMixConfirm}>
+            Confirm selection
+          </Button>
+        </div>
+      )}
 
       {/* Input */}
       <div className="flex gap-2 border-t border-border pt-3">

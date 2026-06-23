@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { asyncHandler, requireAuth, AuthedRequest } from "../middleware";
-import { generateProgram, refreshProgram, chatOnboarding, chatCoach, type ChatMessage } from "../gemini";
+import { generateProgram, refreshProgram, chatOnboarding, chatCoach, generateExerciseGuide, type ChatMessage } from "../gemini";
 import { buildRefreshSummary, SessionLite } from "../analytics";
 import { slugify } from "../util";
 import {
@@ -20,7 +20,8 @@ const uid = (req: AuthedRequest) => req.userId;
 const profileSchema = z.object({
   name: z.string().optional(),
   goal: z.enum(["strength", "hypertrophy", "weight_loss", "endurance", "general"]),
-  equipment: z.enum(["full_gym", "dumbbells", "bodyweight", "home_gym"]),
+  equipment: z.enum(["full_gym", "home_gym", "dumbbells", "bodyweight", "resistance_bands", "machines", "kettlebells", "mixed", "other"]),
+  equipmentMix: z.array(z.string()).optional(),
   experience: z.enum(["beginner", "intermediate", "advanced"]),
   category: z.enum(["calisthenics", "weightlifting", "cardio", "yoga_pilates", "mixed", "other"]).optional().default("mixed"),
   daysPerWeek: z.number().int().min(1).max(7),
@@ -279,6 +280,56 @@ dataRouter.post(
       .select().single();
     if (error) throw new Error(error.message);
     res.status(201).json(rowToExercise(data));
+  })
+);
+
+// ── AI exercise how-to guide (lazy: generated + cached on first view) ─────────
+dataRouter.post(
+  "/exercises/guide",
+  asyncHandler(async (req, res) => {
+    const userId = uid(req as AuthedRequest);
+    const body = z
+      .object({
+        name: z.string().min(1),
+        muscleGroup: z.string().optional(),
+        equipment: z.string().optional(),
+      })
+      .parse(req.body);
+    const slug = slugify(body.name);
+
+    // Return the cached guide if we've already generated it for this user.
+    const { data: existing } = await supabaseAdmin
+      .from("exercises")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("slug", slug)
+      .maybeSingle();
+    if (existing?.guide) {
+      res.json(rowToExercise(existing));
+      return;
+    }
+
+    const guide = await generateExerciseGuide(body.name, body.muscleGroup, body.equipment);
+
+    // Persist (upsert) so the exercise joins the library with its guide cached.
+    const { data, error } = await supabaseAdmin
+      .from("exercises")
+      .upsert(
+        {
+          user_id: userId,
+          slug,
+          name: body.name,
+          muscle_group: body.muscleGroup ?? existing?.muscle_group ?? "Full Body",
+          equipment: body.equipment ?? existing?.equipment ?? "Other",
+          guide,
+          source: existing?.source ?? "ai",
+        },
+        { onConflict: "user_id,slug" }
+      )
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    res.json(rowToExercise(data));
   })
 );
 

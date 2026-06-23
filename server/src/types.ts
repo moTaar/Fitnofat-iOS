@@ -1,7 +1,16 @@
 // Shared domain + AI contract types (mirrors the frontend).
 
 export type Goal = "strength" | "hypertrophy" | "weight_loss" | "endurance" | "general";
-export type Equipment = "full_gym" | "dumbbells" | "bodyweight" | "home_gym";
+export type Equipment =
+  | "full_gym"
+  | "home_gym"
+  | "dumbbells"
+  | "bodyweight"
+  | "resistance_bands"
+  | "machines"
+  | "kettlebells"
+  | "mixed"
+  | "other";
 export type Experience = "beginner" | "intermediate" | "advanced";
 export type WorkoutCategory = "calisthenics" | "weightlifting" | "cardio" | "yoga_pilates" | "mixed" | "other";
 export type MuscleGroup =
@@ -12,6 +21,7 @@ export interface UserProfile {
   name: string;
   goal: Goal;
   equipment: Equipment;
+  equipmentMix?: string[];
   experience: Experience;
   category: WorkoutCategory;
   daysPerWeek: number;

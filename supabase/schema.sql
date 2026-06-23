@@ -20,6 +20,7 @@ create table if not exists public.profiles (
   bodyweight_kg  numeric,
   units          text not null default 'kg',
   notes          text,
+  equipment_mix  jsonb,
   onboarded      boolean not null default false,
   updated_at     timestamptz not null default now()
 );
@@ -54,7 +55,9 @@ create table if not exists public.routines (
 );
 create index if not exists routines_user_idx on public.routines (user_id, position);
 
--- ── exercises (user custom only; the seed library lives in the client) ──────
+-- ── exercises (user custom + AI-generated; the seed library lives in the client) ──
+-- `guide` caches AI-generated how-to guidance for exercises the AI invents that
+-- aren't in the client seed library. `source` is 'custom' (user-added) or 'ai'.
 create table if not exists public.exercises (
   id           uuid primary key default gen_random_uuid(),
   user_id      uuid not null references auth.users (id) on delete cascade,
@@ -62,6 +65,8 @@ create table if not exists public.exercises (
   name         text not null,
   muscle_group text not null,
   equipment    text not null default 'Other',
+  guide        jsonb,
+  source       text not null default 'custom',
   created_at   timestamptz not null default now(),
   unique (user_id, slug)
 );

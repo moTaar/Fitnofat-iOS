@@ -59,10 +59,14 @@ const responseSchema = {
 };
 
 const EQUIPMENT_TEXT: Record<string, string> = {
-  full_gym: "a fully-equipped commercial gym (barbells, machines, cables, dumbbells)",
+  full_gym: "a fully-equipped commercial gym (barbells, machines, cables, dumbbells, kettlebells)",
   home_gym: "a home gym with a barbell, rack, bench and adjustable dumbbells",
-  dumbbells: "only a pair of adjustable dumbbells and a bench",
+  dumbbells: "adjustable dumbbells (and a bench if needed)",
   bodyweight: "bodyweight only (no equipment)",
+  resistance_bands: "resistance bands only (loop bands and/or tube bands with handles)",
+  machines: "gym machines only (no free weights — cables, leg press, chest press, etc.)",
+  kettlebells: "kettlebells only",
+  other: "equipment the athlete describes in their notes",
 };
 
 const CATEGORY_TEXT: Record<string, string> = {
@@ -82,6 +86,13 @@ Pick exercises that fit the available equipment AND the athlete's preferred work
 Distribute volume sensibly across the week.
 muscleGroup MUST be one of: Chest, Back, Shoulders, Biceps, Triceps, Legs, Glutes, Core, Cardio, Full Body.`;
 
+function equipmentDescription(p: UserProfile): string {
+  if (p.equipment === "mixed" && p.equipmentMix?.length) {
+    return `a custom mix: ${p.equipmentMix.join(", ")}`;
+  }
+  return EQUIPMENT_TEXT[p.equipment] ?? "equipment the athlete describes in their notes";
+}
+
 function generatePrompt(p: UserProfile): string {
   return `Create a personalized training program.
 
@@ -90,7 +101,7 @@ Athlete profile:
 - Primary goal: ${goalLabel(p.goal)}
 - Preferred workout style: ${CATEGORY_TEXT[p.category ?? "mixed"]}
 - Experience: ${p.experience}
-- Equipment available: ${EQUIPMENT_TEXT[p.equipment]}
+- Equipment available: ${equipmentDescription(p)}
 - Training days per week: ${p.daysPerWeek}
 - Target session length: ${p.sessionMinutes} minutes
 - Units: ${p.units}
@@ -109,7 +120,7 @@ Athlete profile:
 - Goal: ${goalLabel(p.goal)}
 - Preferred workout style: ${CATEGORY_TEXT[p.category ?? "mixed"]}
 - Experience: ${p.experience}
-- Equipment: ${EQUIPMENT_TEXT[p.equipment]}
+- Equipment: ${equipmentDescription(p)}
 - Days per week: ${p.daysPerWeek}
 - Units: ${p.units}
 
@@ -234,7 +245,7 @@ const CHAT_SYSTEM = `You are ForgeFit's friendly AI personal-training coach doin
 Ask ONE concise, friendly question at a time to learn:
 1. Primary fitness goal (strength / muscle / weight loss / endurance / general fitness)
 2. Preferred workout style / category (calisthenics / weightlifting / cardio / yoga-pilates / mixed / other)
-3. Available equipment (full gym / home gym with barbell & rack / dumbbells only / bodyweight only)
+3. Available equipment — pick the best match: full gym / home gym (barbell + rack) / dumbbells / bodyweight only / resistance bands / machines only / kettlebells / a custom mix of several / other
 4. Training experience level (beginner <1yr / intermediate 1–3yr / advanced 3+yr)
 5. Days per week they can train (1–6)
 6. Target session length in minutes (30 / 45 / 60 / 90)
@@ -249,7 +260,7 @@ IMPORTANT — after every question (not at [DONE]), append a suggestions line on
 Tailor the options to the question. Examples:
 - Goal question → [SUGGESTIONS: Build muscle | Lose weight | Get stronger | Stay fit]
 - Category question → [SUGGESTIONS: Calisthenics | Weightlifting | Mixed | Cardio]
-- Equipment question → [SUGGESTIONS: Full gym | Home gym | Dumbbells only | Bodyweight only]
+- Equipment question → [SUGGESTIONS: Full gym | Bodyweight | Dumbbells | Resistance bands | Custom mix]
 - Experience question → [SUGGESTIONS: Beginner (<1 yr) | Intermediate (1–3 yrs) | Advanced (3+ yrs)]
 - Days/week question → [SUGGESTIONS: 3 days | 4 days | 5 days | 2 days]
 - Session length question → [SUGGESTIONS: 45 min | 60 min | 30 min | 90 min]
@@ -260,9 +271,29 @@ Use 2–5 short options that cover the most common answers. Keep each option und
 
 Once you have answers for items 1–7, end with a short friendly closing sentence then:
 [DONE]
-{"goal":"<strength|hypertrophy|weight_loss|endurance|general>","category":"<calisthenics|weightlifting|cardio|yoga_pilates|mixed|other>","equipment":"<full_gym|home_gym|dumbbells|bodyweight>","experience":"<beginner|intermediate|advanced>","daysPerWeek":<1-6>,"sessionMinutes":<30|45|60|90>,"units":"<kg|lb>","name":"<name or empty string>","notes":"<notes or empty string>"}
+{"goal":"<strength|hypertrophy|weight_loss|endurance|general>","category":"<calisthenics|weightlifting|cardio|yoga_pilates|mixed|other>","equipment":"<full_gym|home_gym|dumbbells|bodyweight|resistance_bands|machines|kettlebells|mixed|other>","equipmentMix":["item1","item2"],"experience":"<beginner|intermediate|advanced>","daysPerWeek":<1-6>,"sessionMinutes":<30|45|60|90>,"units":"<kg|lb>","name":"<name or empty string>","notes":"<notes or empty string>"}
+Note: only include "equipmentMix" when equipment is "mixed". List the specific items the user mentioned (e.g. ["Dumbbells","Resistance bands","Bodyweight"]).
 
 Do NOT include [SUGGESTIONS: ...] on the [DONE] line.`;
+
+function detectOnboardingSuggestions(text: string): string[] | undefined {
+  const t = text.toLowerCase();
+  if (/goal|aim|objective|trying to|want to achieve|looking to/.test(t))
+    return ["Build muscle", "Lose weight", "Get stronger", "Stay fit"];
+  if (/style|type of (workout|training)|calisthenics|weightlifting|cardio|yoga|mix/.test(t))
+    return ["Calisthenics", "Weightlifting", "Cardio", "Mixed"];
+  if (/equipment|gym|dumbbells|bodyweight|resistance|machine|kettlebell/.test(t))
+    return ["Full gym", "Bodyweight", "Dumbbells", "Resistance bands", "Custom mix"];
+  if (/experience|beginner|intermediate|advanced|how long.*train|trained|training for/.test(t))
+    return ["Beginner (<1 yr)", "Intermediate (1–3 yrs)", "Advanced (3+ yrs)"];
+  if (/days.*(per|a) week|how (many|often).*day|times.*(per|a) week|days.*train/.test(t))
+    return ["3 days", "4 days", "5 days", "2 days"];
+  if (/minute|session.*(length|long|duration)|how long.*session|long.*workout|each.*session/.test(t))
+    return ["45 min", "60 min", "30 min", "90 min"];
+  if (/unit|kg\b|lb\b|pound|kilogram/.test(t))
+    return ["kg", "lb"];
+  return undefined;
+}
 
 export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply> {
   const key = config.geminiApiKey.trim();
@@ -308,11 +339,13 @@ export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply
     try {
       const p = JSON.parse(jsonStr);
       const VALID_CATS = ["calisthenics","weightlifting","cardio","yoga_pilates","mixed","other"];
+      const VALID_EQ = ["full_gym","home_gym","dumbbells","bodyweight","resistance_bands","machines","kettlebells","mixed","other"];
       const profile: UserProfile = {
         name: p.name ?? "",
         goal: p.goal ?? "general",
         category: VALID_CATS.includes(p.category) ? p.category : "mixed",
-        equipment: p.equipment ?? "full_gym",
+        equipment: VALID_EQ.includes(p.equipment) ? p.equipment : "full_gym",
+        equipmentMix: Array.isArray(p.equipmentMix) && p.equipmentMix.length ? p.equipmentMix : undefined,
         experience: p.experience ?? "beginner",
         daysPerWeek: Number(p.daysPerWeek) || 3,
         sessionMinutes: Number(p.sessionMinutes) || 60,
@@ -327,10 +360,10 @@ export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply
 
   // Parse optional [SUGGESTIONS: a | b | c] marker from the question.
   const sugMatch = raw.match(/\[SUGGESTIONS:\s*([^\]]+)\]/i);
-  const suggestions = sugMatch
-    ? sugMatch[1].split("|").map((s) => s.trim()).filter(Boolean)
-    : undefined;
   const text = raw.replace(/\[SUGGESTIONS:[^\]]*\]/i, "").trim();
+  // Always guarantee topic-appropriate chips — Gemini sometimes omits or repeats wrong ones.
+  const suggestions = detectOnboardingSuggestions(text) ??
+    (sugMatch ? sugMatch[1].split("|").map((s) => s.trim()).filter(Boolean) : undefined);
 
   return { type: "question", text, suggestions };
 }
@@ -349,11 +382,15 @@ export interface CoachReply {
 
 function coachSystem(p: UserProfile, routines: unknown): string {
   const catLabel = CATEGORY_TEXT[p.category ?? "mixed"] ?? "Mixed training";
+  const eqLabel = p.equipment === "mixed" && p.equipmentMix?.length
+    ? `Custom mix: ${p.equipmentMix.join(", ")}`
+    : EQUIPMENT_TEXT[p.equipment] ?? p.equipment;
   return `You are ForgeFit's ongoing AI personal coach for an athlete who has ALREADY completed onboarding.
 You already know everything about them — NEVER re-ask onboarding questions (goal, equipment, days, etc.).
 
 Athlete profile (JSON):
 ${JSON.stringify(p)}
+Equipment detail: ${eqLabel}
 Preferred workout style: ${catLabel}
 
 Their current routines (JSON):
@@ -438,6 +475,118 @@ export async function chatCoach(
     : undefined;
   const text = raw.replace(/\[SUGGESTIONS:[^\]]*\]/i, "").trim();
   return { type: "message", text, suggestions };
+}
+
+// ── On-demand exercise how-to guide generation ───────────────────────────────
+// When the AI invents an exercise that isn't in the client's hardcoded guide
+// library, we generate full form guidance the first time a user opens its
+// "How to perform" sheet, then cache it (server-side) so it's permanent.
+
+export interface ExerciseGuide {
+  primaryMuscles: string[];
+  secondaryMuscles?: string[];
+  steps: string[];
+  cues: string[];
+  mistakes: string[];
+  breathing?: string;
+}
+
+const guideSchema = {
+  type: "object",
+  properties: {
+    primaryMuscles: { type: "array", items: { type: "string" } },
+    secondaryMuscles: { type: "array", items: { type: "string" } },
+    steps: { type: "array", items: { type: "string" } },
+    cues: { type: "array", items: { type: "string" } },
+    mistakes: { type: "array", items: { type: "string" } },
+    breathing: { type: "string" },
+  },
+  required: ["primaryMuscles", "steps", "cues", "mistakes", "breathing"],
+};
+
+const GUIDE_SYSTEM = `You are an elite strength & conditioning coach writing a concise how-to guide for a single exercise.
+Return ONLY valid JSON matching the schema — no prose outside JSON.
+- primaryMuscles / secondaryMuscles: anatomical muscle names. Use these exact terms where applicable so they map to the app's muscle diagram: Chest, Upper Chest, Front Delts, Side Delts, Rear Delts, Shoulders, Traps, Biceps, Triceps, Forearms, Lats, Back, Upper Back, Lower Back, Abs, Core, Obliques, Quads, Hamstrings, Glutes, Calves. (Cardio moves can list "Cardio".)
+- steps: 2–4 short, ordered execution instructions.
+- cues: 2–3 form tips that improve quality/safety.
+- mistakes: 2–3 common errors to avoid.
+- breathing: one short sentence on breathing pattern.
+Keep every string concise and practical.`;
+
+export async function generateExerciseGuide(
+  name: string,
+  muscleGroup?: string,
+  equipment?: string
+): Promise<ExerciseGuide> {
+  const key = config.geminiApiKey.trim();
+  if (!key) return fallbackGuide(muscleGroup);
+
+  const prompt = `Exercise: ${name}
+${muscleGroup ? `Primary muscle group: ${muscleGroup}` : ""}
+${equipment ? `Equipment: ${equipment}` : ""}
+
+Write the how-to guide for performing "${name}" with correct form.`;
+
+  try {
+    const res = await fetch(ENDPOINT(config.geminiModel, key), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: GUIDE_SYSTEM }] },
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.4,
+          responseMimeType: "application/json",
+          responseSchema: guideSchema,
+        },
+      }),
+    });
+    if (!res.ok) {
+      if (res.status === 429) throw new Error("QUOTA_EXCEEDED");
+      throw new Error(`Gemini guide error ${res.status}`);
+    }
+    const data: any = await res.json();
+    const text: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error("Gemini returned an empty guide response.");
+    return normalizeGuide(JSON.parse(text) as ExerciseGuide, muscleGroup);
+  } catch (err) {
+    if (err instanceof Error && err.message === "QUOTA_EXCEEDED") throw err;
+    return fallbackGuide(muscleGroup);
+  }
+}
+
+function normalizeGuide(g: ExerciseGuide, muscleGroup?: string): ExerciseGuide {
+  const arr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.map(String).map((s) => s.trim()).filter(Boolean) : [];
+  const fb = fallbackGuide(muscleGroup);
+  const primary = arr(g.primaryMuscles);
+  const secondary = arr(g.secondaryMuscles);
+  return {
+    primaryMuscles: primary.length ? primary : fb.primaryMuscles,
+    secondaryMuscles: secondary.length ? secondary : undefined,
+    steps: arr(g.steps).length ? arr(g.steps) : fb.steps,
+    cues: arr(g.cues).length ? arr(g.cues) : fb.cues,
+    mistakes: arr(g.mistakes).length ? arr(g.mistakes) : fb.mistakes,
+    breathing: typeof g.breathing === "string" && g.breathing.trim() ? g.breathing.trim() : fb.breathing,
+  };
+}
+
+// Generic guidance used when there is no Gemini key or the call fails.
+function fallbackGuide(muscleGroup?: string): ExerciseGuide {
+  return {
+    primaryMuscles: muscleGroup && muscleGroup !== "Full Body" ? [muscleGroup] : [],
+    steps: [
+      "Set up in a stable position with a braced core and neutral spine.",
+      "Move through a full, controlled range of motion.",
+      "Pause briefly at the peak contraction, then return under control.",
+    ],
+    cues: [
+      "Control both the lifting and lowering phases — no momentum.",
+      "Keep tension on the target muscle throughout.",
+    ],
+    mistakes: ["Using momentum to move the weight.", "Cutting the range of motion short."],
+    breathing: "Exhale during the effort, inhale on the return.",
+  };
 }
 
 // ── Local deterministic fallback (works with no Gemini key) ───────────────────

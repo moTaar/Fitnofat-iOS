@@ -173,6 +173,11 @@ export const api = {
   createExercise: (e: { name: string; muscleGroup: string; equipment: string }) =>
     request<Exercise>("/api/exercises", { method: "POST", body: JSON.stringify(e) }),
 
+  // Lazily generate (and cache) an AI how-to guide for an exercise that isn't
+  // in the client seed library. Returns the exercise with its `guide` populated.
+  exerciseGuide: (e: { name: string; muscleGroup?: string; equipment?: string }) =>
+    request<Exercise>("/api/exercises/guide", { method: "POST", body: JSON.stringify(e) }),
+
   saveWorkouts: (workouts: unknown) =>
     request<WorkoutSession[]>("/api/workouts", { method: "POST", body: JSON.stringify(workouts) }),
 
