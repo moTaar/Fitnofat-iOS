@@ -278,9 +278,9 @@ Do NOT include [SUGGESTIONS: ...] on the [DONE] line.`;
 
 function detectOnboardingSuggestions(text: string): string[] | undefined {
   const t = text.toLowerCase();
-  if (/goal|aim|objective|trying to|want to achieve|looking to/.test(t))
+  if (/what.*goal|your goal\?|fitness goal|main goal|primary goal|trying to achieve|what.*aim|what.*objective|what.*looking to/.test(t))
     return ["Build muscle", "Lose weight", "Get stronger", "Stay fit"];
-  if (/style|type of (workout|training)|calisthenics|weightlifting|cardio|yoga|mix/.test(t))
+  if (/workout style|training style|type of (workout|training)|calisthenics|weightlifting|cardio|yoga|pilates/.test(t))
     return ["Calisthenics", "Weightlifting", "Cardio", "Mixed"];
   if (/equipment|gym|dumbbells|bodyweight|resistance|machine|kettlebell/.test(t))
     return ["Full gym", "Bodyweight", "Dumbbells", "Resistance bands", "Custom mix"];
