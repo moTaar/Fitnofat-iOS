@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+**/node_modules/
+
+# builds
+web/dist/
+web/dev-dist/
+server/dist/
+**/*.tsbuildinfo
+
+# env
+.env
+.env.local
+**/.env
+**/.env.local
+
+# logs / os
+*.log
+.DS_Store

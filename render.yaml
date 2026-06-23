@@ -1,0 +1,57 @@
+# Render Blueprint — deploys the ForgeFit API (web service) and the PWA (static site).
+# In the Render dashboard: New → Blueprint, point it at this repo.
+# Fill in the Supabase + Gemini values (marked sync:false) per environment.
+
+services:
+  # ── Backend API ─────────────────────────────────────────────────────────
+  - type: web
+    name: forgefit-api
+    runtime: node
+    rootDir: server
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: PORT
+        value: "8080"
+      # Set to the deployed static site URL once known, e.g.
+      # https://forgefit-web.onrender.com
+      - key: CORS_ORIGIN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
+
+  # ── Frontend PWA (static) ────────────────────────────────────────────────
+  - type: web
+    name: forgefit-web
+    runtime: static
+    rootDir: web
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      # Set to the deployed API URL, e.g. https://forgefit-api.onrender.com
+      - key: VITE_API_URL
+        sync: false
+    routes:
+      # SPA fallback so client-side routes resolve.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /sw.js
+        name: Cache-Control
+        value: no-cache
+      - path: /manifest.webmanifest
+        name: Cache-Control
+        value: no-cache

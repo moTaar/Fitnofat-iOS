@@ -1,0 +1,163 @@
+import { useMemo, useState } from "react";
+import { Search, Plus, Dumbbell, Check } from "lucide-react";
+import { useStore } from "@/lib/store";
+import { MUSCLE_GROUPS } from "@/lib/exercises";
+import type { MuscleGroup } from "@/lib/types";
+import { Input, Label } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/misc";
+import { Modal } from "@/components/ui/modal";
+import { cn } from "@/lib/utils";
+
+export function LibraryPage() {
+  const exercises = useStore((s) => s.exercises);
+  const addCustomExercise = useStore((s) => s.addCustomExercise);
+
+  const [query, setQuery] = useState("");
+  const [group, setGroup] = useState<MuscleGroup | "All">("All");
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newGroup, setNewGroup] = useState<MuscleGroup>("Chest");
+  const [newEquip, setNewEquip] = useState("Barbell");
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return exercises.filter(
+      (e) =>
+        (group === "All" || e.muscleGroup === group) &&
+        (!q || e.name.toLowerCase().includes(q))
+    );
+  }, [exercises, query, group]);
+
+  const grouped = useMemo(() => {
+    const map = new Map<MuscleGroup, typeof filtered>();
+    for (const e of filtered) {
+      const arr = map.get(e.muscleGroup) ?? [];
+      arr.push(e);
+      map.set(e.muscleGroup, arr);
+    }
+    return MUSCLE_GROUPS.map((g) => ({ group: g, items: map.get(g) ?? [] })).filter(
+      (s) => s.items.length > 0
+    );
+  }, [filtered]);
+
+  const create = async () => {
+    if (!newName.trim()) return;
+    try {
+      await addCustomExercise({ name: newName.trim(), muscleGroup: newGroup, equipment: newEquip });
+      setNewName("");
+      setCreating(false);
+    } catch {
+      /* surfaced inline could be added; keep modal open on failure */
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between pt-2">
+        <h1 className="text-2xl font-extrabold tracking-tight">Exercises</h1>
+        <Button size="sm" onClick={() => setCreating(true)}>
+          <Plus className="h-4 w-4" /> Custom
+        </Button>
+      </div>
+
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          className="pl-9"
+          placeholder="Search exercises…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
+
+      <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+        {(["All", ...MUSCLE_GROUPS] as const).map((g) => (
+          <button
+            key={g}
+            onClick={() => setGroup(g)}
+            className={cn(
+              "shrink-0 rounded-full px-3 py-1.5 text-xs font-medium tap",
+              group === g ? "bg-primary text-primary-foreground" : "bg-secondary"
+            )}
+          >
+            {g}
+          </button>
+        ))}
+      </div>
+
+      <div className="space-y-5">
+        {grouped.map(({ group: g, items }) => (
+          <div key={g}>
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              {g} <span className="opacity-60">({items.length})</span>
+            </h2>
+            <div className="space-y-1.5">
+              {items.map((e) => (
+                <div
+                  key={e.id}
+                  className="flex items-center gap-3 rounded-xl border border-border bg-card p-3"
+                >
+                  <div className="rounded-lg bg-secondary p-2 text-muted-foreground">
+                    <Dumbbell className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-medium leading-tight">{e.name}</p>
+                    <p className="text-xs text-muted-foreground">{e.equipment}</p>
+                  </div>
+                  {e.isCustom && <Badge variant="outline">Custom</Badge>}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+        {filtered.length === 0 && (
+          <p className="py-10 text-center text-sm text-muted-foreground">No exercises found.</p>
+        )}
+      </div>
+
+      <Modal open={creating} onClose={() => setCreating(false)} title="New exercise">
+        <div className="space-y-4">
+          <div>
+            <Label>Name</Label>
+            <Input
+              autoFocus
+              className="mt-1.5"
+              placeholder="e.g. Cable Pullover"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label>Muscle group</Label>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {MUSCLE_GROUPS.map((g) => (
+                <button
+                  key={g}
+                  onClick={() => setNewGroup(g)}
+                  className={cn(
+                    "rounded-full px-3 py-1 text-xs font-medium tap",
+                    newGroup === g ? "bg-primary text-primary-foreground" : "bg-secondary"
+                  )}
+                >
+                  {g}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <Label>Equipment</Label>
+            <Input
+              className="mt-1.5"
+              value={newEquip}
+              onChange={(e) => setNewEquip(e.target.value)}
+            />
+          </div>
+          <Button className="w-full" onClick={create} disabled={!newName.trim()}>
+            <Check className="h-4 w-4" /> Add to library
+          </Button>
+        </div>
+      </Modal>
+    </div>
+  );
+}

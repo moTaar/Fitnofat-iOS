@@ -1,0 +1,108 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Dumbbell, Mail, Lock, User, AlertCircle, ArrowRight } from "lucide-react";
+import { useStore } from "@/lib/store";
+import { Button } from "@/components/ui/button";
+import { Input, Label } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/misc";
+
+export function Login() {
+  const navigate = useNavigate();
+  const login = useStore((s) => s.login);
+  const signup = useStore((s) => s.signup);
+
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      if (mode === "signup") await signup(email.trim(), password, name.trim());
+      else await login(email.trim(), password);
+      navigate("/", { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col justify-center px-6 py-10">
+      <div className="mb-8 flex flex-col items-center text-center">
+        <div className="rounded-3xl bg-gradient-to-br from-primary to-orange-600 p-4 text-white shadow-lg shadow-primary/30">
+          <Dumbbell className="h-9 w-9" />
+        </div>
+        <h1 className="mt-5 text-3xl font-extrabold tracking-tight">ForgeFit</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {mode === "login" ? "Welcome back — let’s train." : "Create your account to get started."}
+        </p>
+      </div>
+
+      <form onSubmit={submit} className="space-y-4">
+        {mode === "signup" && (
+          <div>
+            <Label htmlFor="name">Name (optional)</Label>
+            <div className="relative mt-1.5">
+              <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input id="name" className="pl-9" placeholder="Alex" value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+          </div>
+        )}
+        <div>
+          <Label htmlFor="email">Email</Label>
+          <div className="relative mt-1.5">
+            <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="email" type="email" autoComplete="email" required className="pl-9"
+              placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+        </div>
+        <div>
+          <Label htmlFor="password">Password</Label>
+          <div className="relative mt-1.5">
+            <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="password" type="password"
+              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              required minLength={6} className="pl-9" placeholder="••••••••"
+              value={password} onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+        </div>
+
+        {error && (
+          <div className="flex gap-2 rounded-xl bg-destructive/10 p-3 text-sm text-destructive">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            {error}
+          </div>
+        )}
+
+        <Button type="submit" size="lg" className="w-full" disabled={busy}>
+          {busy ? <Spinner /> : <ArrowRight className="h-5 w-5" />}
+          {mode === "login" ? "Log in" : "Create account"}
+        </Button>
+      </form>
+
+      <p className="mt-6 text-center text-sm text-muted-foreground">
+        {mode === "login" ? "New to ForgeFit?" : "Already have an account?"}{" "}
+        <button
+          onClick={() => {
+            setMode(mode === "login" ? "signup" : "login");
+            setError(null);
+          }}
+          className="font-semibold text-primary tap"
+        >
+          {mode === "login" ? "Sign up" : "Log in"}
+        </button>
+      </p>
+    </div>
+  );
+}
