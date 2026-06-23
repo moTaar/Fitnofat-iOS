@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { Home, Dumbbell, Library, BarChart3, Settings, WifiOff } from "lucide-react";
+import { Home, Dumbbell, Sparkles, BarChart3, Settings, WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOnlineStatus } from "@/lib/hooks";
 import { useStore } from "@/lib/store";
@@ -9,7 +9,7 @@ import { RestTimerBar } from "./RestTimerBar";
 const NAV = [
   { to: "/", label: "Home", icon: Home, end: true },
   { to: "/routines", label: "Routines", icon: Dumbbell, end: false },
-  { to: "/library", label: "Library", icon: Library, end: false },
+  { to: "/ai-coach", label: "AI Coach", icon: Sparkles, end: false },
   { to: "/history", label: "History", icon: BarChart3, end: false },
   { to: "/settings", label: "Settings", icon: Settings, end: false },
 ];
