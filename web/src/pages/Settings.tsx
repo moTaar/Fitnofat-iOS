@@ -122,7 +122,7 @@ export function SettingsPage() {
         </button>
       </SettingGroup>
 
-      <p className="pb-4 text-center text-xs text-muted-foreground">ForgeFit · v0.1.0 · PWA</p>
+      <p className="pb-4 text-center text-xs text-muted-foreground">ForgeFit · v{__APP_VERSION__} · PWA</p>
 
       <Modal open={confirmLogout} onClose={() => setConfirmLogout(false)} title="Log out?">
         <p className="text-sm text-muted-foreground">

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Play, Plus, Sparkles, Flame, Calendar, Bell, BellRing,
-  TrendingUp, Star, ChevronRight, Check, AlertCircle,
+  TrendingUp, Star, ChevronRight, Check,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { weekStats, currentStreak } from "@/lib/analytics";
@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge, Progress, Spinner } from "@/components/ui/misc";
 import { Modal } from "@/components/ui/modal";
+import { toast } from "@/lib/toast";
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -30,7 +31,6 @@ export function Dashboard() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [refreshResult, setRefreshResult] = useState<string | null>(null);
-  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const stats = useMemo(() => weekStats(history, profile.daysPerWeek), [history, profile]);
   const streak = useMemo(() => currentStreak(history), [history]);
@@ -56,12 +56,11 @@ export function Dashboard() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    setRefreshError(null);
     try {
       const summary = await refreshProgram();
       setRefreshResult(summary);
     } catch (e) {
-      setRefreshError(e instanceof Error ? e.message : "Refresh failed.");
+      toast.error(e instanceof Error ? e.message : "AI refresh failed. Try again.");
     } finally {
       setRefreshing(false);
     }
@@ -244,12 +243,6 @@ export function Dashboard() {
               {refreshing ? <Spinner /> : <Sparkles className="h-4 w-4" />}
               {refreshing ? "Analyzing your progress…" : "Refresh / Evolve program"}
             </Button>
-            {refreshError && (
-              <div className="mt-3 flex gap-2 rounded-xl bg-destructive/10 p-3 text-sm text-destructive">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                {refreshError}
-              </div>
-            )}
           </CardContent>
         </Card>
       )}

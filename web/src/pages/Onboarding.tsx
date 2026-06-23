@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowRight, ArrowLeft, Dumbbell, Sparkles, Target, Calendar,
-  Trophy, AlertCircle, Check,
+  Trophy, AlertCircle, Check, MessageCircle, Send, ClipboardList,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
+import { api } from "@/lib/api";
+import { toast } from "@/lib/toast";
 import type { Equipment, Experience, Goal, UserProfile } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
@@ -41,6 +43,14 @@ export function Onboarding() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Chat mode state
+  type ChatMsg = { role: "user" | "model"; content: string };
+  const [chatMode, setChatMode] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
   const [profile, setProfile] = useState<UserProfile>({
     name: "",
     goal: "hypertrophy",
@@ -65,8 +75,55 @@ export function Onboarding() {
       await generateProgram(profile);
       navigate("/", { replace: true });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to generate program.");
+      const msg = e instanceof Error ? e.message : "Failed to generate program.";
+      setError(msg);
+      toast.error(msg);
       setGenerating(false);
+    }
+  };
+
+  const startChat = async () => {
+    setChatMode(true);
+    setChatLoading(true);
+    try {
+      const reply = await api.aiChat([]);
+      setChatMessages([{ role: "model", content: reply.text }]);
+    } catch {
+      toast.error("Couldn't connect to the AI coach. Try the quick form instead.");
+      setChatMode(false);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const sendChatMessage = async () => {
+    const text = chatInput.trim();
+    if (!text || chatLoading) return;
+    const userMsg: ChatMsg = { role: "user", content: text };
+    const next = [...chatMessages, userMsg];
+    setChatMessages(next);
+    setChatInput("");
+    setChatLoading(true);
+    try {
+      const reply = await api.aiChat(next);
+      setChatMessages([...next, { role: "model", content: reply.text }]);
+      if (reply.type === "done" && reply.profile) {
+        setGenerating(true);
+        try {
+          await generateProgram(reply.profile);
+          navigate("/", { replace: true });
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Failed to generate program.");
+          setGenerating(false);
+          setChatMode(false);
+        }
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "AI error. Please try again.");
+      setChatMessages(next.slice(0, -1)); // remove the unsent user message
+    } finally {
+      setChatLoading(false);
+      setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     }
   };
 
@@ -87,6 +144,78 @@ export function Onboarding() {
           </p>
         </div>
         <Spinner className="text-primary" />
+      </div>
+    );
+  }
+
+  if (chatMode) {
+    return (
+      <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col px-4 py-4">
+        {/* Header */}
+        <div className="mb-3 flex items-center gap-3">
+          <div className="rounded-xl bg-primary p-2 text-primary-foreground">
+            <Dumbbell className="h-5 w-5" />
+          </div>
+          <span className="text-lg font-extrabold tracking-tight">ForgeFit</span>
+          <button
+            onClick={() => setChatMode(false)}
+            className="ml-auto text-sm text-muted-foreground underline underline-offset-2"
+          >
+            Use quick form
+          </button>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 space-y-3 overflow-y-auto pb-4 no-scrollbar">
+          {chatMessages.length === 0 && chatLoading && (
+            <div className="flex justify-start">
+              <div className="rounded-2xl rounded-tl-sm bg-card border border-border px-4 py-3">
+                <Spinner className="text-primary h-4 w-4" />
+              </div>
+            </div>
+          )}
+          {chatMessages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div
+                className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                  m.role === "user"
+                    ? "bg-primary text-primary-foreground rounded-tr-sm"
+                    : "bg-card border border-border rounded-tl-sm"
+                }`}
+              >
+                {m.content}
+              </div>
+            </div>
+          ))}
+          {chatLoading && chatMessages.length > 0 && (
+            <div className="flex justify-start">
+              <div className="rounded-2xl rounded-tl-sm bg-card border border-border px-4 py-3">
+                <Spinner className="text-primary h-4 w-4" />
+              </div>
+            </div>
+          )}
+          <div ref={chatBottomRef} />
+        </div>
+
+        {/* Input */}
+        <div className="flex gap-2 pt-2 border-t border-border">
+          <input
+            className="flex-1 rounded-xl border border-input bg-background px-4 py-3 text-base placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            placeholder="Type your answer…"
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendChatMessage()}
+            disabled={chatLoading}
+          />
+          <Button
+            size="lg"
+            onClick={sendChatMessage}
+            disabled={!chatInput.trim() || chatLoading}
+            className="shrink-0 px-4"
+          >
+            <Send className="h-5 w-5" />
+          </Button>
+        </div>
       </div>
     );
   }
@@ -134,6 +263,29 @@ export function Onboarding() {
                   <span className="text-sm font-medium">{t}</span>
                 </div>
               ))}
+            </div>
+            {/* Mode choice */}
+            <div className="mt-6 w-full space-y-2">
+              <button
+                onClick={startChat}
+                className="flex w-full items-center gap-3 rounded-2xl border-2 border-primary bg-primary/10 p-4 text-left tap"
+              >
+                <MessageCircle className="h-5 w-5 text-primary shrink-0" />
+                <div>
+                  <p className="font-semibold text-foreground">Chat with AI coach</p>
+                  <p className="text-xs text-muted-foreground">Conversational — AI asks you questions</p>
+                </div>
+              </button>
+              <button
+                onClick={next}
+                className="flex w-full items-center gap-3 rounded-2xl border border-border bg-card p-4 text-left tap"
+              >
+                <ClipboardList className="h-5 w-5 text-muted-foreground shrink-0" />
+                <div>
+                  <p className="font-semibold text-foreground">Quick form</p>
+                  <p className="text-xs text-muted-foreground">Pick your settings in 4 steps</p>
+                </div>
+              </button>
             </div>
           </div>
         )}
@@ -252,24 +404,24 @@ export function Onboarding() {
       </div>
 
       {/* Footer nav */}
-      <div className="mt-6 flex gap-3">
-        {step > 0 && (
+      {step > 0 && (
+        <div className="mt-6 flex gap-3">
           <Button variant="outline" size="lg" onClick={back} className="w-14 shrink-0 px-0">
             <ArrowLeft className="h-5 w-5" />
           </Button>
-        )}
-        {step < TOTAL_STEPS - 1 ? (
-          <Button size="lg" onClick={next} className="flex-1">
-            {step === 0 ? "Get started" : "Continue"}
-            <ArrowRight className="h-5 w-5" />
-          </Button>
-        ) : (
-          <Button size="lg" onClick={handleGenerate} className="flex-1">
-            <Sparkles className="h-5 w-5" />
-            Generate my program
-          </Button>
-        )}
-      </div>
+          {step < TOTAL_STEPS - 1 ? (
+            <Button size="lg" onClick={next} className="flex-1">
+              Continue
+              <ArrowRight className="h-5 w-5" />
+            </Button>
+          ) : (
+            <Button size="lg" onClick={handleGenerate} className="flex-1">
+              <Sparkles className="h-5 w-5" />
+              Generate my program
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

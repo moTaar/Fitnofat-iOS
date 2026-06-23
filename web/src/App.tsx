@@ -15,6 +15,7 @@ import { History } from "./pages/History";
 import { SettingsPage } from "./pages/Settings";
 import { Dumbbell } from "lucide-react";
 import { Spinner } from "./components/ui/misc";
+import { Toaster } from "./components/ui/toast";
 
 function Splash() {
   return (
@@ -71,6 +72,7 @@ export default function App() {
   if (authed && !bootstrapped) return <Splash />;
 
   return (
+    <>
     <Routes>
       <Route path="/login" element={authed ? <Navigate to="/" replace /> : <Login />} />
 
@@ -114,5 +116,7 @@ export default function App() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    <Toaster />
+    </>
   );
 }

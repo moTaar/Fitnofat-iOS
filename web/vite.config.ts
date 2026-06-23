@@ -2,8 +2,21 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import path from "node:path";
+import { execSync } from "node:child_process";
+
+function buildVersion(): string {
+  try {
+    const count = execSync("git rev-list --count HEAD", { encoding: "utf8" }).trim();
+    return `0.1.${count}`;
+  } catch {
+    return "0.1.0";
+  }
+}
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(buildVersion()),
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

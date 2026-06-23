@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { asyncHandler, requireAuth, AuthedRequest } from "../middleware";
-import { generateProgram, refreshProgram } from "../gemini";
+import { generateProgram, refreshProgram, chatOnboarding, type ChatMessage } from "../gemini";
 import { buildRefreshSummary, SessionLite } from "../analytics";
 import { slugify } from "../util";
 import {
@@ -316,5 +316,20 @@ dataRouter.delete(
       .from("workouts").delete().eq("id", req.params.id).eq("user_id", userId);
     if (error) throw new Error(error.message);
     res.status(204).end();
+  })
+);
+
+// ── AI conversational onboarding ─────────────────────────────────────────────
+const chatMessageSchema = z.object({
+  role: z.enum(["user", "model"]),
+  content: z.string(),
+});
+
+dataRouter.post(
+  "/ai/chat",
+  asyncHandler(async (req, res) => {
+    const { messages } = z.object({ messages: z.array(chatMessageSchema) }).parse(req.body);
+    const reply = await chatOnboarding(messages as ChatMessage[]);
+    res.json(reply);
   })
 );
