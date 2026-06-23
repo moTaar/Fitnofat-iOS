@@ -36,6 +36,7 @@ interface AppState {
   // AI / onboarding
   generateProgram: (profile: UserProfile) => Promise<void>;
   refreshProgram: () => Promise<string>;
+  applyProgramUpdate: (program: Program, aiRoutines: Routine[]) => void;
 
   // routines
   saveRoutine: (input: {
@@ -198,6 +199,11 @@ export const useStore = create<AppState>()(
         const manual = get().routines.filter((r) => r.source === "manual");
         set({ program, routines: [...routines, ...manual] });
         return program.summary ?? "";
+      },
+
+      applyProgramUpdate: (program, aiRoutines) => {
+        const manual = get().routines.filter((r) => r.source === "manual");
+        set({ program, routines: [...aiRoutines, ...manual] });
       },
 
       // ── routines ────────────────────────────────────────────────────────

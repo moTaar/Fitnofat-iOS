@@ -1,7 +1,8 @@
 import { useState } from "react";
 import {
-  Moon, Sun, Timer, Bell, Trash2, Weight, User, LogOut, Mail,
+  Moon, Sun, Timer, Bell, Trash2, Weight, User, LogOut, Mail, Sparkles,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useStore } from "@/lib/store";
 import { useTheme } from "@/lib/hooks";
 import { requestNotificationPermission, notificationsSupported } from "@/lib/notifications";
@@ -11,6 +12,7 @@ import { SegmentedControl } from "@/components/ui/misc";
 import { Modal } from "@/components/ui/modal";
 
 export function SettingsPage() {
+  const navigate = useNavigate();
   const { theme, toggle } = useTheme();
   const settings = useStore((s) => s.settings);
   const setSetting = useStore((s) => s.setSetting);
@@ -99,6 +101,20 @@ export function SettingsPage() {
             <Toggle on={settings.remindersEnabled} onClick={toggleReminders} />
           </Row>
         )}
+      </SettingGroup>
+
+      {/* AI Coach */}
+      <SettingGroup title="AI Coach">
+        <button
+          onClick={() => navigate("/ai-coach?restart=1")}
+          className="flex w-full items-center gap-3 p-4 text-left tap"
+        >
+          <Sparkles className="h-5 w-5 text-primary" />
+          <div>
+            <p className="font-medium">Rebuild program with AI</p>
+            <p className="text-xs text-muted-foreground">Re-run the setup interview from scratch</p>
+          </div>
+        </button>
       </SettingGroup>
 
       {/* Account actions */}

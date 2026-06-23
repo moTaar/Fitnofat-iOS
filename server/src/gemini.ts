@@ -319,6 +319,109 @@ export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply
   return { type: "question", text, suggestions };
 }
 
+// ── Ongoing coaching chat (for already-onboarded users) ──────────────────────
+// Unlike chatOnboarding, this never re-runs the interview. It answers training
+// questions and adjusts the existing routines on request, using a stronger model
+// with thinking + Google Search grounding for accurate, current advice.
+
+export interface CoachReply {
+  type: "message" | "update";
+  text: string;
+  suggestions?: string[];
+  program?: AIProgramResponse; // present when type === "update"
+}
+
+function coachSystem(p: UserProfile, routines: unknown): string {
+  return `You are ForgeFit's ongoing AI personal coach for an athlete who has ALREADY completed onboarding.
+You already know everything about them — NEVER re-ask onboarding questions (goal, equipment, days, etc.).
+
+Athlete profile (JSON):
+${JSON.stringify(p)}
+
+Their current routines (JSON):
+${JSON.stringify(routines)}
+
+How to behave:
+- Answer training, programming, form, recovery and nutrition questions concisely and accurately. Use evidence-based, up-to-date guidance (you have search grounding — use it for anything that benefits from current information).
+- Always honor the athlete's stated preferences (e.g. if they like biking or prefer calisthenics, weave that into your advice and any routine you build).
+- If a request is ambiguous, ask ONE short clarifying question — never a full questionnaire.
+
+When the athlete asks to change, adjust, improve, regenerate, rebuild, add to, or otherwise MODIFY their routines/program:
+1. Write a short confirmation sentence describing what you changed and why.
+2. Then, on a NEW line, output the marker [UPDATE] immediately followed by a single JSON object (and nothing after it) matching EXACTLY this schema:
+[UPDATE]
+{"programName":"...","weeks":<int>,"summary":"<concise explanation of the changes>","routines":[{"name":"...","dayLabel":"...","description":"...","exercises":[{"name":"...","muscleGroup":"<Chest|Back|Shoulders|Biceps|Triceps|Legs|Glutes|Core|Cardio|Full Body>","equipment":"...","restSeconds":<int>,"notes":"...","sets":[{"reps":<int>,"weight":<number>,"rpe":<number>}]}]}]}
+   - Build the COMPLETE updated program (all routines), not just the changed parts.
+   - Keep roughly ${p.daysPerWeek} routines unless the athlete asks for a different number.
+   - Apply their preferences and use realistic loads for a ${p.experience} athlete (weight 0 for bodyweight moves).
+
+For purely informational replies, do NOT output [UPDATE]. You MAY append a final line [SUGGESTIONS: option | option | option] with 2-4 short, relevant follow-up actions (e.g. "Make it harder | Add more cardio | Explain this plan").`;
+}
+
+export async function chatCoach(
+  messages: ChatMessage[],
+  profile: UserProfile,
+  routines: unknown
+): Promise<CoachReply> {
+  const key = config.geminiApiKey.trim();
+  if (!key) {
+    return {
+      type: "message",
+      text: "AI coaching is unavailable right now — the server has no Gemini API key configured. You can still edit your routines manually from the Routines tab.",
+    };
+  }
+
+  const contents = messages.map((m) => ({ role: m.role, parts: [{ text: m.content }] }));
+
+  const res = await fetch(ENDPOINT(config.coachModel, key), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: coachSystem(profile, routines) }] },
+      contents,
+      tools: [{ google_search: {} }],
+      generationConfig: { temperature: 0.7 },
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    if (res.status === 429) throw new Error("QUOTA_EXCEEDED");
+    throw new Error(`Gemini coach error ${res.status}: ${body.slice(0, 300)}`);
+  }
+
+  const data: any = await res.json();
+  const parts: any[] = data?.candidates?.[0]?.content?.parts ?? [];
+  const raw: string = parts.map((p) => p?.text ?? "").join("").trim();
+  if (!raw) throw new Error("Gemini returned an empty coach response.");
+
+  // Routine-update path.
+  const updIdx = raw.indexOf("[UPDATE]");
+  if (updIdx !== -1) {
+    const after = raw.slice(updIdx + 8);
+    const start = after.indexOf("{");
+    const end = after.lastIndexOf("}");
+    const closingText = raw.slice(0, updIdx).trim();
+    if (start !== -1 && end > start) {
+      try {
+        const program = normalize(JSON.parse(after.slice(start, end + 1)) as AIProgramResponse);
+        return { type: "update", text: closingText || "Done — I've updated your program.", program };
+      } catch {
+        // Fall through to a plain message if the JSON was malformed.
+        return { type: "message", text: closingText || "I tried to update your program but couldn't format the changes. Could you rephrase what you'd like changed?" };
+      }
+    }
+  }
+
+  // Conversational path with optional suggestion chips.
+  const sugMatch = raw.match(/\[SUGGESTIONS:\s*([^\]]+)\]/i);
+  const suggestions = sugMatch
+    ? sugMatch[1].split("|").map((s) => s.trim()).filter(Boolean)
+    : undefined;
+  const text = raw.replace(/\[SUGGESTIONS:[^\]]*\]/i, "").trim();
+  return { type: "message", text, suggestions };
+}
+
 // ── Local deterministic fallback (works with no Gemini key) ───────────────────
 function localProgram(profile: UserProfile): AIProgramResponse {
   const bw = profile.equipment === "bodyweight";

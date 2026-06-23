@@ -184,4 +184,10 @@ export const api = {
       "/api/ai/chat",
       { method: "POST", body: JSON.stringify({ messages }) }
     ),
+
+  aiCoach: (messages: { role: "user" | "model"; content: string }[]) =>
+    request<
+      | { type: "message"; text: string; suggestions?: string[] }
+      | { type: "update"; text: string; program: Program; routines: Routine[] }
+    >("/api/ai/coach", { method: "POST", body: JSON.stringify({ messages }) }),
 };

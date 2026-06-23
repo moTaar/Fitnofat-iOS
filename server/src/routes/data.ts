@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { asyncHandler, requireAuth, AuthedRequest } from "../middleware";
-import { generateProgram, refreshProgram, chatOnboarding, type ChatMessage } from "../gemini";
+import { generateProgram, refreshProgram, chatOnboarding, chatCoach, type ChatMessage } from "../gemini";
 import { buildRefreshSummary, SessionLite } from "../analytics";
 import { slugify } from "../util";
 import {
@@ -331,5 +331,35 @@ dataRouter.post(
     const { messages } = z.object({ messages: z.array(chatMessageSchema) }).parse(req.body);
     const reply = await chatOnboarding(messages as ChatMessage[]);
     res.json(reply);
+  })
+);
+
+// ── AI ongoing coaching (for onboarded users — answers + routine adjustments) ──
+dataRouter.post(
+  "/ai/coach",
+  asyncHandler(async (req, res) => {
+    const userId = uid(req as AuthedRequest);
+    const { messages } = z.object({ messages: z.array(chatMessageSchema) }).parse(req.body);
+
+    const profile = await loadProfile(userId);
+    if (!profile) {
+      res.status(400).json({ error: "Complete onboarding first" });
+      return;
+    }
+    const routines = await loadRoutines(userId);
+
+    const reply = await chatCoach(messages as ChatMessage[], profile, routines);
+
+    if (reply.type === "update" && reply.program) {
+      const result = await persistProgram(userId, profile, reply.program);
+      res.json({
+        type: "update",
+        text: reply.text,
+        program: result.program,
+        routines: result.routines,
+      });
+      return;
+    }
+    res.json({ type: "message", text: reply.text, suggestions: reply.suggestions });
   })
 );

@@ -21,4 +21,6 @@ export const config = {
   supabaseServiceKey: required("SUPABASE_SERVICE_ROLE_KEY"),
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
   geminiModel: process.env.GEMINI_MODEL ?? "gemini-2.5-flash",
+  // Stronger model with thinking + search grounding for routine-adjustment coaching.
+  coachModel: process.env.GEMINI_COACH_MODEL ?? "gemini-2.5-pro",
 };

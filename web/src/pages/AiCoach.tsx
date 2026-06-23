@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Sparkles, Send, RotateCcw, AlertTriangle, ClipboardList } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "@/lib/store";
 import { api } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -10,10 +10,24 @@ import { cn } from "@/lib/utils";
 
 type ChatMsg = { role: "user" | "model"; content: string; suggestions?: string[] };
 
+const COACH_SUGGESTIONS = [
+  "Adjust my routines",
+  "Make my program harder",
+  "Explain my current plan",
+  "Add more cardio",
+];
+
 export function AiCoach() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const generateProgram = useStore((s) => s.generateProgram);
+  const applyProgramUpdate = useStore((s) => s.applyProgramUpdate);
+  const onboarded = useStore((s) => s.onboarded);
   const profile = useStore((s) => s.profile);
+
+  // Coach mode for onboarded users; onboarding interview otherwise (or when
+  // explicitly restarted from Settings via ?restart=1).
+  const coachMode = onboarded && params.get("restart") !== "1";
 
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
@@ -24,7 +38,10 @@ export function AiCoach() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { void startConversation(); }, []);
+  useEffect(() => {
+    void startConversation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coachMode]);
 
   useEffect(() => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
@@ -34,6 +51,23 @@ export function AiCoach() {
     setMessages([]);
     setDone(false);
     setQuotaExceeded(false);
+    setInput("");
+
+    if (coachMode) {
+      // No API call — greet locally and offer quick actions. This avoids the
+      // onboarding loop and saves quota for real requests.
+      const name = profile?.name ? `, ${profile.name}` : "";
+      setMessages([
+        {
+          role: "model",
+          content: `Hey${name}! I'm your ForgeFit coach. Ask me anything about training, or tell me how you'd like to tweak your routines — I'll adjust them for you.`,
+          suggestions: COACH_SUGGESTIONS,
+        },
+      ]);
+      setTimeout(() => inputRef.current?.focus(), 100);
+      return;
+    }
+
     setLoading(true);
     try {
       const reply = await api.aiChat([]);
@@ -50,18 +84,35 @@ export function AiCoach() {
 
   const sendText = async (text: string) => {
     if (!text.trim() || loading || done || generating) return;
-    const userMsg: ChatMsg = { role: "user", content: text.trim() };
-    const next = [...messages, userMsg];
+    const next: ChatMsg[] = [...messages, { role: "user", content: text.trim() }];
     setMessages(next);
     setInput("");
     setLoading(true);
+    const payload = next.map(({ role, content }) => ({ role, content }));
+
     try {
-      const reply = await api.aiChat(next.map(({ role, content }) => ({ role, content })));
-      const withReply: ChatMsg[] = [
-        ...next,
-        { role: "model", content: reply.text, suggestions: reply.suggestions },
-      ];
-      setMessages(withReply);
+      if (coachMode) {
+        const reply = await api.aiCoach(payload);
+        if (reply.type === "update") {
+          applyProgramUpdate(reply.program, reply.routines);
+          toast.success("Routines updated!");
+          setMessages([
+            ...next,
+            {
+              role: "model",
+              content: `${reply.text}\n\n${reply.program.summary ?? ""}`.trim(),
+              suggestions: ["View my routines", "Tweak it further", "Explain the changes"],
+            },
+          ]);
+        } else {
+          setMessages([...next, { role: "model", content: reply.text, suggestions: reply.suggestions }]);
+        }
+        return;
+      }
+
+      // Onboarding interview flow.
+      const reply = await api.aiChat(payload);
+      setMessages([...next, { role: "model", content: reply.text, suggestions: reply.suggestions }]);
 
       if (reply.type === "done" && reply.profile) {
         setDone(true);
@@ -92,7 +143,15 @@ export function AiCoach() {
     }
   };
 
-  // The last model message is the only one that shows chips (avoids clutter).
+  const handleSuggestion = (s: string) => {
+    if (s === "View my routines") {
+      navigate("/routines");
+      return;
+    }
+    void sendText(s);
+  };
+
+  // Only the most recent model message shows chips.
   const lastModelIdx = [...messages].reverse().findIndex((m) => m.role === "model");
   const activeChipIdx = lastModelIdx === -1 ? -1 : messages.length - 1 - lastModelIdx;
 
@@ -107,7 +166,11 @@ export function AiCoach() {
           <div>
             <h1 className="text-lg font-extrabold leading-tight tracking-tight">AI Coach</h1>
             <p className="text-xs text-muted-foreground">
-              {profile?.name ? `Coaching ${profile.name}` : "Building your program"}
+              {coachMode
+                ? profile?.name
+                  ? `Coaching ${profile.name}`
+                  : "Ask anything · adjust routines"
+                : "Building your program"}
             </p>
           </div>
         </div>
@@ -117,27 +180,32 @@ export function AiCoach() {
           className="flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground tap disabled:opacity-40"
         >
           <RotateCcw className="h-3.5 w-3.5" />
-          Restart
+          {coachMode ? "Reset chat" : "Restart"}
         </button>
       </div>
 
       {/* Quota exceeded banner */}
       {quotaExceeded && (
-        <div className="flex flex-col gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 mb-3">
+        <div className="mb-3 flex flex-col gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
           <div className="flex gap-3">
-            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500 mt-0.5" />
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
             <div>
               <p className="font-semibold text-amber-500">Gemini quota exceeded</p>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                Your API key has hit its free-tier limit. The chat is unavailable until the quota
-                resets (usually a few hours). Use the quick form instead — it works offline too.
+                Your API key has hit its limit. The chat is unavailable until the quota resets
+                (usually a few hours).{" "}
+                {coachMode
+                  ? "You can still edit routines manually."
+                  : "Use the quick form instead — it works offline too."}
               </p>
             </div>
           </div>
-          <Button onClick={() => navigate("/onboarding")} className="w-full">
-            <ClipboardList className="h-4 w-4" />
-            Use quick setup form
-          </Button>
+          {!coachMode && (
+            <Button onClick={() => navigate("/onboarding")} className="w-full">
+              <ClipboardList className="h-4 w-4" />
+              Use quick setup form
+            </Button>
+          )}
         </div>
       )}
 
@@ -159,10 +227,10 @@ export function AiCoach() {
               )}
               <div
                 className={cn(
-                  "max-w-[78%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                  "max-w-[78%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed",
                   m.role === "user"
-                    ? "bg-primary text-primary-foreground rounded-tr-sm"
-                    : "bg-card border border-border rounded-tl-sm"
+                    ? "rounded-tr-sm bg-primary text-primary-foreground"
+                    : "rounded-tl-sm border border-border bg-card"
                 )}
               >
                 {m.content}
@@ -170,19 +238,24 @@ export function AiCoach() {
             </div>
 
             {/* Suggestion chips — only on the most recent model message */}
-            {m.role === "model" && i === activeChipIdx && m.suggestions && !loading && !done && !generating && (
-              <div className="ml-8 flex flex-wrap gap-2">
-                {m.suggestions.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => sendText(s)}
-                    className="rounded-full border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary tap hover:bg-primary/20 transition-colors"
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            )}
+            {m.role === "model" &&
+              i === activeChipIdx &&
+              m.suggestions &&
+              !loading &&
+              !done &&
+              !generating && (
+                <div className="ml-8 flex flex-wrap gap-2">
+                  {m.suggestions.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => handleSuggestion(s)}
+                      className="rounded-full border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary tap transition-colors hover:bg-primary/20"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
           </div>
         ))}
 
