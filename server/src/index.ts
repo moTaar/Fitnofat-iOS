@@ -19,7 +19,7 @@ app.use(
 app.use(express.json({ limit: "1mb" }));
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, ai: config.geminiApiKey ? "gemini" : "local-fallback" });
+  res.json({ ok: true, ai: config.geminiApiKey ? "gemini" : "local-fallback", corsOrigins: config.corsOrigins });
 });
 
 app.use("/api/auth", authRouter);
