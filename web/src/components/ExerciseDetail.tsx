@@ -4,6 +4,7 @@ import type { Exercise } from "@/lib/types";
 import { guideFor } from "@/lib/guides";
 import { Modal } from "@/components/ui/modal";
 import { Badge } from "@/components/ui/misc";
+import { MuscleMap } from "@/components/MuscleMap";
 
 // A bottom-sheet that explains how to perform an exercise correctly:
 // target muscles, step-by-step execution, form cues, common mistakes, breathing.
@@ -33,7 +34,22 @@ export function ExerciseDetail({
 
         {(g.primaryMuscles.length > 0 || g.secondaryMuscles?.length) && (
           <Section icon={<Target className="h-4 w-4" />} title="Muscles worked">
-            <div className="flex flex-wrap gap-1.5">
+            <div className="rounded-2xl border border-border bg-secondary/30 p-3">
+              <MuscleMap
+                primary={g.primaryMuscles}
+                secondary={g.secondaryMuscles}
+                className="mx-auto h-44 w-full max-w-[260px]"
+              />
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full bg-primary" /> Primary
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full bg-primary/40" /> Secondary
+                </span>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
               {g.primaryMuscles.map((m) => (
                 <Badge key={m}>{m}</Badge>
               ))}
