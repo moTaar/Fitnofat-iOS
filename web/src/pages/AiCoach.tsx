@@ -38,8 +38,8 @@ export function AiCoach() {
     try {
       const reply = await api.aiChat([]);
       setMessages([{ role: "model", content: reply.text }]);
-    } catch {
-      toast.error("Couldn't reach the AI coach. Check your connection and try again.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't reach the AI coach.");
     } finally {
       setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 100);

@@ -4,6 +4,7 @@ import { config } from "./config";
 import { errorHandler } from "./middleware";
 import { authRouter } from "./routes/auth";
 import { dataRouter } from "./routes/data";
+import { chatOnboarding } from "./gemini";
 
 const app = express();
 
@@ -20,6 +21,16 @@ app.use(express.json({ limit: "1mb" }));
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, ai: config.geminiApiKey ? "gemini" : "local-fallback", corsOrigins: config.corsOrigins });
+});
+
+// Public Gemini connectivity test — visit in browser to see the real error.
+app.get("/ai-test", async (_req, res) => {
+  try {
+    const reply = await chatOnboarding([]);
+    res.json({ ok: true, reply });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 app.use("/api/auth", authRouter);
