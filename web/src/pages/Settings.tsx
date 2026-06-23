@@ -184,7 +184,7 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
       onClick={onClick}
       aria-checked={on}
       role="switch"
-      className={`relative h-7 w-12 rounded-full transition-colors duration-200 tap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+      className={`relative h-7 w-12 rounded-full overflow-hidden transition-colors duration-200 tap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
         on ? "bg-primary" : "bg-secondary"
       }`}
     >
