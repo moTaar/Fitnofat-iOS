@@ -190,28 +190,85 @@ const SLUG_MAP: Record<string, keyof typeof ARCH> = {
   burpee: "cardio",
 };
 
-// Keyword fallback so AI-generated / custom exercises still animate sensibly.
-function guessArchetype(slug: string): keyof typeof ARCH {
+export type Archetype = keyof typeof ARCH;
+
+// Keyword fallback so AI-generated / custom exercises still animate sensibly
+// when the AI guide didn't supply a pattern. Order matters — the most specific
+// matches come first so e.g. "leg-extension"/"leg-curl" map to the seated
+// leg-machine and not to the triceps-extension / biceps-curl archetypes, and
+// cardio rowing isn't mistaken for a back row.
+function guessArchetype(slug: string): Archetype {
   const has = (...k: string[]) => k.some((x) => slug.includes(x));
-  if (has("bench", "push-up", "pushup", "chest-press")) return "press_flat";
-  if (has("squat", "leg-press")) return "squat";
-  if (has("deadlift", "hinge", "good-morning", "swing")) return "hinge";
-  if (has("overhead", "shoulder-press", "ohp", "military")) return "press_over";
-  if (has("pulldown", "pull-up", "pullup", "chin")) return "pulldown";
+
+  // Cardio / conditioning first (some names contain "row").
+  if (has("treadmill", "run", "sprint", "jog", "jump-rope", "jumprope", "skipping",
+          "burpee", "rowing", "rower", "row-erg", "bike", "cycl", "elliptical",
+          "stair", "jumping-jack", "high-knee", "mountain-climber", "skater"))
+    return "cardio";
+
+  // Single-joint leg machines BEFORE generic curl/extension.
+  if (has("leg-extension", "leg-curl", "hamstring-curl", "quad-extension", "knee-extension"))
+    return "leg_machine";
+  if (has("calf", "soleus", "heel-raise")) return "calf";
+
+  // Lower body.
+  if (has("lunge", "split-squat", "step-up", "step-down")) return "lunge";
+  if (has("hip-thrust", "thrust", "glute-bridge", "bridge", "kickback", "donkey-kick"))
+    return "bridge";
+  if (has("deadlift", "rdl", "good-morning", "hinge", "swing", "pull-through"))
+    return "hinge";
+  if (has("squat", "leg-press", "hack")) return "squat";
+
+  // Upper-body push.
+  if (has("overhead", "shoulder-press", "ohp", "military", "push-press", "arnold",
+          "handstand", "pike-push"))
+    return "press_over";
+  if (has("bench", "push-up", "pushup", "chest-press", "dip", "chaturanga", "floor-press"))
+    return "press_flat";
+
+  // Upper-body pull.
+  if (has("pulldown", "pull-up", "pullup", "chin-up", "chinup", "chin", "muscle-up"))
+    return "pulldown";
   if (has("row")) return "row";
+
+  // Shoulder raises / flyes.
+  if (has("lateral-raise", "lat-raise", "side-raise", "front-raise", "rear-delt",
+          "reverse-fly", "reverse-flye", "fly", "flye", "face-pull"))
+    return "raise";
+
+  // Arms (triceps before biceps; pushdown/skull/tricep are extensions).
+  if (has("pushdown", "skull", "tricep", "overhead-extension", "kickback")) return "extension";
   if (has("curl")) return "curl";
-  if (has("pushdown", "extension", "skull", "tricep")) return "extension";
-  if (has("lunge", "split-squat", "step-up")) return "lunge";
-  if (has("thrust", "bridge", "kickback")) return "bridge";
-  if (has("plank", "crunch", "twist", "rollout", "sit-up", "raise-leg", "leg-raise")) return "core";
-  if (has("calf")) return "calf";
-  if (has("raise", "fly", "face-pull")) return "raise";
-  if (has("run", "rope", "burpee", "rowing", "bike", "cardio", "sprint", "jump")) return "cardio";
-  if (has("leg-extension", "leg-curl")) return "leg_machine";
+  if (has("extension")) return "extension";
+
+  // Core / abs.
+  if (has("plank", "crunch", "twist", "rollout", "sit-up", "situp", "leg-raise",
+          "raise-leg", "knee-raise", "dead-bug", "hollow", "l-sit", "v-up",
+          "bird-dog", "flutter", "bicycle", "ab-"))
+    return "core";
+
+  // Anything else with "raise" (e.g. an unusual raise variation).
+  if (has("raise")) return "raise";
+
   return "squat";
 }
 
-export function animationFor(name: string): Anim {
+const isArchetype = (v: unknown): v is Archetype =>
+  typeof v === "string" && v in ARCH;
+
+// Resolve the animation for an exercise. The AI guide's `pattern`/`load`/`prop`
+// (when present and valid) take priority over name-based guessing, so freshly
+// generated exercises animate correctly. `load`/`prop` can refine the archetype
+// (e.g. a dumbbell vs. barbell variant) without changing the movement.
+export function animationFor(
+  name: string,
+  opts?: { pattern?: string; load?: Load; prop?: Prop }
+): Anim {
   const slug = slugify(name);
-  return ARCH[SLUG_MAP[slug] ?? guessArchetype(slug)];
+  const key = isArchetype(opts?.pattern)
+    ? opts.pattern
+    : SLUG_MAP[slug] ?? guessArchetype(slug);
+  const base = ARCH[key];
+  if (!opts?.load && !opts?.prop) return base;
+  return { ...base, load: opts.load ?? base.load, prop: opts.prop ?? base.prop };
 }

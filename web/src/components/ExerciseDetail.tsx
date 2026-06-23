@@ -121,7 +121,13 @@ export function ExerciseDetail({
           <>
             <Section icon={<ListChecks className="h-4 w-4" />} title="How to perform">
               <div className="mb-3 flex items-center justify-center rounded-2xl border border-border bg-secondary/30 p-2">
-                <StickDemo name={exercise.name} className="h-40 w-40" />
+                <StickDemo
+                  name={exercise.name}
+                  pattern={g.pattern}
+                  load={g.load}
+                  prop={g.prop}
+                  className="h-40 w-40"
+                />
               </div>
               <ol className="space-y-2">
                 {g.steps.map((s, i) => (

@@ -1,11 +1,28 @@
-import { useEffect, useRef } from "react";
-import { animationFor, type Pose, type Pt } from "@/lib/animations";
+import { useEffect, useMemo, useRef } from "react";
+import { animationFor, type Load, type Pose, type Prop, type Pt } from "@/lib/animations";
 
 // Renders a looping stick-figure demo for an exercise. Animation is driven by
 // requestAnimationFrame mutating SVG attributes directly (no React re-renders),
-// so it stays smooth and cheap.
-export function StickDemo({ name, className }: { name: string; className?: string }) {
-  const anim = animationFor(name);
+// so it stays smooth and cheap. When the exercise's AI guide supplies a movement
+// `pattern` (+ optional load/prop) the demo follows it; otherwise it's inferred
+// from the name.
+export function StickDemo({
+  name,
+  pattern,
+  load,
+  prop,
+  className,
+}: {
+  name: string;
+  pattern?: string;
+  load?: Load;
+  prop?: Prop;
+  className?: string;
+}) {
+  const anim = useMemo(
+    () => animationFor(name, { pattern, load, prop }),
+    [name, pattern, load, prop]
+  );
   const refs = useRef<Record<string, SVGElement | null>>({});
 
   useEffect(() => {

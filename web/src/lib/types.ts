@@ -58,6 +58,10 @@ export interface ExerciseGuide {
   cues: string[]; // form tips that improve quality / safety
   mistakes: string[]; // common errors to avoid
   breathing?: string;
+  // Animation hints chosen by the AI so the stick-figure demo matches the move.
+  pattern?: string; // movement archetype (see lib/animations.ts)
+  load?: "bar" | "db" | "none"; // what the hands hold
+  prop?: "floor" | "bench" | "seat" | "none"; // supporting surface
 }
 
 // A planned set inside a routine (the prescription)

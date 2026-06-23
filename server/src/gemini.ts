@@ -732,6 +732,21 @@ export async function chatCoach(
 // library, we generate full form guidance the first time a user opens its
 // "How to perform" sheet, then cache it (server-side) so it's permanent.
 
+// Movement archetypes the client's animated stick-figure can render, plus the
+// load (what's in the hands) and prop (supporting surface). The AI classifies
+// each exercise into these so the demo matches the movement instead of relying
+// on the client's keyword guessing. Keep these lists in sync with the client
+// (web/src/lib/animations.ts).
+export const GUIDE_PATTERNS = [
+  "squat", "hinge", "press_flat", "press_over", "raise", "row", "pulldown",
+  "curl", "extension", "lunge", "bridge", "core", "leg_machine", "calf", "cardio",
+] as const;
+const GUIDE_LOADS = ["bar", "db", "none"] as const;
+const GUIDE_PROPS = ["floor", "bench", "seat", "none"] as const;
+type GuidePattern = (typeof GUIDE_PATTERNS)[number];
+type GuideLoad = (typeof GUIDE_LOADS)[number];
+type GuideProp = (typeof GUIDE_PROPS)[number];
+
 export interface ExerciseGuide {
   primaryMuscles: string[];
   secondaryMuscles?: string[];
@@ -739,6 +754,9 @@ export interface ExerciseGuide {
   cues: string[];
   mistakes: string[];
   breathing?: string;
+  pattern?: GuidePattern; // drives the animated demo
+  load?: GuideLoad;
+  prop?: GuideProp;
 }
 
 const guideSchema = {
@@ -750,17 +768,39 @@ const guideSchema = {
     cues: { type: "array", items: { type: "string" } },
     mistakes: { type: "array", items: { type: "string" } },
     breathing: { type: "string" },
+    pattern: { type: "string", enum: [...GUIDE_PATTERNS] },
+    load: { type: "string", enum: [...GUIDE_LOADS] },
+    prop: { type: "string", enum: [...GUIDE_PROPS] },
   },
-  required: ["primaryMuscles", "steps", "cues", "mistakes", "breathing"],
+  required: ["primaryMuscles", "steps", "cues", "mistakes", "breathing", "pattern", "load", "prop"],
 };
 
-const GUIDE_SYSTEM = `You are an elite strength & conditioning coach writing a concise how-to guide for a single exercise.
+const GUIDE_SYSTEM = `You are an elite strength & conditioning coach writing a concise, ACCURATE how-to guide for one specific exercise.
 Return ONLY valid JSON matching the schema — no prose outside JSON.
-- primaryMuscles / secondaryMuscles: anatomical muscle names. Use these exact terms where applicable so they map to the app's muscle diagram: Chest, Upper Chest, Front Delts, Side Delts, Rear Delts, Shoulders, Traps, Biceps, Triceps, Forearms, Lats, Back, Upper Back, Lower Back, Abs, Core, Obliques, Quads, Hamstrings, Glutes, Calves. (Cardio moves can list "Cardio".)
-- steps: 2–4 short, ordered execution instructions.
-- cues: 2–3 form tips that improve quality/safety.
-- mistakes: 2–3 common errors to avoid.
-- breathing: one short sentence on breathing pattern.
+Every field must describe THIS exact exercise (respect its name and equipment) — never generic filler.
+- primaryMuscles / secondaryMuscles: the muscles THIS exercise actually trains. Use these exact terms where applicable so they map to the app's muscle diagram: Chest, Upper Chest, Front Delts, Side Delts, Rear Delts, Shoulders, Traps, Biceps, Triceps, Forearms, Lats, Back, Upper Back, Lower Back, Abs, Core, Obliques, Quads, Hamstrings, Glutes, Calves. (Cardio moves can list "Cardio".)
+- steps: 2–4 short, ordered execution instructions specific to this movement.
+- cues: 2–3 form tips that improve quality/safety for this movement.
+- mistakes: 2–3 common errors specific to this movement.
+- breathing: one short sentence on the breathing pattern.
+- pattern: the movement archetype that best matches how this exercise LOOKS when performed (for an animated side-view demo). Choose EXACTLY one:
+  • squat — knee-dominant squat (back/front/goblet squat, leg press)
+  • hinge — hip hinge (deadlift, RDL, good morning, kettlebell swing)
+  • press_flat — horizontal/lying press (bench press, push-up, dip, chest fly)
+  • press_over — vertical/overhead press (overhead/shoulder press, handstand/pike push-up)
+  • raise — arms out to the side or front (lateral/front/rear-delt raise, reverse fly, face pull)
+  • row — bent-over horizontal pull (barbell/dumbbell/cable row)
+  • pulldown — vertical pull (pull-up, chin-up, lat pulldown, muscle-up)
+  • curl — elbow flexion (biceps curls of any kind)
+  • extension — triceps elbow extension (pushdown, skull crusher, overhead extension)
+  • lunge — split-stance leg work (lunge, split squat, step-up)
+  • bridge — hip extension off the floor/bench (hip thrust, glute bridge)
+  • core — trunk/ab work (plank, crunch, leg raise, rollout, twist)
+  • leg_machine — seated single-joint leg isolation (leg extension, leg curl)
+  • calf — calf raise
+  • cardio — locomotion/conditioning (run, row erg, bike, jump rope, burpee, jumping jack)
+- load: what the hands hold — "bar" (barbell/EZ-bar/fixed bar), "db" (dumbbells/kettlebell/handles), or "none" (bodyweight, machine, or cardio).
+- prop: supporting surface — "bench" (lying/incline on a bench), "seat" (seated machine), "floor" (standing or on the floor), or "none".
 Keep every string concise and practical.`;
 
 export async function generateExerciseGuide(
@@ -818,6 +858,11 @@ function normalizeGuide(g: ExerciseGuide, muscleGroup?: string): ExerciseGuide {
     cues: arr(g.cues).length ? arr(g.cues) : fb.cues,
     mistakes: arr(g.mistakes).length ? arr(g.mistakes) : fb.mistakes,
     breathing: typeof g.breathing === "string" && g.breathing.trim() ? g.breathing.trim() : fb.breathing,
+    // Only keep the animation hints if they're valid; the client falls back to
+    // its own keyword guess when these are absent.
+    pattern: GUIDE_PATTERNS.includes(g.pattern as GuidePattern) ? g.pattern : undefined,
+    load: GUIDE_LOADS.includes(g.load as GuideLoad) ? g.load : undefined,
+    prop: GUIDE_PROPS.includes(g.prop as GuideProp) ? g.prop : undefined,
   };
 }
 
