@@ -1,6 +1,7 @@
 import { config } from "./config";
 import { goalLabel } from "./util";
 import type {
+  AIGeneratedExercise,
   AIGeneratedRoutine,
   AIProgramResponse,
   MuscleGroup,
@@ -10,53 +11,61 @@ import type {
 const ENDPOINT = (model: string, key: string) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
-const responseSchema = {
-  type: "object",
-  properties: {
-    programName: { type: "string" },
-    weeks: { type: "integer" },
-    summary: { type: "string" },
-    routines: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          name: { type: "string" },
-          dayLabel: { type: "string" },
-          description: { type: "string" },
-          exercises: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                name: { type: "string" },
-                muscleGroup: { type: "string" },
-                equipment: { type: "string" },
-                restSeconds: { type: "integer" },
-                notes: { type: "string" },
-                sets: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      reps: { type: "integer" },
-                      weight: { type: "number" },
-                      rpe: { type: "number" },
+// When the athlete's equipment is restricted we pin the `equipment` field to an
+// enum so the model can only label exercises with gear they actually own.
+function buildResponseSchema(equipmentEnum?: string[] | null) {
+  const equipment =
+    equipmentEnum && equipmentEnum.length
+      ? { type: "string", enum: equipmentEnum }
+      : { type: "string" };
+  return {
+    type: "object",
+    properties: {
+      programName: { type: "string" },
+      weeks: { type: "integer" },
+      summary: { type: "string" },
+      routines: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            dayLabel: { type: "string" },
+            description: { type: "string" },
+            exercises: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  muscleGroup: { type: "string" },
+                  equipment,
+                  restSeconds: { type: "integer" },
+                  notes: { type: "string" },
+                  sets: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        reps: { type: "integer" },
+                        weight: { type: "number" },
+                        rpe: { type: "number" },
+                      },
+                      required: ["reps"],
                     },
-                    required: ["reps"],
                   },
                 },
+                required: ["name", "muscleGroup", "equipment", "restSeconds", "sets"],
               },
-              required: ["name", "muscleGroup", "equipment", "restSeconds", "sets"],
             },
           },
+          required: ["name", "dayLabel", "exercises"],
         },
-        required: ["name", "dayLabel", "exercises"],
       },
     },
-  },
-  required: ["programName", "weeks", "summary", "routines"],
-};
+    required: ["programName", "weeks", "summary", "routines"],
+  };
+}
 
 const EQUIPMENT_TEXT: Record<string, string> = {
   full_gym: "a fully-equipped commercial gym (barbells, machines, cables, dumbbells, kettlebells)",
@@ -82,7 +91,8 @@ const SYSTEM = `You are an elite strength & conditioning coach and certified per
 You design safe, evidence-based, progressively-overloaded training programs.
 You ALWAYS return valid JSON that matches the provided schema exactly — no prose outside JSON.
 Use realistic starting weights for the experience level (use 0 weight for bodyweight movements).
-Pick exercises that fit the available equipment AND the athlete's preferred workout style/category.
+CRITICAL: only program exercises the athlete can perform with the EXACT equipment listed in their profile — never assume access to gear (cables, machines, dumbbells, barbells, etc.) that is not explicitly listed. When in doubt, choose a bodyweight movement.
+Also match the athlete's preferred workout style/category.
 Distribute volume sensibly across the week.
 muscleGroup MUST be one of: Chest, Back, Shoulders, Biceps, Triceps, Legs, Glutes, Core, Cardio, Full Body.`;
 
@@ -93,7 +103,173 @@ function equipmentDescription(p: UserProfile): string {
   return EQUIPMENT_TEXT[p.equipment] ?? "equipment the athlete describes in their notes";
 }
 
-function generatePrompt(p: UserProfile): string {
+// ── Equipment constraint model ───────────────────────────────────────────────
+// The AI used to occasionally program exercises that need gear the athlete
+// doesn't own (e.g. cables/dumbbells for a bodyweight user). We derive the
+// athlete's allowed "weighted equipment" up front, feed it to the model as a
+// hard constraint (prompt + JSON enum), then verify the response and re-prompt
+// to fix any violations before the program is finalized.
+//
+// "Restricted" tokens are the ones that actually gate whether a movement is
+// doable. Bodyweight, a bench and a pull-up bar are treated as universally
+// available accessories, so they never count as violations (this avoids false
+// positives on staples like push-ups, dips and pull-ups).
+type EquipmentToken = "barbell" | "dumbbell" | "cable" | "machine" | "resistance_band" | "kettlebell";
+
+const RESTRICTED_TOKENS: EquipmentToken[] = [
+  "barbell", "dumbbell", "cable", "machine", "resistance_band", "kettlebell",
+];
+
+const EQUIPMENT_LABEL: Record<EquipmentToken, string> = {
+  barbell: "Barbell",
+  dumbbell: "Dumbbell",
+  cable: "Cable",
+  machine: "Machine",
+  resistance_band: "Resistance Band",
+  kettlebell: "Kettlebell",
+};
+
+// Restricted tokens each preset grants. `null` ⇒ no restriction (use anything).
+const PRESET_TOKENS: Record<string, EquipmentToken[] | null> = {
+  full_gym: null,
+  other: null,
+  home_gym: ["barbell", "dumbbell"],
+  dumbbells: ["dumbbell"],
+  bodyweight: [],
+  resistance_bands: ["resistance_band"],
+  machines: ["machine", "cable"],
+  kettlebells: ["kettlebell"],
+};
+
+// Detect which restricted equipment a free-text string (an exercise name or the
+// model's `equipment` field) implies. Only restricted tokens are detected.
+function detectTokens(text: string): EquipmentToken[] {
+  const t = ` ${text.toLowerCase()} `;
+  const out = new Set<EquipmentToken>();
+  if (/barbell|ez.?bar|olympic bar/.test(t)) out.add("barbell");
+  if (/dumbbell|dumbell|\bdb\b/.test(t)) out.add("dumbbell");
+  if (/cable|pulley|crossover|pulldown|pull.?down|pushdown|push.?down|face.?pull/.test(t)) out.add("cable");
+  if (/machine|leg press|hack squat|pec deck|leg extension|leg curl|hammer strength|\bsmith\b/.test(t)) out.add("machine");
+  if (/\bband\b|resistance band|banded/.test(t)) out.add("resistance_band");
+  if (/kettlebell|\bkb\b/.test(t)) out.add("kettlebell");
+  // A banded variant of a cable/machine movement (e.g. "Banded Lat Pulldown")
+  // only needs a band — don't double-flag it as cable/machine.
+  if (out.has("resistance_band")) { out.delete("cable"); out.delete("machine"); }
+  return [...out];
+}
+
+// The set of restricted equipment the athlete actually has. `null` = unrestricted.
+function allowedTokens(p: UserProfile): Set<EquipmentToken> | null {
+  if (p.equipment === "mixed") {
+    const items = p.equipmentMix ?? [];
+    // No items specified — we can't safely constrain, so don't.
+    if (!items.length) return null;
+    const set = new Set<EquipmentToken>();
+    for (const item of items) detectTokens(item).forEach((tok) => set.add(tok));
+    return set;
+  }
+  const preset = PRESET_TOKENS[p.equipment];
+  return preset == null ? null : new Set(preset);
+}
+
+// Human-readable equipment labels the model may use in the `equipment` field.
+// `null` mirrors allowedTokens — no restriction. The accessory labels are always
+// appended because they're considered universally available.
+function allowedEquipmentLabels(allowed: Set<EquipmentToken> | null): string[] | null {
+  if (!allowed) return null;
+  const restricted = RESTRICTED_TOKENS.filter((tok) => allowed.has(tok)).map((tok) => EQUIPMENT_LABEL[tok]);
+  return [...restricted, "Bodyweight", "Bench", "Pull-up Bar"];
+}
+
+// The restricted gear the athlete does NOT have, phrased for a prompt exclusion.
+function excludedEquipmentText(allowed: Set<EquipmentToken>): string {
+  const missing = RESTRICTED_TOKENS.filter((tok) => !allowed.has(tok)).map(
+    (tok) => `${EQUIPMENT_LABEL[tok].toLowerCase()}s`
+  );
+  return missing.length ? missing.join(", ") : "any unavailable equipment";
+}
+
+// A strict, hard-to-miss equipment section for the generation prompt.
+function equipmentConstraintBlock(p: UserProfile, allowed: Set<EquipmentToken> | null): string {
+  if (!allowed) {
+    return `Equipment available: ${equipmentDescription(p)} (full range — choose whatever best fits the goal).`;
+  }
+  const labels = allowedEquipmentLabels(allowed)!;
+  return `Equipment available: ${equipmentDescription(p)}
+
+EQUIPMENT CONSTRAINTS (STRICT — the athlete has access to NOTHING else):
+- Every exercise MUST be performable using ONLY: ${labels.join(", ")}.
+- The "equipment" field of every exercise MUST be exactly one of: ${labels.join(", ")}.
+- Do NOT program any movement that requires ${excludedEquipmentText(allowed)} (or any other unavailable gear).
+- Bodyweight movements are always acceptable — prefer them over inventing equipment the athlete lacks.`;
+}
+
+interface EquipmentViolation {
+  routine: string;
+  name: string;
+  tokens: EquipmentToken[];
+}
+
+// Restricted equipment an exercise needs but the athlete doesn't have.
+function exerciseViolations(e: AIGeneratedExercise, allowed: Set<EquipmentToken>): EquipmentToken[] {
+  const needed = new Set<EquipmentToken>([
+    ...detectTokens(e.name ?? ""),
+    ...detectTokens(e.equipment ?? ""),
+  ]);
+  return [...needed].filter((tok) => !allowed.has(tok));
+}
+
+// Verify a generated program respects the athlete's equipment. Empty ⇒ all good.
+function findEquipmentViolations(
+  ai: AIProgramResponse,
+  allowed: Set<EquipmentToken> | null
+): EquipmentViolation[] {
+  if (!allowed) return [];
+  const out: EquipmentViolation[] = [];
+  for (const r of ai.routines ?? []) {
+    for (const e of r.exercises ?? []) {
+      const bad = exerciseViolations(e, allowed);
+      if (bad.length) out.push({ routine: r.name, name: e.name, tokens: bad });
+    }
+  }
+  return out;
+}
+
+// Last-resort sanitizer: drop any still-non-compliant exercise. Never empties a
+// training day — if every move in a routine is flagged we keep the originals
+// rather than ship a blank day (this should be vanishingly rare after the
+// corrective re-prompt).
+function enforceEquipment(
+  ai: AIProgramResponse,
+  allowed: Set<EquipmentToken> | null
+): AIProgramResponse {
+  if (!allowed) return ai;
+  return {
+    ...ai,
+    routines: ai.routines.map((r) => {
+      const kept = r.exercises.filter((e) => exerciseViolations(e, allowed).length === 0);
+      return { ...r, exercises: kept.length ? kept : r.exercises };
+    }),
+  };
+}
+
+// Correction note appended to the original prompt when the first attempt strays.
+function equipmentCorrectionNote(
+  p: UserProfile,
+  allowed: Set<EquipmentToken>,
+  violations: EquipmentViolation[]
+): string {
+  const labels = allowedEquipmentLabels(allowed)!;
+  const list = violations
+    .map((v) => `- "${v.name}" (${v.routine}) — needs ${v.tokens.map((t) => EQUIPMENT_LABEL[t]).join(", ")}`)
+    .join("\n");
+  return `IMPORTANT — your previous attempt BROKE the equipment constraints. The exercises below require equipment the athlete does NOT have and MUST be replaced with effective alternatives that use ONLY ${labels.join(", ")}:
+${list}
+
+Return the COMPLETE corrected program (all ${p.daysPerWeek} routines). Every single exercise must comply with the equipment constraints.`;
+}
+
+function generatePrompt(p: UserProfile, allowed: Set<EquipmentToken> | null): string {
   return `Create a personalized training program.
 
 Athlete profile:
@@ -101,28 +277,30 @@ Athlete profile:
 - Primary goal: ${goalLabel(p.goal)}
 - Preferred workout style: ${CATEGORY_TEXT[p.category ?? "mixed"]}
 - Experience: ${p.experience}
-- Equipment available: ${equipmentDescription(p)}
 - Training days per week: ${p.daysPerWeek}
 - Target session length: ${p.sessionMinutes} minutes
 - Units: ${p.units}
 ${p.bodyweightKg ? `- Bodyweight: ${p.bodyweightKg} ${p.units}` : ""}
 ${p.notes ? `- Notes / limitations: ${p.notes}` : ""}
 
+${equipmentConstraintBlock(p, allowed)}
+
 Produce exactly ${p.daysPerWeek} distinct routines (one per training day).
 Each routine should contain 4-7 exercises that strongly reflect the athlete's preferred workout style.
 Provide a concise "summary" (2-3 sentences) explaining the program design rationale.`;
 }
 
-function refreshPrompt(p: UserProfile, analytics: string): string {
+function refreshPrompt(p: UserProfile, analytics: string, allowed: Set<EquipmentToken> | null): string {
   return `The athlete has completed a training block. Evolve their program for the NEXT iteration.
 
 Athlete profile:
 - Goal: ${goalLabel(p.goal)}
 - Preferred workout style: ${CATEGORY_TEXT[p.category ?? "mixed"]}
 - Experience: ${p.experience}
-- Equipment: ${equipmentDescription(p)}
 - Days per week: ${p.daysPerWeek}
 - Units: ${p.units}
+
+${equipmentConstraintBlock(p, allowed)}
 
 Recent performance analytics:
 ${analytics}
@@ -130,6 +308,7 @@ ${analytics}
 Apply intelligent progression:
 - Increase load/reps on exercises that are progressing well (progressive overload).
 - Swap out exercises that have STALLED (no progress / plateaued) for effective alternatives that still match the preferred workout style.
+- Any replacement exercise MUST also respect the equipment constraints above.
 - Keep the same number of routines (${p.daysPerWeek}).
 - In "summary", explicitly explain what you changed and why (mention specific exercises).`;
 }
@@ -162,7 +341,10 @@ function normalize(p: AIProgramResponse): AIProgramResponse {
   };
 }
 
-async function callGemini(prompt: string): Promise<AIProgramResponse> {
+async function callGemini(
+  prompt: string,
+  equipmentEnum?: string[] | null
+): Promise<AIProgramResponse> {
   const key = config.geminiApiKey.trim();
   if (!key) throw new Error("NO_API_KEY");
 
@@ -175,7 +357,7 @@ async function callGemini(prompt: string): Promise<AIProgramResponse> {
       generationConfig: {
         temperature: 0.7,
         responseMimeType: "application/json",
-        responseSchema,
+        responseSchema: buildResponseSchema(equipmentEnum),
       },
     }),
   });
@@ -191,9 +373,60 @@ async function callGemini(prompt: string): Promise<AIProgramResponse> {
   return normalize(JSON.parse(text) as AIProgramResponse);
 }
 
+// A focused "repair this program" prompt for the fast structured model. Lets us
+// fix equipment violations with a single targeted edit instead of paying for a
+// full regeneration (and, for coach updates, without re-invoking the heavy
+// search-grounded model).
+function equipmentRepairPrompt(
+  p: UserProfile,
+  ai: AIProgramResponse,
+  allowed: Set<EquipmentToken>,
+  violations: EquipmentViolation[]
+): string {
+  const labels = allowedEquipmentLabels(allowed)!;
+  const program = { programName: ai.programName, weeks: ai.weeks, summary: ai.summary, routines: ai.routines };
+  return `Fix the equipment in this training program. Keep its structure, set/rep schemes and intent — ONLY swap the non-compliant exercises for effective alternatives.
+
+Athlete: ${goalLabel(p.goal)} goal, ${p.experience}, prefers ${CATEGORY_TEXT[p.category ?? "mixed"]}.
+Allowed equipment ONLY: ${labels.join(", ")}.
+
+Current program (JSON):
+${JSON.stringify(program)}
+
+${equipmentCorrectionNote(p, allowed, violations)}`;
+}
+
+// Verify an AI program against the athlete's equipment and make it compliant:
+// one targeted repair call on the fast structured model, then a deterministic
+// hard-filter for any residue. Returns instantly with ZERO extra API calls when
+// the equipment is unrestricted or the program is already clean (the common
+// case, thanks to the prompt constraints + JSON enum on the first pass).
+async function ensureEquipmentCompliant(
+  p: UserProfile,
+  ai: AIProgramResponse
+): Promise<AIProgramResponse> {
+  const allowed = allowedTokens(p);
+  if (!allowed) return ai;
+
+  let violations = findEquipmentViolations(ai, allowed);
+  if (!violations.length) return ai;
+
+  try {
+    const labels = allowedEquipmentLabels(allowed);
+    ai = await callGemini(equipmentRepairPrompt(p, ai, allowed, violations), labels);
+    violations = findEquipmentViolations(ai, allowed);
+  } catch {
+    // Repair call failed — fall through to the deterministic filter below.
+  }
+  if (violations.length) ai = enforceEquipment(ai, allowed);
+  return ai;
+}
+
 export async function generateProgram(p: UserProfile): Promise<AIProgramResponse> {
   try {
-    return await callGemini(generatePrompt(p));
+    const allowed = allowedTokens(p);
+    const ai = await callGemini(generatePrompt(p, allowed), allowedEquipmentLabels(allowed));
+    return await ensureEquipmentCompliant(p, ai);
   } catch (err) {
     if (err instanceof Error && err.message === "NO_API_KEY") return localProgram(p);
     throw err;
@@ -205,7 +438,9 @@ export async function refreshProgram(
   analytics: string
 ): Promise<AIProgramResponse> {
   try {
-    return await callGemini(refreshPrompt(p, analytics));
+    const allowed = allowedTokens(p);
+    const ai = await callGemini(refreshPrompt(p, analytics, allowed), allowedEquipmentLabels(allowed));
+    return await ensureEquipmentCompliant(p, ai);
   } catch (err) {
     if (err instanceof Error && err.message === "NO_API_KEY") {
       const base = localProgram(p);
@@ -278,7 +513,7 @@ Do NOT include [SUGGESTIONS: ...] on the [DONE] line.`;
 
 function detectOnboardingSuggestions(text: string): string[] | undefined {
   const t = text.toLowerCase();
-  if (/what.*goal|your goal\?|fitness goal|main goal|primary goal|trying to achieve|what.*aim|what.*objective|what.*looking to/.test(t))
+  if (/what.*goal|your goal\?|fitness goal|main goal|primary goal|trying to achieve|\baim\b|\baims\b|what.*objective|what.*looking to/.test(t))
     return ["Build muscle", "Lose weight", "Get stronger", "Stay fit"];
   if (/workout style|training style|type of (workout|training)|calisthenics|weightlifting|cardio|yoga|pilates/.test(t))
     return ["Calisthenics", "Weightlifting", "Cardio", "Mixed"];
@@ -288,10 +523,10 @@ function detectOnboardingSuggestions(text: string): string[] | undefined {
     return ["Beginner (<1 yr)", "Intermediate (1–3 yrs)", "Advanced (3+ yrs)"];
   if (/days.*(per|a) week|how (many|often).*day|times.*(per|a) week|days.*train/.test(t))
     return ["3 days", "4 days", "5 days", "2 days"];
-  if (/minute|session.*(length|long|duration)|how long.*session|long.*workout|each.*session/.test(t))
-    return ["45 min", "60 min", "30 min", "90 min"];
-  if (/unit|kg\b|lb\b|pound|kilogram/.test(t))
+  if (/\bkg\b|\blb\b|pound|kilogram|weight unit|track.*weight/.test(t))
     return ["kg", "lb"];
+  if (/how long.*session|session.*(length|long|duration)|each.*session|per.*session|\bminutes? per\b|\bminute.*session\b/.test(t))
+    return ["45 min", "60 min", "30 min", "90 min"];
   return undefined;
 }
 
@@ -393,6 +628,8 @@ ${JSON.stringify(p)}
 Equipment detail: ${eqLabel}
 Preferred workout style: ${catLabel}
 
+${equipmentConstraintBlock(p, allowedTokens(p))}
+
 Their current routines (JSON):
 ${JSON.stringify(routines)}
 
@@ -409,6 +646,7 @@ When the athlete asks to change, adjust, improve, regenerate, rebuild, add to, o
    - Build the COMPLETE updated program (all routines), not just the changed parts.
    - Keep roughly ${p.daysPerWeek} routines unless the athlete asks for a different number.
    - Apply their preferences and use realistic loads for a ${p.experience} athlete (weight 0 for bodyweight moves).
+   - EVERY exercise MUST obey the equipment constraints above — never program gear the athlete doesn't have.
 
 For purely informational replies, do NOT output [UPDATE]. You MAY append a final line [SUGGESTIONS: option | option | option] with 2-4 short, relevant follow-up actions (e.g. "Make it harder | Add more cardio | Explain this plan").`;
 }
@@ -459,7 +697,9 @@ export async function chatCoach(
     const closingText = raw.slice(0, updIdx).trim();
     if (start !== -1 && end > start) {
       try {
-        const program = normalize(JSON.parse(after.slice(start, end + 1)) as AIProgramResponse);
+        const parsed = normalize(JSON.parse(after.slice(start, end + 1)) as AIProgramResponse);
+        // Same equipment guard as initial generation: verify, repair, filter.
+        const program = await ensureEquipmentCompliant(profile, parsed);
         return { type: "update", text: closingText || "Done — I've updated your program.", program };
       } catch {
         // Fall through to a plain message if the JSON was malformed.
