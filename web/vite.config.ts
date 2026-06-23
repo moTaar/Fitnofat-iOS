@@ -6,8 +6,8 @@ import { execSync } from "node:child_process";
 
 function buildVersion(): string {
   try {
-    const count = execSync("git rev-list --count HEAD", { encoding: "utf8" }).trim();
-    return `0.1.${count}`;
+    const hash = execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim();
+    return `0.1.0+${hash}`;
   } catch {
     return "0.1.0";
   }

@@ -214,87 +214,42 @@ export interface ChatReply {
   profile?: UserProfile; // populated when type === "done"
 }
 
-const CHAT_SYSTEM = `You are ForgeFit's friendly AI personal-training coach conducting an onboarding interview.
-Your job: gather enough information to design a personalised training program, then signal you're done.
-
-Ask ONE short, friendly question at a time. Cover these topics in a natural conversational order:
+// Plain-text system prompt — no responseSchema, much more reliable across
+// Gemini model versions. The model signals completion with a [DONE] marker.
+const CHAT_SYSTEM = `You are ForgeFit's friendly AI personal-training coach doing a short onboarding interview.
+Ask ONE concise, friendly question at a time to learn:
 1. Primary fitness goal (strength / muscle / weight loss / endurance / general fitness)
 2. Available equipment (full gym / home gym with barbell & rack / dumbbells only / bodyweight only)
 3. Training experience level (beginner <1yr / intermediate 1-3yr / advanced 3+yr)
-4. Days per week available to train (1-6)
-5. Preferred session length in minutes (30 / 45 / 60 / 90)
-6. Weight units preference (kg or lb)
-7. Name (optional, can skip)
-8. Any injuries, limitations, or special preferences (optional, can skip)
+4. Days per week they can train (1–6)
+5. Target session length in minutes (30 / 45 / 60 / 90)
+6. Preferred weight units (kg or lb)
 
-After you have enough to cover items 1-6, return type "done" with the profile filled in.
-You do NOT need to ask items 7-8 if the conversation feels complete.
+Optional (ask only if natural):
+7. Their name
+8. Any injuries or preferences
 
-ALWAYS return a JSON object matching this exact shape — no prose outside JSON:
-{
-  "type": "question" | "done",
-  "text": "<your message to the user>",
-  "profile": {            // only when type is "done"
-    "name": "",           // empty string if not given
-    "goal": "strength" | "hypertrophy" | "weight_loss" | "endurance" | "general",
-    "equipment": "full_gym" | "home_gym" | "dumbbells" | "bodyweight",
-    "experience": "beginner" | "intermediate" | "advanced",
-    "daysPerWeek": 1-6,
-    "sessionMinutes": 30 | 45 | 60 | 90,
-    "units": "kg" | "lb",
-    "notes": ""           // empty string if not given
-  }
-}`;
+Once you have answers for items 1–6, end the conversation with a short friendly closing sentence followed immediately on the next line by the marker [DONE] and then a single JSON object (no other text after it):
+[DONE]
+{"goal":"<strength|hypertrophy|weight_loss|endurance|general>","equipment":"<full_gym|home_gym|dumbbells|bodyweight>","experience":"<beginner|intermediate|advanced>","daysPerWeek":<1-6>,"sessionMinutes":<30|45|60|90>,"units":"<kg|lb>","name":"<name or empty string>","notes":"<notes or empty string>"}
 
-const chatReplySchema = {
-  type: "object",
-  properties: {
-    type: { type: "string", enum: ["question", "done"] },
-    text: { type: "string" },
-    profile: {
-      type: "object",
-      properties: {
-        name: { type: "string" },
-        goal: { type: "string" },
-        equipment: { type: "string" },
-        experience: { type: "string" },
-        daysPerWeek: { type: "integer" },
-        sessionMinutes: { type: "integer" },
-        units: { type: "string" },
-        notes: { type: "string" },
-      },
-    },
-  },
-  required: ["type", "text"],
-};
+Until you are ready to end, output ONLY your next question — no JSON, no markers.`;
 
 export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply> {
   const key = config.geminiApiKey.trim();
   if (!key) {
-    // No API key: immediately return done with sensible defaults so the user
-    // still completes onboarding via the form fallback.
     return {
       type: "done",
       text: "Great! Let me build your program now.",
-      profile: {
-        name: "",
-        goal: "general",
-        equipment: "full_gym",
-        experience: "beginner",
-        daysPerWeek: 3,
-        sessionMinutes: 60,
-        units: "kg",
-        notes: "",
-      },
+      profile: { name: "", goal: "general", equipment: "full_gym", experience: "beginner", daysPerWeek: 3, sessionMinutes: 60, units: "kg", notes: "" },
     };
   }
 
-  // Gemini requires at least one message. When starting fresh, seed with a
-  // trigger so the model produces its opening question.
+  // Gemini requires at least one user turn.
   const contents =
     messages.length > 0
       ? messages.map((m) => ({ role: m.role, parts: [{ text: m.content }] }))
-      : [{ role: "user", parts: [{ text: "Start the onboarding interview." }] }];
+      : [{ role: "user", parts: [{ text: "Hi, I'd like to set up my training program." }] }];
 
   const res = await fetch(ENDPOINT(config.geminiModel, key), {
     method: "POST",
@@ -302,23 +257,43 @@ export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: CHAT_SYSTEM }] },
       contents,
-      generationConfig: {
-        temperature: 0.8,
-        responseMimeType: "application/json",
-        responseSchema: chatReplySchema,
-      },
+      generationConfig: { temperature: 0.7 },
     }),
   });
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Gemini chat error ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`Gemini chat error ${res.status}: ${body.slice(0, 300)}`);
   }
 
   const data: any = await res.json();
-  const text: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error("Gemini returned an empty chat response.");
-  return JSON.parse(text) as ChatReply;
+  const raw: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  if (!raw) throw new Error("Gemini returned an empty chat response.");
+
+  // Detect the [DONE] marker and extract the trailing JSON profile.
+  const doneIdx = raw.indexOf("[DONE]");
+  if (doneIdx !== -1) {
+    const jsonStr = raw.slice(doneIdx + 6).trim();
+    const closingText = raw.slice(0, doneIdx).trim();
+    try {
+      const p = JSON.parse(jsonStr);
+      const profile: UserProfile = {
+        name: p.name ?? "",
+        goal: p.goal ?? "general",
+        equipment: p.equipment ?? "full_gym",
+        experience: p.experience ?? "beginner",
+        daysPerWeek: Number(p.daysPerWeek) || 3,
+        sessionMinutes: Number(p.sessionMinutes) || 60,
+        units: p.units === "lb" ? "lb" : "kg",
+        notes: p.notes ?? "",
+      };
+      return { type: "done", text: closingText || "Perfect, building your program now!", profile };
+    } catch {
+      throw new Error("Failed to parse profile from AI response.");
+    }
+  }
+
+  return { type: "question", text: raw.trim() };
 }
 
 // ── Local deterministic fallback (works with no Gemini key) ───────────────────
