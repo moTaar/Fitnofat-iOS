@@ -180,10 +180,17 @@ export function SettingsPage() {
 
 function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="relative h-7 w-12 rounded-full bg-secondary transition-colors tap">
+    <button
+      onClick={onClick}
+      aria-checked={on}
+      role="switch"
+      className={`relative h-7 w-12 rounded-full transition-colors duration-200 tap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+        on ? "bg-primary" : "bg-secondary"
+      }`}
+    >
       <span
-        className={`absolute top-1 h-5 w-5 rounded-full bg-primary transition-transform ${
-          on ? "translate-x-6" : "translate-x-1"
+        className={`absolute top-1 h-5 w-5 rounded-full shadow-md transition-transform duration-200 ${
+          on ? "translate-x-6 bg-white" : "translate-x-1 bg-muted-foreground/60"
         }`}
       />
     </button>
