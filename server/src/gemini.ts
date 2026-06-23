@@ -289,10 +289,12 @@ export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply
     };
   }
 
-  const contents = messages.map((m) => ({
-    role: m.role,
-    parts: [{ text: m.content }],
-  }));
+  // Gemini requires at least one message. When starting fresh, seed with a
+  // trigger so the model produces its opening question.
+  const contents =
+    messages.length > 0
+      ? messages.map((m) => ({ role: m.role, parts: [{ text: m.content }] }))
+      : [{ role: "user", parts: [{ text: "Start the onboarding interview." }] }];
 
   const res = await fetch(ENDPOINT(config.geminiModel, key), {
     method: "POST",
