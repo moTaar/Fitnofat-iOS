@@ -180,7 +180,7 @@ export const api = {
     request<void>(`/api/workouts/${id}`, { method: "DELETE" }),
 
   aiChat: (messages: { role: "user" | "model"; content: string }[]) =>
-    request<{ type: "question" | "done"; text: string; profile?: import("./types").UserProfile }>(
+    request<{ type: "question" | "done"; text: string; suggestions?: string[]; profile?: import("./types").UserProfile }>(
       "/api/ai/chat",
       { method: "POST", body: JSON.stringify({ messages }) }
     ),

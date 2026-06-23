@@ -6,8 +6,9 @@ import { api } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/misc";
+import { cn } from "@/lib/utils";
 
-type ChatMsg = { role: "user" | "model"; content: string };
+type ChatMsg = { role: "user" | "model"; content: string; suggestions?: string[] };
 
 export function AiCoach() {
   const navigate = useNavigate();
@@ -23,10 +24,7 @@ export function AiCoach() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Start the conversation on mount
-  useEffect(() => {
-    void startConversation();
-  }, []);
+  useEffect(() => { void startConversation(); }, []);
 
   useEffect(() => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
@@ -39,31 +37,30 @@ export function AiCoach() {
     setLoading(true);
     try {
       const reply = await api.aiChat([]);
-      setMessages([{ role: "model", content: reply.text }]);
+      setMessages([{ role: "model", content: reply.text, suggestions: reply.suggestions }]);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
-      if (msg.includes("QUOTA_EXCEEDED")) {
-        setQuotaExceeded(true);
-      } else {
-        toast.error(msg || "Couldn't reach the AI coach.");
-      }
+      if (msg.includes("QUOTA_EXCEEDED")) setQuotaExceeded(true);
+      else toast.error(msg || "Couldn't reach the AI coach.");
     } finally {
       setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   };
 
-  const send = async () => {
-    const text = input.trim();
-    if (!text || loading || done || generating) return;
-    const userMsg: ChatMsg = { role: "user", content: text };
+  const sendText = async (text: string) => {
+    if (!text.trim() || loading || done || generating) return;
+    const userMsg: ChatMsg = { role: "user", content: text.trim() };
     const next = [...messages, userMsg];
     setMessages(next);
     setInput("");
     setLoading(true);
     try {
-      const reply = await api.aiChat(next);
-      const withReply = [...next, { role: "model" as const, content: reply.text }];
+      const reply = await api.aiChat(next.map(({ role, content }) => ({ role, content })));
+      const withReply: ChatMsg[] = [
+        ...next,
+        { role: "model", content: reply.text, suggestions: reply.suggestions },
+      ];
       setMessages(withReply);
 
       if (reply.type === "done" && reply.profile) {
@@ -87,13 +84,17 @@ export function AiCoach() {
       } else {
         toast.error(msg || "AI error — please try again.");
         setMessages(next.slice(0, -1));
-        setInput(text);
+        setInput(text.trim());
       }
     } finally {
       if (!generating) setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   };
+
+  // The last model message is the only one that shows chips (avoids clutter).
+  const lastModelIdx = [...messages].reverse().findIndex((m) => m.role === "model");
+  const activeChipIdx = lastModelIdx === -1 ? -1 : messages.length - 1 - lastModelIdx;
 
   return (
     <div className="flex flex-col" style={{ height: "calc(100dvh - 120px)" }}>
@@ -114,7 +115,6 @@ export function AiCoach() {
           onClick={startConversation}
           disabled={loading || generating}
           className="flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground tap disabled:opacity-40"
-          title="Start over"
         >
           <RotateCcw className="h-3.5 w-3.5" />
           Restart
@@ -123,13 +123,14 @@ export function AiCoach() {
 
       {/* Quota exceeded banner */}
       {quotaExceeded && (
-        <div className="flex flex-col gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+        <div className="flex flex-col gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 mb-3">
           <div className="flex gap-3">
             <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500 mt-0.5" />
             <div>
               <p className="font-semibold text-amber-500">Gemini quota exceeded</p>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                Your API key has hit its free-tier limit. The AI chat is unavailable until the quota resets (usually within a few hours or the next day). You can still generate a program using the quick form — it works offline too.
+                Your API key has hit its free-tier limit. The chat is unavailable until the quota
+                resets (usually a few hours). Use the quick form instead — it works offline too.
               </p>
             </div>
           </div>
@@ -149,21 +150,39 @@ export function AiCoach() {
         )}
 
         {messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-            {m.role === "model" && (
-              <div className="mr-2 mt-1 shrink-0 rounded-full bg-primary/15 p-1 text-primary self-end">
-                <Sparkles className="h-3.5 w-3.5" />
+          <div key={i} className="space-y-2">
+            <div className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
+              {m.role === "model" && (
+                <div className="mr-2 mt-1 shrink-0 self-end rounded-full bg-primary/15 p-1 text-primary">
+                  <Sparkles className="h-3.5 w-3.5" />
+                </div>
+              )}
+              <div
+                className={cn(
+                  "max-w-[78%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                  m.role === "user"
+                    ? "bg-primary text-primary-foreground rounded-tr-sm"
+                    : "bg-card border border-border rounded-tl-sm"
+                )}
+              >
+                {m.content}
+              </div>
+            </div>
+
+            {/* Suggestion chips — only on the most recent model message */}
+            {m.role === "model" && i === activeChipIdx && m.suggestions && !loading && !done && !generating && (
+              <div className="ml-8 flex flex-wrap gap-2">
+                {m.suggestions.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => sendText(s)}
+                    className="rounded-full border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary tap hover:bg-primary/20 transition-colors"
+                  >
+                    {s}
+                  </button>
+                ))}
               </div>
             )}
-            <div
-              className={`max-w-[78%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                m.role === "user"
-                  ? "bg-primary text-primary-foreground rounded-tr-sm"
-                  : "bg-card border border-border rounded-tl-sm"
-              }`}
-            >
-              {m.content}
-            </div>
           </div>
         ))}
 
@@ -191,15 +210,15 @@ export function AiCoach() {
         <input
           ref={inputRef}
           className="flex-1 rounded-xl border border-input bg-background px-4 py-3 text-base placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
-          placeholder={done || generating ? "Program is being built…" : "Type your answer…"}
+          placeholder={done || generating ? "Program is being built…" : "Type or tap a suggestion…"}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && void send()}
+          onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && void sendText(input)}
           disabled={loading || done || generating}
         />
         <Button
           size="lg"
-          onClick={send}
+          onClick={() => sendText(input)}
           disabled={!input.trim() || loading || done || generating}
           className="shrink-0 px-4"
         >
@@ -216,7 +235,7 @@ function TypingBubble() {
       {[0, 150, 300].map((delay) => (
         <span
           key={delay}
-          className="h-2 w-2 rounded-full bg-muted-foreground animate-bounce"
+          className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground"
           style={{ animationDelay: `${delay}ms` }}
         />
       ))}

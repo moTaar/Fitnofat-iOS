@@ -211,30 +211,44 @@ export interface ChatMessage {
 
 export interface ChatReply {
   type: "question" | "done";
-  text: string; // next question or closing message
-  profile?: UserProfile; // populated when type === "done"
+  text: string;
+  suggestions?: string[]; // tappable quick-reply chips shown below the message
+  profile?: UserProfile;
 }
 
-// Plain-text system prompt — no responseSchema, much more reliable across
-// Gemini model versions. The model signals completion with a [DONE] marker.
+// Plain-text system prompt. Model signals completion with [DONE], and attaches
+// tappable suggestion chips via [SUGGESTIONS: a | b | c] on the last line.
 const CHAT_SYSTEM = `You are ForgeFit's friendly AI personal-training coach doing a short onboarding interview.
 Ask ONE concise, friendly question at a time to learn:
 1. Primary fitness goal (strength / muscle / weight loss / endurance / general fitness)
 2. Available equipment (full gym / home gym with barbell & rack / dumbbells only / bodyweight only)
-3. Training experience level (beginner <1yr / intermediate 1-3yr / advanced 3+yr)
+3. Training experience level (beginner <1yr / intermediate 1–3yr / advanced 3+yr)
 4. Days per week they can train (1–6)
 5. Target session length in minutes (30 / 45 / 60 / 90)
 6. Preferred weight units (kg or lb)
 
-Optional (ask only if natural):
+Optional (ask only if the conversation feels natural):
 7. Their name
 8. Any injuries or preferences
 
-Once you have answers for items 1–6, end the conversation with a short friendly closing sentence followed immediately on the next line by the marker [DONE] and then a single JSON object (no other text after it):
+IMPORTANT — after every question (not at [DONE]), append a suggestions line on its own line:
+[SUGGESTIONS: option1 | option2 | option3 | option4]
+Tailor the options to the question. Examples:
+- Goal question → [SUGGESTIONS: Build muscle | Lose weight | Get stronger | Stay fit]
+- Equipment question → [SUGGESTIONS: Full gym | Home gym | Dumbbells only | Bodyweight only]
+- Experience question → [SUGGESTIONS: Beginner (<1 yr) | Intermediate (1–3 yrs) | Advanced (3+ yrs)]
+- Days/week question → [SUGGESTIONS: 3 days | 4 days | 5 days | 2 days]
+- Session length question → [SUGGESTIONS: 45 min | 60 min | 30 min | 90 min]
+- Units question → [SUGGESTIONS: kg | lb]
+- Name question → [SUGGESTIONS: Skip]
+- Injuries/preferences question → [SUGGESTIONS: No injuries | Skip]
+Use 2–5 short options that cover the most common answers. Keep each option under 25 chars.
+
+Once you have answers for items 1–6, end with a short friendly closing sentence then:
 [DONE]
 {"goal":"<strength|hypertrophy|weight_loss|endurance|general>","equipment":"<full_gym|home_gym|dumbbells|bodyweight>","experience":"<beginner|intermediate|advanced>","daysPerWeek":<1-6>,"sessionMinutes":<30|45|60|90>,"units":"<kg|lb>","name":"<name or empty string>","notes":"<notes or empty string>"}
 
-Until you are ready to end, output ONLY your next question — no JSON, no markers.`;
+Do NOT include [SUGGESTIONS: ...] on the [DONE] line.`;
 
 export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply> {
   const key = config.geminiApiKey.trim();
@@ -295,7 +309,14 @@ export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply
     }
   }
 
-  return { type: "question", text: raw.trim() };
+  // Parse optional [SUGGESTIONS: a | b | c] marker from the question.
+  const sugMatch = raw.match(/\[SUGGESTIONS:\s*([^\]]+)\]/i);
+  const suggestions = sugMatch
+    ? sugMatch[1].split("|").map((s) => s.trim()).filter(Boolean)
+    : undefined;
+  const text = raw.replace(/\[SUGGESTIONS:[^\]]*\]/i, "").trim();
+
+  return { type: "question", text, suggestions };
 }
 
 // ── Local deterministic fallback (works with no Gemini key) ───────────────────
