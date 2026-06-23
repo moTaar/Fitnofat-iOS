@@ -10,9 +10,8 @@ const app = express();
 app.use(
   cors({
     origin: (origin, cb) => {
-      // Allow non-browser clients (no origin) and any configured origin.
       if (!origin || config.corsOrigins.includes(origin)) return cb(null, true);
-      cb(new Error(`Origin ${origin} not allowed by CORS`));
+      cb(null, false);
     },
     credentials: true,
   })
