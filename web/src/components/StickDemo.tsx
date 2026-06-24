@@ -58,11 +58,18 @@ export function StickDemo({
       line("thigh", pose.hip, pose.kn);
       line("shin", pose.kn, pose.ft);
       dot("head", pose.head);
-      // Load (barbell line / dumbbell discs) at the hands.
-      if (anim.load === "bar") line("bar", [pose.ha[0] - 11, pose.ha[1]], [pose.ha[0] + 11, pose.ha[1]]);
+
+      // Barbell: thin shaft + thick plate caps at each end.
+      if (anim.load === "bar") {
+        line("bar",  [pose.ha[0] - 13, pose.ha[1]], [pose.ha[0] + 13, pose.ha[1]]);
+        line("barL", [pose.ha[0] - 13, pose.ha[1] - 5], [pose.ha[0] - 13, pose.ha[1] + 5]);
+        line("barR", [pose.ha[0] + 13, pose.ha[1] - 5], [pose.ha[0] + 13, pose.ha[1] + 5]);
+      }
+      // Dumbbell: two disc heads with a short connecting handle.
       if (anim.load === "db") {
-        dot("dbL", [pose.ha[0] - 5, pose.ha[1]]);
-        dot("dbR", [pose.ha[0] + 5, pose.ha[1]]);
+        dot("dbL", [pose.ha[0] - 6, pose.ha[1]]);
+        dot("dbR", [pose.ha[0] + 6, pose.ha[1]]);
+        line("dbShaft", [pose.ha[0] - 3, pose.ha[1]], [pose.ha[0] + 3, pose.ha[1]]);
       }
     };
 
@@ -73,12 +80,12 @@ export function StickDemo({
       const t = ease(phase <= 1 ? phase : 2 - phase);
       apply({
         head: lerpPt(a.head, b.head, t),
-        sh: lerpPt(a.sh, b.sh, t),
-        el: lerpPt(a.el, b.el, t),
-        ha: lerpPt(a.ha, b.ha, t),
-        hip: lerpPt(a.hip, b.hip, t),
-        kn: lerpPt(a.kn, b.kn, t),
-        ft: lerpPt(a.ft, b.ft, t),
+        sh:   lerpPt(a.sh,   b.sh,   t),
+        el:   lerpPt(a.el,   b.el,   t),
+        ha:   lerpPt(a.ha,   b.ha,   t),
+        hip:  lerpPt(a.hip,  b.hip,  t),
+        kn:   lerpPt(a.kn,   b.kn,   t),
+        ft:   lerpPt(a.ft,   b.ft,   t),
       });
       raf = requestAnimationFrame(loop);
     };
@@ -108,7 +115,7 @@ export function StickDemo({
       {anim.prop === "seat" && (
         <>
           <rect x="40" y="62" width="22" height="5" rx="2" className="fill-muted-foreground/25" />
-          <rect x="38" y="40" width="5" height="24" rx="2" className="fill-muted-foreground/25" />
+          <rect x="38" y="40" width="5"  height="24" rx="2" className="fill-muted-foreground/25" />
         </>
       )}
 
@@ -123,15 +130,24 @@ export function StickDemo({
       </g>
       <circle ref={set("head")} r="6" className="fill-primary" />
 
-      {/* load */}
+      {/* ── equipment — steel blue, distinct from the orange figure ── */}
+
+      {/* Barbell: thin shaft + thick plate caps */}
       {anim.load === "bar" && (
-        <line ref={set("bar")} className="stroke-foreground" strokeWidth="2.5" strokeLinecap="round" />
+        <g className="stroke-sky-400" strokeLinecap="round" fill="none">
+          <line ref={set("bar")}  strokeWidth="2" />
+          <line ref={set("barL")} strokeWidth="5" />
+          <line ref={set("barR")} strokeWidth="5" />
+        </g>
       )}
+
+      {/* Dumbbell: two disc heads + short handle */}
       {anim.load === "db" && (
-        <>
-          <circle ref={set("dbL")} r="3.5" className="fill-foreground" />
-          <circle ref={set("dbR")} r="3.5" className="fill-foreground" />
-        </>
+        <g strokeLinecap="round">
+          <line ref={set("dbShaft")} className="stroke-sky-400" strokeWidth="2.5" fill="none" />
+          <circle ref={set("dbL")} r="4" className="fill-sky-400" />
+          <circle ref={set("dbR")} r="4" className="fill-sky-400" />
+        </g>
       )}
     </svg>
   );
