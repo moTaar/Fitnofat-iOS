@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/misc";
 import { Modal } from "@/components/ui/modal";
+import { CuisineSelector } from "@/components/CuisineSelector";
 
 export function SettingsPage() {
   const navigate = useNavigate();
@@ -17,6 +18,7 @@ export function SettingsPage() {
   const settings = useStore((s) => s.settings);
   const setSetting = useStore((s) => s.setSetting);
   const setUnits = useStore((s) => s.setUnits);
+  const setCuisine = useStore((s) => s.setCuisine);
   const profile = useStore((s) => s.profile);
   const user = useStore((s) => s.user);
   const logout = useStore((s) => s.logout);
@@ -101,6 +103,22 @@ export function SettingsPage() {
             <Toggle on={settings.remindersEnabled} onClick={toggleReminders} />
           </Row>
         )}
+      </SettingGroup>
+
+      {/* Nutrition */}
+      <SettingGroup title="Nutrition">
+        <div className="p-4">
+          <CuisineSelector
+            title="Default cuisine"
+            bleed={false}
+            value={profile?.cuisine ?? "standard"}
+            onSelect={setCuisine}
+          />
+          <p className="mt-2.5 px-1 text-xs text-muted-foreground">
+            Your default culinary style for AI meal suggestions. Applied the next time your
+            nutrition plan is generated.
+          </p>
+        </div>
       </SettingGroup>
 
       {/* AI Coach */}

@@ -22,6 +22,10 @@ export type ActivityLevel = "sedentary" | "light" | "moderate" | "very_active";
 // Body-composition objective for the nutrition planner (distinct from training goal).
 export type DietGoal = "lean_gain" | "recomp" | "maintain" | "deficit" | "aggressive_deficit";
 export type Sex = "male" | "female" | "other";
+// Culinary style for daily meal suggestions. "standard" = no cultural styling.
+export type Cuisine =
+  | "standard" | "french" | "italian" | "korean"
+  | "mediterranean" | "mexican" | "japanese";
 
 export interface UserProfile {
   name: string;
@@ -42,6 +46,7 @@ export interface UserProfile {
   activityLevel?: ActivityLevel;
   dietGoal?: DietGoal;
   dietRestrictions?: string[];
+  cuisine?: Cuisine; // default culinary style for AI meal suggestions
 }
 
 // ── Nutrition planner contract ──────────────────────────────────────────────
@@ -92,6 +97,22 @@ export interface NutritionPlan extends NutritionPlanData {
   id: string;
   iteration: number;
   createdAt: number;
+}
+
+// ── AI nutritional lookup ("L'apport nutritif") ───────────────────────────────
+export interface MicroNutrient {
+  name: string;   // e.g. "Sodium", "Fiber"
+  amount: string; // e.g. "320 mg"
+}
+
+// Deterministic, hallucination-resistant result from the food analyzer.
+export interface FoodLookupResult {
+  foodName: string;
+  portion: string;          // portion size analyzed
+  macros: MacroTargets;     // calories + protein/carbs/fats
+  micros?: MicroNutrient[];
+  confidence?: "high" | "medium" | "low";
+  notes?: string;
 }
 
 export interface PlannedSet {

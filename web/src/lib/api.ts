@@ -3,7 +3,8 @@
 // an expired access token once on a 401.
 
 import type {
-  Exercise, NutritionPlan, Program, Routine, UserProfile, WorkoutSession,
+  Exercise, FoodLookupResult, NutritionPlan, Program, Routine,
+  UserProfile, WorkoutSession,
 } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_URL ?? "http://localhost:8080").replace(/\/$/, "");
@@ -183,13 +184,21 @@ export const api = {
   aiAssistExercise: (name: string) =>
     request<Exercise>("/api/exercises/ai-assist", { method: "POST", body: JSON.stringify({ name }) }),
 
-  // Generate/evolve the nutrition plan. Optional metabolic fields patch the
-  // profile server-side before planning (used by the Nutrition setup form).
+  // Generate/evolve the nutrition plan. Optional profile fields (metabolic data
+  // or the chosen `cuisine`) patch the profile server-side before planning.
   generateNutrition: (patch?: Partial<UserProfile>) =>
     request<{ nutritionPlan: NutritionPlan; profile: UserProfile & { onboarded: boolean } }>(
       "/api/nutrition/generate",
       { method: "POST", body: JSON.stringify(patch ?? {}) }
     ),
+
+  // AI-verified nutritional lookup ("L'apport nutritif"). Returns null when no
+  // food could be identified for the query.
+  lookupFood: (query: string) =>
+    request<{ result: FoodLookupResult | null }>("/api/nutrition/lookup", {
+      method: "POST",
+      body: JSON.stringify({ query }),
+    }),
 
   saveWorkouts: (workouts: unknown) =>
     request<WorkoutSession[]>("/api/workouts", { method: "POST", body: JSON.stringify(workouts) }),

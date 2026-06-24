@@ -9,8 +9,9 @@
 
 import { config } from "./config";
 import type {
-  ActivityLevel, DayPlan, DietGoal, MacroTargets, Meal, NutritionPlanData,
-  PortionItem, RoutineExercise, Sex, UserProfile,
+  ActivityLevel, Cuisine, DayPlan, DietGoal, FoodLookupResult, MacroTargets,
+  Meal, MicroNutrient, NutritionPlanData, PortionItem, RoutineExercise, Sex,
+  UserProfile,
 } from "./types";
 
 const ENDPOINT = (model: string, key: string) =>
@@ -301,6 +302,55 @@ const nutritionSchema = {
   required: ["strategy", "summary", "trainingDay", "restDay"],
 };
 
+// ── Cuisine styling ───────────────────────────────────────────────────────────
+// Each culinary style carries an authenticity instruction. The macro/calorie
+// targets always win — the AI flexes portion sizes of authentic ingredients to
+// hit the numbers rather than compromising the targets for flavour.
+const CUISINE_META: Record<Cuisine, { label: string; profile: string }> = {
+  standard: { label: "Standard", profile: "" },
+  french: {
+    label: "French",
+    profile: "classic French cuisine — eggs, cultured butter & olive oil, herbs de Provence, Dijon, ratatouille, sole/cod, lean steak, lentils, Greek-style yoghurt, baguette/wholegrain, fromage blanc",
+  },
+  italian: {
+    label: "Italian",
+    profile: "authentic Italian cuisine — wholegrain pasta & risotto, olive oil, tomato & basil, mozzarella/parmesan, white fish, chicken, cannellini beans, minestrone, polenta, rocket salads",
+  },
+  korean: {
+    label: "Korean",
+    profile: "authentic Korean cuisine — steamed rice, bibimbap, lean bulgogi beef, grilled fish, tofu & doenjang stew, kimchi & fermented vegetables, gochujang, egg, sweet potato, seaweed",
+  },
+  mediterranean: {
+    label: "Mediterranean",
+    profile: "Mediterranean cuisine — olive oil, chickpeas/lentils, grilled fish & chicken, Greek yoghurt, tomatoes/cucumber/peppers, feta, wholegrains, hummus, nuts, plenty of vegetables",
+  },
+  mexican: {
+    label: "Mexican",
+    profile: "authentic Mexican cuisine — corn tortillas, black/pinto beans, grilled chicken & lean beef, fish tacos, avocado, tomato salsa, peppers, lime, rice, eggs ranchero",
+  },
+  japanese: {
+    label: "Japanese",
+    profile: "authentic Japanese cuisine — steamed rice, miso soup, salmon/tuna/white fish, edamame & tofu, teriyaki chicken, seaweed, egg, soba, pickled & steamed vegetables",
+  },
+};
+
+export function cuisineLabel(c?: Cuisine): string {
+  return CUISINE_META[c ?? "standard"]?.label ?? "Standard";
+}
+
+// Extra system-prompt rules appended when a specific culinary style is chosen.
+function cuisineSystemBlock(cuisine?: Cuisine): string {
+  if (!cuisine || cuisine === "standard") return "";
+  const meta = CUISINE_META[cuisine];
+  return `
+
+CULINARY STYLE — ${meta.label.toUpperCase()}:
+- Build EVERY meal from ${meta.profile}.
+- Use real, recognisable ${meta.label} dishes and authentic flavour pairings — not generic "chicken + rice".
+- The day's calorie and macronutrient targets are NON-NEGOTIABLE and take absolute priority over authenticity. SCALE the portion sizes of the authentic ingredients up or down to hit the exact protein/carb/fat/calorie targets. Never sacrifice the macros to make a dish "feel" authentic.
+- Still respect every dietary restriction and the training-day vs rest-day carb/fat split.`;
+}
+
 const NUTRITION_SYSTEM = `You are a certified sports nutritionist and registered dietitian.
 You build precise, practical daily meal plans that fuel a specific training program.
 Return ONLY valid JSON matching the schema — no prose outside JSON.
@@ -314,8 +364,17 @@ Rules:
 - Provide a hydration target in litres for each day.
 - Keep "summary" to 2–3 sentences explaining the strategy and how it ties to the training load.`;
 
-function buildPrompt(p: UserProfile, routines: RoutineLite[], analytics?: string): string {
+function buildPrompt(
+  p: UserProfile,
+  routines: RoutineLite[],
+  analytics?: string,
+  cuisine?: Cuisine
+): string {
   const restrictions = p.dietRestrictions?.length ? p.dietRestrictions.join(", ") : "none";
+  const style =
+    cuisine && cuisine !== "standard"
+      ? `\nCulinary style requested: ${CUISINE_META[cuisine].label} — format every meal as authentic ${CUISINE_META[cuisine].label} food while hitting the exact macro targets below.`
+      : "";
   return `Design a nutrition plan for this athlete.
 
 Physical stats:
@@ -327,7 +386,7 @@ Physical stats:
 - Units preference: ${p.units}
 
 Nutrition goal: ${p.dietGoal ?? "maintain"}
-Dietary restrictions: ${restrictions}
+Dietary restrictions: ${restrictions}${style}
 
 Current training program load:
 ${trainingSummary(p, routines)}
@@ -373,7 +432,8 @@ function sanitizeDay(d: any, fallback: DayPlan): DayPlan {
 export async function generateNutritionPlan(
   p: UserProfile,
   routines: RoutineLite[],
-  analytics?: string
+  analytics?: string,
+  cuisine?: Cuisine
 ): Promise<NutritionPlanData> {
   const fallback = localPlan(p, routines);
   const key = config.geminiApiKey.trim();
@@ -384,8 +444,8 @@ export async function generateNutritionPlan(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: NUTRITION_SYSTEM }] },
-        contents: [{ role: "user", parts: [{ text: buildPrompt(p, routines, analytics) }] }],
+        systemInstruction: { parts: [{ text: NUTRITION_SYSTEM + cuisineSystemBlock(cuisine) }] },
+        contents: [{ role: "user", parts: [{ text: buildPrompt(p, routines, analytics, cuisine) }] }],
         generationConfig: {
           temperature: 0.5,
           responseMimeType: "application/json",
@@ -410,5 +470,178 @@ export async function generateNutritionPlan(
   } catch (err) {
     if (err instanceof Error && err.message === "QUOTA_EXCEEDED") throw err;
     return fallback;
+  }
+}
+
+// ── AI nutritional lookup ("L'apport nutritif") ───────────────────────────────
+// A verified-database-style analyzer: parses a free-text food query (English or
+// French), and returns a clean, deterministic macro/micro breakdown. The strict
+// system prompt + JSON schema + temperature 0 minimise hallucination. A small
+// local table backs a handful of common foods so the bar degrades gracefully
+// with no API key.
+
+const microSchema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    amount: { type: "string" },
+  },
+  required: ["name", "amount"],
+};
+
+const foodLookupSchema = {
+  type: "object",
+  properties: {
+    foodName: { type: "string" },
+    portion: { type: "string" },
+    calories: { type: "number" },
+    protein: { type: "number" },
+    carbs: { type: "number" },
+    fats: { type: "number" },
+    micros: { type: "array", items: microSchema },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
+    notes: { type: "string" },
+  },
+  required: ["foodName", "portion", "calories", "protein", "carbs", "fats"],
+};
+
+const LOOKUP_SYSTEM = `You are a verified nutritional database analyzer with the rigour of USDA FoodData Central and the French CIQUAL/ANSES tables.
+Return ONLY valid JSON matching the schema — no prose outside JSON.
+
+ABSOLUTE RULES:
+- NEVER invent, guess wildly, or hallucinate values. Base every number on established nutritional reference data. If you are uncertain, set "confidence" to "low" and use the closest well-documented equivalent.
+- Parse the food query in ANY language. English and French food terms are BOTH fully supported and treated identically (e.g. "100g cooked salmon" = "100 g de saumon cuit"; "un croissant" = "a croissant"; "blanc de poulet" = "chicken breast").
+- Determine the portion precisely:
+  • If the query states a quantity (grams, ounces, a count like "2 eggs", or an item like "un croissant"), analyze EXACTLY that quantity.
+  • If no quantity is given, analyze ONE standard realistic serving and state it clearly in "portion".
+- Account for the preparation when stated (raw vs cooked, fried vs grilled, with/without skin) — it changes the numbers.
+- "calories" in kcal; "protein", "carbs", "fats" in grams; round sensibly (calories to whole numbers, macros to 1 decimal).
+- "micros": include up to 4 KEY micronutrients relevant to this food (e.g. Sodium, Potassium, Fiber, Calcium, Iron, Vitamin C, Omega-3) with realistic amounts and units. Omit if none are notable.
+- "confidence": "high" for well-characterised whole foods, "medium"/"low" for composite or ambiguous queries.
+- If the query is NOT a food (or is unintelligible), return foodName "Unknown", portion "—", all macros 0, and a short "notes" explaining you could not identify a food.`;
+
+function sanitizeMicros(v: any): MicroNutrient[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out = v
+    .map((m: any) => ({ name: String(m?.name ?? "").trim(), amount: String(m?.amount ?? "").trim() }))
+    .filter((m: MicroNutrient) => m.name && m.amount)
+    .slice(0, 6);
+  return out.length ? out : undefined;
+}
+
+function sanitizeLookup(raw: any): FoodLookupResult {
+  const num = (v: any) => Math.max(0, Number(v) || 0);
+  return {
+    foodName: String(raw?.foodName ?? "Unknown").trim() || "Unknown",
+    portion: String(raw?.portion ?? "—").trim() || "—",
+    macros: {
+      calories: Math.round(num(raw?.calories)),
+      protein: Math.round(num(raw?.protein) * 10) / 10,
+      carbs: Math.round(num(raw?.carbs) * 10) / 10,
+      fats: Math.round(num(raw?.fats) * 10) / 10,
+    },
+    micros: sanitizeMicros(raw?.micros),
+    confidence: ["high", "medium", "low"].includes(raw?.confidence) ? raw.confidence : undefined,
+    notes: raw?.notes ? String(raw.notes).trim() : undefined,
+  };
+}
+
+// Minimal offline table: per-100g macros for common foods (EN + FR keywords).
+// `unit` foods (eggs, croissant, banana) carry a typical per-item gram weight.
+interface LocalFood {
+  name: string;
+  keywords: string[];
+  per100: { calories: number; protein: number; carbs: number; fats: number };
+  unitG?: number; // grams of one typical item (for "2 eggs", "un croissant")
+}
+const LOCAL_FOODS: LocalFood[] = [
+  { name: "Cooked chicken breast", keywords: ["chicken breast", "poulet", "blanc de poulet"], per100: { calories: 165, protein: 31, carbs: 0, fats: 3.6 } },
+  { name: "Cooked salmon", keywords: ["salmon", "saumon"], per100: { calories: 206, protein: 22, carbs: 0, fats: 13 } },
+  { name: "Cooked white rice", keywords: ["white rice", "rice", "riz"], per100: { calories: 130, protein: 2.7, carbs: 28, fats: 0.3 } },
+  { name: "Egg", keywords: ["egg", "oeuf", "œuf"], per100: { calories: 155, protein: 13, carbs: 1.1, fats: 11 }, unitG: 50 },
+  { name: "Banana", keywords: ["banana", "banane"], per100: { calories: 89, protein: 1.1, carbs: 23, fats: 0.3 }, unitG: 118 },
+  { name: "Croissant", keywords: ["croissant"], per100: { calories: 406, protein: 8.2, carbs: 45, fats: 21 }, unitG: 57 },
+  { name: "Avocado", keywords: ["avocado", "avocat"], per100: { calories: 160, protein: 2, carbs: 9, fats: 15 }, unitG: 150 },
+  { name: "Greek yogurt", keywords: ["greek yogurt", "yaourt grec", "yogurt"], per100: { calories: 59, protein: 10, carbs: 3.6, fats: 0.4 } },
+  { name: "Oats", keywords: ["oats", "oatmeal", "avoine", "flocons d'avoine"], per100: { calories: 389, protein: 16.9, carbs: 66, fats: 6.9 } },
+  { name: "Almonds", keywords: ["almond", "amande"], per100: { calories: 579, protein: 21, carbs: 22, fats: 50 } },
+];
+
+function lookupFoodLocal(query: string): FoodLookupResult | null {
+  const q = query.toLowerCase().trim();
+  const food = LOCAL_FOODS.find((f) => f.keywords.some((k) => q.includes(k)));
+  if (!food) return null;
+
+  // Parse "150g" / "150 g" / "6 oz" → grams; else a leading count like "2 eggs".
+  let grams: number;
+  let portionLabel: string;
+  const gramMatch = q.match(/(\d+(?:\.\d+)?)\s*(g|gram|grammes?|kg|oz|ounce)/);
+  const countMatch = q.match(/(?:^|\s)(\d+(?:\.\d+)?|un|une|a|an)\b/);
+  if (gramMatch) {
+    const val = parseFloat(gramMatch[1]);
+    const unit = gramMatch[2];
+    grams = unit.startsWith("kg") ? val * 1000 : unit.startsWith("oz") || unit === "ounce" ? val * 28.35 : val;
+    portionLabel = `${Math.round(grams)} g`;
+  } else if (food.unitG && countMatch) {
+    const word = countMatch[1];
+    const count = ["un", "une", "a", "an"].includes(word) ? 1 : parseFloat(word);
+    grams = food.unitG * count;
+    portionLabel = `${count} × ${food.name.toLowerCase()} (${Math.round(grams)} g)`;
+  } else if (food.unitG) {
+    grams = food.unitG;
+    portionLabel = `1 × ${food.name.toLowerCase()} (${Math.round(grams)} g)`;
+  } else {
+    grams = 100;
+    portionLabel = "100 g";
+  }
+
+  const k = grams / 100;
+  return {
+    foodName: food.name,
+    portion: portionLabel,
+    macros: {
+      calories: Math.round(food.per100.calories * k),
+      protein: Math.round(food.per100.protein * k * 10) / 10,
+      carbs: Math.round(food.per100.carbs * k * 10) / 10,
+      fats: Math.round(food.per100.fats * k * 10) / 10,
+    },
+    confidence: "medium",
+    notes: "Offline estimate from a built-in reference table.",
+  };
+}
+
+export async function lookupFood(query: string): Promise<FoodLookupResult | null> {
+  const q = query.trim();
+  if (!q) return null;
+
+  const key = config.geminiApiKey.trim();
+  if (!key) return lookupFoodLocal(q);
+
+  try {
+    const res = await fetch(ENDPOINT(config.geminiModel, key), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: LOOKUP_SYSTEM }] },
+        contents: [{ role: "user", parts: [{ text: `Analyze this food query: "${q}"` }] }],
+        generationConfig: {
+          temperature: 0, // deterministic — same query → same numbers
+          responseMimeType: "application/json",
+          responseSchema: foodLookupSchema,
+        },
+      }),
+    });
+    if (!res.ok) {
+      if (res.status === 429) throw new Error("QUOTA_EXCEEDED");
+      throw new Error(`Gemini lookup error ${res.status}`);
+    }
+    const data: any = await res.json();
+    const text: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error("Gemini returned an empty lookup response.");
+    return sanitizeLookup(JSON.parse(text));
+  } catch (err) {
+    if (err instanceof Error && err.message === "QUOTA_EXCEEDED") throw err;
+    // Fall back to the local table so the feature still answers common foods.
+    return lookupFoodLocal(q);
   }
 }

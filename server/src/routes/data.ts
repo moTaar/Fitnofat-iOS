@@ -3,14 +3,16 @@ import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { asyncHandler, requireAuth, AuthedRequest } from "../middleware";
 import { generateProgram, refreshProgram, chatOnboarding, chatCoach, generateExerciseGuide, identifyExercise, type ChatMessage } from "../gemini";
-import { generateNutritionPlan, type RoutineLite } from "../nutrition";
+import { generateNutritionPlan, lookupFood, type RoutineLite } from "../nutrition";
 import { buildRefreshSummary, SessionLite } from "../analytics";
 import { slugify } from "../util";
 import {
   aiRoutinesToRows, profileToRow, rowToExercise, rowToProfile,
   rowToProgram, rowToRoutine, rowToWorkout, rowToNutritionPlan,
 } from "../mappers";
-import type { NutritionPlanData, UserProfile } from "../types";
+import type { Cuisine, NutritionPlanData, UserProfile } from "../types";
+
+const CUISINES = ["standard", "french", "italian", "korean", "mediterranean", "mexican", "japanese"] as const;
 
 export const dataRouter = Router();
 dataRouter.use(requireAuth);
@@ -37,6 +39,7 @@ const profileSchema = z.object({
   activityLevel: z.enum(["sedentary", "light", "moderate", "very_active"]).optional(),
   dietGoal: z.enum(["lean_gain", "recomp", "maintain", "deficit", "aggressive_deficit"]).optional(),
   dietRestrictions: z.array(z.string()).optional(),
+  cuisine: z.enum(CUISINES).optional(),
 });
 
 const plannedSet = z.object({
@@ -117,9 +120,10 @@ async function persistNutritionPlan(
   userId: string,
   profile: UserProfile,
   routines: RoutineLite[],
-  analytics?: string
+  analytics?: string,
+  cuisine?: Cuisine
 ) {
-  const data: NutritionPlanData = await generateNutritionPlan(profile, routines, analytics);
+  const data: NutritionPlanData = await generateNutritionPlan(profile, routines, analytics, cuisine);
 
   const { data: last } = await supabaseAdmin
     .from("nutrition_plans").select("iteration").eq("user_id", userId)
@@ -263,7 +267,7 @@ dataRouter.post(
       const routinesLite: RoutineLite[] = result.routines.map((r) => ({
         name: r.name, dayLabel: r.dayLabel, exercises: r.exercises,
       }));
-      nutritionPlan = await persistNutritionPlan(userId, profile, routinesLite, summary);
+      nutritionPlan = await persistNutritionPlan(userId, profile, routinesLite, summary, profile.cuisine);
     } catch {
       // Nutrition is best-effort here — never fail a program refresh over it.
     }
@@ -282,7 +286,9 @@ dataRouter.post(
       return;
     }
     // Optional metabolic fields can be sent to patch the profile before planning
-    // (lets the Nutrition tab capture height/age/activity/diet goal inline).
+    // (lets the Nutrition tab capture height/age/activity/diet goal/cuisine inline).
+    // `cuisine` is a persisted profile field, so the chosen style survives refresh
+    // and is honoured by every later regeneration (including program refresh).
     const patch = profileSchema.partial().parse(req.body ?? {});
     let effective: UserProfile & { onboarded: boolean } = profile;
     if (Object.keys(patch).length) {
@@ -292,8 +298,18 @@ dataRouter.post(
     }
 
     const routines = await loadRoutinesLite(userId);
-    const plan = await persistNutritionPlan(userId, effective, routines);
+    const plan = await persistNutritionPlan(userId, effective, routines, undefined, effective.cuisine);
     res.json({ nutritionPlan: plan, profile: effective });
+  })
+);
+
+// ── POST /nutrition/lookup : AI-verified nutritional lookup ("L'apport nutritif") ──
+dataRouter.post(
+  "/nutrition/lookup",
+  asyncHandler(async (req, res) => {
+    const { query } = z.object({ query: z.string().min(1).max(200) }).parse(req.body);
+    const result = await lookupFood(query);
+    res.json({ result });
   })
 );
 

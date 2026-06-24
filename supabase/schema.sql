@@ -29,6 +29,7 @@ create table if not exists public.profiles (
   activity_level text,                          -- 'sedentary' | 'light' | 'moderate' | 'very_active'
   diet_goal      text,                          -- 'lean_gain' | 'recomp' | 'maintain' | 'deficit' | 'aggressive_deficit'
   diet_restrictions jsonb,                      -- e.g. ['vegan','no peanuts']
+  cuisine        text not null default 'standard', -- default culinary style for AI meals
   updated_at     timestamptz not null default now()
 );
 

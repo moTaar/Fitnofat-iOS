@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Apple, Flame, Droplets, Sparkles, Dumbbell, Moon, Sliders, Salad,
-  Drumstick, Wheat, Nut, Info,
+  Drumstick, Wheat, Nut, Info, UtensilsCrossed, X,
 } from "lucide-react";
 import { useStore, todayKey } from "@/lib/store";
 import { toast } from "@/lib/toast";
-import type { ActivityLevel, DietGoal, MacroTargets, Sex, UserProfile } from "@/lib/types";
+import type { ActivityLevel, Cuisine, DietGoal, MacroTargets, Sex, UserProfile } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
 import { Badge, SegmentedControl, Spinner } from "@/components/ui/misc";
 import { MacroRing, MacroBar } from "@/components/MacroRing";
 import { MealCard, mealKey } from "@/components/MealCard";
+import { CuisineSelector, cuisineLabel } from "@/components/CuisineSelector";
+import { FoodLookup } from "@/components/FoodLookup";
 import { cn } from "@/lib/utils";
 
 const RESTRICTION_PRESETS = ["Vegan", "Vegetarian", "Keto", "Gluten-free", "Dairy-free", "Nut allergy"];
@@ -26,6 +28,13 @@ export function Nutrition() {
   const generateNutrition = useStore((s) => s.generateNutrition);
   const setNutritionDayType = useStore((s) => s.setNutritionDayType);
   const toggleMeal = useStore((s) => s.toggleMeal);
+  const logFood = useStore((s) => s.logFood);
+  const removeLoggedFood = useStore((s) => s.removeLoggedFood);
+
+  // Cuisine is a persisted profile field. While a restyle is in flight we track
+  // the picked chip locally so it highlights instantly.
+  const cuisine = profile?.cuisine ?? "standard";
+  const [pendingCuisine, setPendingCuisine] = useState<Cuisine | null>(null);
 
   const trainedToday = useMemo(
     () => history.some((h) => new Date(h.startedAt).toDateString() === new Date().toDateString()),
@@ -53,19 +62,25 @@ export function Nutrition() {
 
   const day = plan ? (dayType === "training" ? plan.trainingDay : plan.restDay) : null;
   const checked = logForToday?.checkedMeals ?? [];
+  const extras = logForToday?.extras ?? [];
 
+  // Daily totals = ticked-off plan meals + any foods logged via the lookup search.
   const consumed = useMemo<MacroTargets>(() => {
-    if (!day) return emptyMacros;
-    return day.meals.reduce<MacroTargets>((acc, m) => {
-      if (!checked.includes(mealKey(m))) return acc;
-      return {
-        calories: acc.calories + m.macros.calories,
-        protein: acc.protein + m.macros.protein,
-        carbs: acc.carbs + m.macros.carbs,
-        fats: acc.fats + m.macros.fats,
-      };
-    }, { ...emptyMacros });
-  }, [day, checked]);
+    const addMacros = (acc: MacroTargets, m: MacroTargets): MacroTargets => ({
+      calories: acc.calories + m.calories,
+      protein: acc.protein + m.protein,
+      carbs: acc.carbs + m.carbs,
+      fats: acc.fats + m.fats,
+    });
+    let total: MacroTargets = { ...emptyMacros };
+    if (day) {
+      for (const m of day.meals) {
+        if (checked.includes(mealKey(m))) total = addMacros(total, m.macros);
+      }
+    }
+    for (const f of extras) total = addMacros(total, f.macros);
+    return total;
+  }, [day, checked, extras]);
 
   const handleGenerate = async (patch?: Partial<UserProfile>) => {
     setBusy(true);
@@ -78,6 +93,27 @@ export function Nutrition() {
       toast.error(msg.includes("QUOTA") ? "AI quota hit — try again later." : msg || "Couldn't build the plan.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Picking a culinary style restyles the meals (authentic recipes) while the
+  // macro/calorie targets stay locked. The choice is persisted on the profile
+  // (server-side), so it survives refresh and applies to future regenerations.
+  const handleSelectCuisine = async (c: Cuisine) => {
+    if (c === cuisine || busy) return;
+    setPendingCuisine(c);
+    setBusy(true);
+    try {
+      await generateNutrition({ cuisine: c });
+      toast.success(
+        c === "standard" ? "Plan rebuilt." : `Plan rebuilt, ${cuisineLabel(c)} style 🍽️`
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      toast.error(msg.includes("QUOTA") ? "AI quota hit — try again later." : "Couldn't restyle the plan.");
+    } finally {
+      setBusy(false);
+      setPendingCuisine(null);
     }
   };
 
@@ -106,7 +142,10 @@ export function Nutrition() {
           </div>
           <div>
             <h1 className="text-lg font-extrabold leading-tight tracking-tight">Nutrition</h1>
-            <p className="text-xs text-muted-foreground">{plan.strategy} · v{plan.iteration}</p>
+            <p className="text-xs text-muted-foreground">
+              {plan.strategy}
+              {cuisine !== "standard" && ` · ${cuisineLabel(cuisine)}`} · v{plan.iteration}
+            </p>
           </div>
         </div>
         <button
@@ -117,6 +156,14 @@ export function Nutrition() {
           Edit
         </button>
       </div>
+
+      {/* Global cuisine style selector — restyles meals, keeps macros fixed */}
+      <CuisineSelector
+        value={pendingCuisine ?? cuisine}
+        onSelect={handleSelectCuisine}
+        disabled={busy}
+        pending={pendingCuisine}
+      />
 
       {/* Training vs rest day toggle */}
       <SegmentedControl<"training" | "rest">
@@ -175,6 +222,49 @@ export function Nutrition() {
           </div>
         </CardContent>
       </Card>
+
+      {/* AI nutritional lookup ("L'apport nutritif") */}
+      <FoodLookup onLog={logFood} />
+
+      {/* Foods logged via the lookup search (added to today's totals) */}
+      {extras.length > 0 && (
+        <div>
+          <div className="mb-2 flex items-center gap-2">
+            <UtensilsCrossed className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Logged foods
+            </h2>
+            <span className="ml-auto text-xs text-muted-foreground">
+              {Math.round(extras.reduce((n, f) => n + f.macros.calories, 0))} kcal
+            </span>
+          </div>
+          <div className="space-y-2">
+            {extras.map((f) => (
+              <div key={f.id} className="flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold leading-tight">{f.name}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {f.portion} · <span className="text-rose-400">{Math.round(f.macros.protein)}P</span>{" "}
+                    <span className="text-amber-400">{Math.round(f.macros.carbs)}C</span>{" "}
+                    <span className="text-sky-400">{Math.round(f.macros.fats)}F</span>
+                  </p>
+                </div>
+                <span className="shrink-0 text-right text-sm font-bold tabular-nums">
+                  {Math.round(f.macros.calories)}
+                  <span className="ml-0.5 text-[10px] font-medium text-muted-foreground">kcal</span>
+                </span>
+                <button
+                  onClick={() => removeLoggedFood(f.id)}
+                  className="shrink-0 rounded-full p-1.5 text-muted-foreground hover:bg-accent tap"
+                  aria-label={`Remove ${f.name}`}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Meals */}
       <div>

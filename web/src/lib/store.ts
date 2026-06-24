@@ -2,8 +2,9 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { format } from "date-fns";
 import type {
-  ActiveWorkout, Exercise, LoggedExercise, NutritionLog, NutritionPlan,
-  Program, Routine, UserProfile, WorkoutSession,
+  ActiveWorkout, Cuisine, Exercise, FoodLookupResult, LoggedExercise,
+  LoggedFood, NutritionLog, NutritionPlan, Program, Routine, UserProfile,
+  WorkoutSession,
 } from "./types";
 import { SEED_EXERCISES } from "./exercises";
 import { sessionVolume, uid } from "./utils";
@@ -47,6 +48,9 @@ interface AppState {
   generateNutrition: (patch?: Partial<UserProfile>) => Promise<void>;
   setNutritionDayType: (dayType: "training" | "rest") => void;
   toggleMeal: (mealKey: string) => void;
+  setCuisine: (cuisine: Cuisine) => void;          // persisted on the profile (server + local)
+  logFood: (food: FoodLookupResult) => void;       // append a looked-up food to today's tracker
+  removeLoggedFood: (id: string) => void;
 
   // routines
   saveRoutine: (input: {
@@ -193,6 +197,7 @@ export const useStore = create<AppState>()(
                   activityLevel: data.profile.activityLevel,
                   dietGoal: data.profile.dietGoal,
                   dietRestrictions: data.profile.dietRestrictions,
+                  cuisine: data.profile.cuisine,
                 }
               : null,
             onboarded: data.profile?.onboarded ?? false,
@@ -240,6 +245,46 @@ export const useStore = create<AppState>()(
       generateNutrition: async (patch) => {
         const { nutritionPlan, profile } = await api.generateNutrition(patch);
         set((s) => ({ nutritionPlan, profile: profile ?? s.profile }));
+      },
+
+      // Persist the cuisine preference on the profile (server + local). Used by
+      // Settings; the Nutrition tab patches it via generateNutrition + regenerate.
+      setCuisine: (cuisine) => {
+        const p = get().profile;
+        if (!p) return;
+        set({ profile: { ...p, cuisine } });
+        void api.updateProfile({ cuisine }).catch(() => {});
+      },
+
+      logFood: (food) => {
+        const today = todayKey();
+        const entry: LoggedFood = {
+          id: uid("food"),
+          name: food.foodName,
+          portion: food.portion,
+          macros: food.macros,
+          loggedAt: Date.now(),
+        };
+        set((s) => {
+          const base: NutritionLog =
+            s.nutritionLog && s.nutritionLog.date === today
+              ? s.nutritionLog
+              : { date: today, dayType: "training", checkedMeals: [] };
+          return { nutritionLog: { ...base, extras: [...(base.extras ?? []), entry] } };
+        });
+      },
+
+      removeLoggedFood: (id) => {
+        const today = todayKey();
+        set((s) => {
+          if (!s.nutritionLog || s.nutritionLog.date !== today) return {};
+          return {
+            nutritionLog: {
+              ...s.nutritionLog,
+              extras: (s.nutritionLog.extras ?? []).filter((f) => f.id !== id),
+            },
+          };
+        });
       },
 
       setNutritionDayType: (dayType) => {

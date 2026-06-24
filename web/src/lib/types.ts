@@ -31,6 +31,11 @@ export type ActivityLevel = "sedentary" | "light" | "moderate" | "very_active";
 export type DietGoal = "lean_gain" | "recomp" | "maintain" | "deficit" | "aggressive_deficit";
 export type Sex = "male" | "female" | "other";
 
+// Culinary style for daily meal suggestions. "standard" = no cultural styling.
+export type Cuisine =
+  | "standard" | "french" | "italian" | "korean"
+  | "mediterranean" | "mexican" | "japanese";
+
 export interface UserProfile {
   name: string;
   goal: Goal;
@@ -50,6 +55,7 @@ export interface UserProfile {
   activityLevel?: ActivityLevel;
   dietGoal?: DietGoal;
   dietRestrictions?: string[];
+  cuisine?: Cuisine; // default culinary style for AI meal suggestions
 }
 
 export type FoodKind = "protein" | "carb" | "fat" | "veg" | "hydration" | "other";
@@ -96,11 +102,37 @@ export interface NutritionPlan {
   createdAt: number;
 }
 
+// ── AI nutritional lookup ("L'apport nutritif") ───────────────────────────────
+export interface MicroNutrient {
+  name: string;   // e.g. "Sodium", "Fiber", "Vitamin C"
+  amount: string; // e.g. "320 mg"
+}
+
+// Deterministic result returned by the AI nutritional database analyzer.
+export interface FoodLookupResult {
+  foodName: string;          // resolved canonical name
+  portion: string;           // portion size analyzed, e.g. "100 g cooked"
+  macros: MacroTargets;      // calories + protein/carbs/fats
+  micros?: MicroNutrient[];  // key micronutrients when relevant
+  confidence?: "high" | "medium" | "low";
+  notes?: string;
+}
+
+// A food the user logged to today's tracker via the lookup search.
+export interface LoggedFood {
+  id: string;
+  name: string;
+  portion: string;
+  macros: MacroTargets;
+  loggedAt: number;
+}
+
 // Client-only daily checklist state (cached offline in localStorage).
 export interface NutritionLog {
   date: string;                 // yyyy-MM-dd (local)
   dayType: "training" | "rest";
   checkedMeals: string[];       // meal slot+name keys the user has ticked off
+  extras?: LoggedFood[];        // foods added via the nutritional lookup search
 }
 
 export interface Exercise {

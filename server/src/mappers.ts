@@ -30,6 +30,7 @@ export function rowToProfile(row: any): UserProfile & { onboarded: boolean } {
     activityLevel: row.activity_level ?? undefined,
     dietGoal: row.diet_goal ?? undefined,
     dietRestrictions: row.diet_restrictions ?? undefined,
+    cuisine: row.cuisine ?? undefined,
   };
 }
 
@@ -53,6 +54,7 @@ export function profileToRow(userId: string, p: Partial<UserProfile> & { onboard
   if (p.activityLevel !== undefined) row.activity_level = p.activityLevel;
   if (p.dietGoal !== undefined) row.diet_goal = p.dietGoal;
   if (p.dietRestrictions !== undefined) row.diet_restrictions = p.dietRestrictions;
+  if (p.cuisine !== undefined) row.cuisine = p.cuisine;
   return row;
 }
 
