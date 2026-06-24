@@ -1,12 +1,15 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { format } from "date-fns";
 import type {
-  ActiveWorkout, Exercise, LoggedExercise, Program, Routine,
-  UserProfile, WorkoutSession,
+  ActiveWorkout, Exercise, LoggedExercise, NutritionLog, NutritionPlan,
+  Program, Routine, UserProfile, WorkoutSession,
 } from "./types";
 import { SEED_EXERCISES } from "./exercises";
 import { sessionVolume, uid } from "./utils";
 import { api, auth, AuthExpiredError, type Session } from "./api";
+
+export const todayKey = () => format(new Date(), "yyyy-MM-dd");
 
 interface Settings {
   theme: "dark" | "light";
@@ -23,6 +26,8 @@ interface AppState {
   exercises: Exercise[];
   routines: Routine[];
   program: Program | null;
+  nutritionPlan: NutritionPlan | null;
+  nutritionLog: NutritionLog | null; // today's offline meal checklist
   history: WorkoutSession[];
   active: ActiveWorkout | null;
   settings: Settings;
@@ -37,6 +42,11 @@ interface AppState {
   generateProgram: (profile: UserProfile) => Promise<void>;
   refreshProgram: () => Promise<string>;
   applyProgramUpdate: (program: Program, aiRoutines: Routine[]) => void;
+
+  // nutrition
+  generateNutrition: (patch?: Partial<UserProfile>) => Promise<void>;
+  setNutritionDayType: (dayType: "training" | "rest") => void;
+  toggleMeal: (mealKey: string) => void;
 
   // routines
   saveRoutine: (input: {
@@ -112,6 +122,8 @@ export const useStore = create<AppState>()(
       exercises: SEED_EXERCISES,
       routines: [],
       program: null,
+      nutritionPlan: null,
+      nutritionLog: null,
       history: [],
       active: null,
       settings: { theme: "dark", defaultRestSeconds: 90, remindersEnabled: false },
@@ -136,6 +148,8 @@ export const useStore = create<AppState>()(
           onboarded: false,
           routines: [],
           program: null,
+          nutritionPlan: null,
+          nutritionLog: null,
           history: [],
           active: null,
           exercises: SEED_EXERCISES,
@@ -173,10 +187,17 @@ export const useStore = create<AppState>()(
                   bodyweightKg: data.profile.bodyweightKg,
                   units: data.profile.units,
                   notes: data.profile.notes,
+                  heightCm: data.profile.heightCm,
+                  age: data.profile.age,
+                  sex: data.profile.sex,
+                  activityLevel: data.profile.activityLevel,
+                  dietGoal: data.profile.dietGoal,
+                  dietRestrictions: data.profile.dietRestrictions,
                 }
               : null,
             onboarded: data.profile?.onboarded ?? false,
             program: data.program,
+            nutritionPlan: data.nutritionPlan ?? get().nutritionPlan,
             routines: data.routines,
             exercises: [...SEED_EXERCISES, ...customs],
             history: [...pendingLocal, ...data.workouts],
@@ -199,15 +220,55 @@ export const useStore = create<AppState>()(
       },
 
       refreshProgram: async () => {
-        const { program, routines } = await api.refreshProgram();
+        const { program, routines, nutritionPlan } = await api.refreshProgram();
         const manual = get().routines.filter((r) => r.source === "manual");
-        set({ program, routines: [...routines, ...manual] });
+        set({
+          program,
+          routines: [...routines, ...manual],
+          // The refresh also evolves the diet — keep the old plan if it didn't.
+          nutritionPlan: nutritionPlan ?? get().nutritionPlan,
+        });
         return program.summary ?? "";
       },
 
       applyProgramUpdate: (program, aiRoutines) => {
         const manual = get().routines.filter((r) => r.source === "manual");
         set({ program, routines: [...aiRoutines, ...manual] });
+      },
+
+      // ── nutrition ───────────────────────────────────────────────────────
+      generateNutrition: async (patch) => {
+        const { nutritionPlan, profile } = await api.generateNutrition(patch);
+        set((s) => ({ nutritionPlan, profile: profile ?? s.profile }));
+      },
+
+      setNutritionDayType: (dayType) => {
+        const today = todayKey();
+        set((s) => {
+          const existing =
+            s.nutritionLog && s.nutritionLog.date === today ? s.nutritionLog : null;
+          return {
+            nutritionLog: {
+              date: today,
+              dayType,
+              checkedMeals: existing?.checkedMeals ?? [],
+            },
+          };
+        });
+      },
+
+      toggleMeal: (mealKey) => {
+        const today = todayKey();
+        set((s) => {
+          const base: NutritionLog =
+            s.nutritionLog && s.nutritionLog.date === today
+              ? s.nutritionLog
+              : { date: today, dayType: "training", checkedMeals: [] };
+          const checked = base.checkedMeals.includes(mealKey)
+            ? base.checkedMeals.filter((k) => k !== mealKey)
+            : [...base.checkedMeals, mealKey];
+          return { nutritionLog: { ...base, checkedMeals: checked } };
+        });
       },
 
       // ── routines ────────────────────────────────────────────────────────
@@ -420,6 +481,8 @@ export const useStore = create<AppState>()(
         exercises: s.exercises,
         routines: s.routines,
         program: s.program,
+        nutritionPlan: s.nutritionPlan,
+        nutritionLog: s.nutritionLog,
         history: s.history,
         active: s.active,
         settings: s.settings,

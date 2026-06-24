@@ -12,6 +12,7 @@ import { RoutineEditor } from "./pages/RoutineEditor";
 import { ActiveWorkout } from "./pages/ActiveWorkout";
 import { LibraryPage } from "./pages/Library";
 import { AiCoach } from "./pages/AiCoach";
+import { Nutrition } from "./pages/Nutrition";
 import { History } from "./pages/History";
 import { SettingsPage } from "./pages/Settings";
 import { Dumbbell } from "lucide-react";
@@ -112,6 +113,7 @@ export default function App() {
         <Route path="/routines/new" element={<RoutineEditor />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/ai-coach" element={<AiCoach />} />
+        <Route path="/nutrition" element={<Nutrition />} />
         <Route path="/history" element={<History />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>

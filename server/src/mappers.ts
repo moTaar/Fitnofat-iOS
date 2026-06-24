@@ -1,6 +1,7 @@
 import { slugify } from "./util";
 import type {
   AIProgramResponse,
+  NutritionPlan,
   RoutineExercise,
   UserProfile,
 } from "./types";
@@ -23,6 +24,12 @@ export function rowToProfile(row: any): UserProfile & { onboarded: boolean } {
     units: row.units,
     notes: row.notes ?? "",
     onboarded: row.onboarded,
+    heightCm: row.height_cm ?? undefined,
+    age: row.age ?? undefined,
+    sex: row.sex ?? undefined,
+    activityLevel: row.activity_level ?? undefined,
+    dietGoal: row.diet_goal ?? undefined,
+    dietRestrictions: row.diet_restrictions ?? undefined,
   };
 }
 
@@ -40,7 +47,27 @@ export function profileToRow(userId: string, p: Partial<UserProfile> & { onboard
   if (p.units !== undefined) row.units = p.units;
   if (p.notes !== undefined) row.notes = p.notes;
   if (p.onboarded !== undefined) row.onboarded = p.onboarded;
+  if (p.heightCm !== undefined) row.height_cm = p.heightCm;
+  if (p.age !== undefined) row.age = p.age;
+  if (p.sex !== undefined) row.sex = p.sex;
+  if (p.activityLevel !== undefined) row.activity_level = p.activityLevel;
+  if (p.dietGoal !== undefined) row.diet_goal = p.dietGoal;
+  if (p.dietRestrictions !== undefined) row.diet_restrictions = p.dietRestrictions;
   return row;
+}
+
+// ── nutrition plans ─────────────────────────────────────────────────────────
+export function rowToNutritionPlan(row: any): NutritionPlan {
+  const plan = row.plan ?? {};
+  return {
+    id: row.id,
+    iteration: row.iteration,
+    strategy: row.strategy ?? plan.strategy ?? "",
+    summary: row.summary ?? plan.summary ?? "",
+    trainingDay: plan.trainingDay,
+    restDay: plan.restDay,
+    createdAt: ms(row.created_at),
+  };
 }
 
 // ── programs ──────────────────────────────────────────────────────────────

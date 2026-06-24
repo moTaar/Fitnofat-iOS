@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Play, Plus, Sparkles, Flame, Calendar, Bell, BellRing,
-  TrendingUp, Star, ChevronRight, Check,
+  TrendingUp, Star, ChevronRight, Check, Apple,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { weekStats, currentStreak } from "@/lib/analytics";
@@ -232,7 +232,7 @@ export function Dashboard() {
             </div>
             <p className="mt-2 text-sm text-muted-foreground">
               Ready to level up? We’ll analyze your progress and adapt loads, reps and
-              exercises for your next block.
+              exercises for your next block — and re-scale your nutrition to match.
             </p>
             <Button
               className="mt-3 w-full"
@@ -266,8 +266,15 @@ export function Dashboard() {
             <Check className="h-7 w-7" />
           </div>
           <p className="text-sm text-muted-foreground">{refreshResult}</p>
+          <p className="text-xs text-muted-foreground">
+            Your nutrition plan was re-scaled to match the new training load.
+          </p>
           <Button className="w-full" onClick={() => setRefreshResult(null)}>
             View updated routines
+          </Button>
+          <Button variant="outline" className="w-full" onClick={() => navigate("/nutrition")}>
+            <Apple className="h-4 w-4" />
+            View nutrition plan
           </Button>
         </div>
       </Modal>

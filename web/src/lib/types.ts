@@ -26,6 +26,11 @@ export type MuscleGroup =
   | "Cardio"
   | "Full Body";
 
+// ── Nutrition planner ───────────────────────────────────────────────────────
+export type ActivityLevel = "sedentary" | "light" | "moderate" | "very_active";
+export type DietGoal = "lean_gain" | "recomp" | "maintain" | "deficit" | "aggressive_deficit";
+export type Sex = "male" | "female" | "other";
+
 export interface UserProfile {
   name: string;
   goal: Goal;
@@ -38,6 +43,64 @@ export interface UserProfile {
   bodyweightKg?: number;
   units: "kg" | "lb";
   notes?: string;
+  // metabolic data (AI Nutrition planner)
+  heightCm?: number;
+  age?: number;
+  sex?: Sex;
+  activityLevel?: ActivityLevel;
+  dietGoal?: DietGoal;
+  dietRestrictions?: string[];
+}
+
+export type FoodKind = "protein" | "carb" | "fat" | "veg" | "hydration" | "other";
+export type MealSlot =
+  | "pre_workout" | "post_workout" | "breakfast" | "lunch" | "dinner" | "snack";
+
+export interface MacroTargets {
+  calories: number;
+  protein: number; // grams
+  carbs: number;   // grams
+  fats: number;    // grams
+}
+
+export interface PortionItem {
+  food: string;
+  amount: string;  // "150 g" / "6 oz"
+  visual: string;  // "≈ 1 palm"
+  kind: FoodKind;
+  calories?: number;
+}
+
+export interface Meal {
+  name: string;
+  slot: MealSlot;
+  timing: string;
+  macros: MacroTargets;
+  items: PortionItem[];
+  note?: string;
+}
+
+export interface DayPlan {
+  targets: MacroTargets;
+  meals: Meal[];
+  hydrationLiters: number;
+}
+
+export interface NutritionPlan {
+  id: string;
+  iteration: number;
+  strategy: string;
+  summary: string;
+  trainingDay: DayPlan;
+  restDay: DayPlan;
+  createdAt: number;
+}
+
+// Client-only daily checklist state (cached offline in localStorage).
+export interface NutritionLog {
+  date: string;                 // yyyy-MM-dd (local)
+  dayType: "training" | "rest";
+  checkedMeals: string[];       // meal slot+name keys the user has ticked off
 }
 
 export interface Exercise {

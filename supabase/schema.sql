@@ -22,6 +22,13 @@ create table if not exists public.profiles (
   notes          text,
   equipment_mix  jsonb,
   onboarded      boolean not null default false,
+  -- metabolic data for the AI Nutrition planner
+  height_cm      numeric,
+  age            int,
+  sex            text,                          -- 'male' | 'female' | 'other'
+  activity_level text,                          -- 'sedentary' | 'light' | 'moderate' | 'very_active'
+  diet_goal      text,                          -- 'lean_gain' | 'recomp' | 'maintain' | 'deficit' | 'aggressive_deficit'
+  diet_restrictions jsonb,                      -- e.g. ['vegan','no peanuts']
   updated_at     timestamptz not null default now()
 );
 
@@ -89,17 +96,33 @@ create table if not exists public.workouts (
 );
 create index if not exists workouts_user_idx on public.workouts (user_id, started_at desc);
 
+-- ── nutrition_plans (AI diet plan, evolves with the training program) ─────────
+-- The full plan (training-day + rest-day macro targets, meals and portions) is
+-- stored as JSONB to keep the AI-first JSON contract intact. One active plan per
+-- user (latest by created_at); older iterations are kept for history.
+create table if not exists public.nutrition_plans (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users (id) on delete cascade,
+  iteration   int  not null default 1,
+  strategy    text,
+  summary     text,
+  plan        jsonb not null default '{}'::jsonb,
+  created_at  timestamptz not null default now()
+);
+create index if not exists nutrition_plans_user_idx on public.nutrition_plans (user_id, created_at desc);
+
 -- ── Row Level Security ───────────────────────────────────────────────────────
-alter table public.profiles  enable row level security;
-alter table public.programs  enable row level security;
-alter table public.routines  enable row level security;
-alter table public.exercises enable row level security;
-alter table public.workouts  enable row level security;
+alter table public.profiles        enable row level security;
+alter table public.programs        enable row level security;
+alter table public.routines        enable row level security;
+alter table public.exercises       enable row level security;
+alter table public.workouts        enable row level security;
+alter table public.nutrition_plans enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['profiles','programs','routines','exercises','workouts'] loop
+  foreach t in array array['profiles','programs','routines','exercises','workouts','nutrition_plans'] loop
     execute format('drop policy if exists "owner_all" on public.%I;', t);
     -- profiles keys on user_id; others also key on user_id
     execute format(

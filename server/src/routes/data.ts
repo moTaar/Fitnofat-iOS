@@ -3,13 +3,14 @@ import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { asyncHandler, requireAuth, AuthedRequest } from "../middleware";
 import { generateProgram, refreshProgram, chatOnboarding, chatCoach, generateExerciseGuide, identifyExercise, type ChatMessage } from "../gemini";
+import { generateNutritionPlan, type RoutineLite } from "../nutrition";
 import { buildRefreshSummary, SessionLite } from "../analytics";
 import { slugify } from "../util";
 import {
   aiRoutinesToRows, profileToRow, rowToExercise, rowToProfile,
-  rowToProgram, rowToRoutine, rowToWorkout,
+  rowToProgram, rowToRoutine, rowToWorkout, rowToNutritionPlan,
 } from "../mappers";
-import type { UserProfile } from "../types";
+import type { NutritionPlanData, UserProfile } from "../types";
 
 export const dataRouter = Router();
 dataRouter.use(requireAuth);
@@ -29,6 +30,13 @@ const profileSchema = z.object({
   bodyweightKg: z.number().optional(),
   units: z.enum(["kg", "lb"]),
   notes: z.string().optional(),
+  // metabolic data for the nutrition planner
+  heightCm: z.number().positive().optional(),
+  age: z.number().int().positive().max(120).optional(),
+  sex: z.enum(["male", "female", "other"]).optional(),
+  activityLevel: z.enum(["sedentary", "light", "moderate", "very_active"]).optional(),
+  dietGoal: z.enum(["lean_gain", "recomp", "maintain", "deficit", "aggressive_deficit"]).optional(),
+  dietRestrictions: z.array(z.string()).optional(),
 });
 
 const plannedSet = z.object({
@@ -96,6 +104,48 @@ async function loadLatestProgram(userId: string, aiRoutineIds: string[]) {
   return data ? rowToProgram(data, aiRoutineIds) : null;
 }
 
+async function loadLatestNutritionPlan(userId: string) {
+  const { data } = await supabaseAdmin
+    .from("nutrition_plans").select("*").eq("user_id", userId)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  return data ? rowToNutritionPlan(data) : null;
+}
+
+// Generate + persist a nutrition plan from the athlete's profile and the
+// exercises/volume in their current routines. Bumps iteration each time.
+async function persistNutritionPlan(
+  userId: string,
+  profile: UserProfile,
+  routines: RoutineLite[],
+  analytics?: string
+) {
+  const data: NutritionPlanData = await generateNutritionPlan(profile, routines, analytics);
+
+  const { data: last } = await supabaseAdmin
+    .from("nutrition_plans").select("iteration").eq("user_id", userId)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const iteration = (last?.iteration ?? 0) + 1;
+
+  const { data: row, error } = await supabaseAdmin
+    .from("nutrition_plans")
+    .insert({
+      user_id: userId,
+      iteration,
+      strategy: data.strategy,
+      summary: data.summary,
+      plan: data,
+    })
+    .select().single();
+  if (error || !row) throw new Error(error?.message ?? "Failed to save nutrition plan");
+  return rowToNutritionPlan(row);
+}
+
+// The current routines reshaped for the nutrition planner.
+async function loadRoutinesLite(userId: string): Promise<RoutineLite[]> {
+  const routines = await loadRoutines(userId);
+  return routines.map((r) => ({ name: r.name, dayLabel: r.dayLabel, exercises: r.exercises }));
+}
+
 // Persist a freshly generated/evolved program: replace AI routines, bump iteration.
 async function persistProgram(userId: string, profile: UserProfile, ai: Awaited<ReturnType<typeof generateProgram>>) {
   const { data: last } = await supabaseAdmin
@@ -142,10 +192,14 @@ dataRouter.get(
       supabaseAdmin.from("workouts").select("*").eq("user_id", userId).order("started_at", { ascending: false }),
     ]);
     const aiRoutineIds = routines.filter((r) => r.source === "ai").map((r) => r.id);
-    const program = await loadLatestProgram(userId, aiRoutineIds);
+    const [program, nutritionPlan] = await Promise.all([
+      loadLatestProgram(userId, aiRoutineIds),
+      loadLatestNutritionPlan(userId),
+    ]);
     res.json({
       profile,
       program,
+      nutritionPlan,
       routines,
       exercises: (exercisesRes.data ?? []).map(rowToExercise),
       workouts: (workoutsRes.data ?? []).map(rowToWorkout),
@@ -200,7 +254,46 @@ dataRouter.post(
     const summary = buildRefreshSummary(history, profile);
     const ai = await refreshProgram(profile, summary);
     const result = await persistProgram(userId, profile, ai);
-    res.json(result);
+
+    // Dynamic adaptation loop: the training program just evolved, so re-scale the
+    // diet to match the new metabolic demand. The freshly persisted AI routines
+    // feed the planner; the same progress analytics fine-tune calories/carbs.
+    let nutritionPlan = null;
+    try {
+      const routinesLite: RoutineLite[] = result.routines.map((r) => ({
+        name: r.name, dayLabel: r.dayLabel, exercises: r.exercises,
+      }));
+      nutritionPlan = await persistNutritionPlan(userId, profile, routinesLite, summary);
+    } catch {
+      // Nutrition is best-effort here — never fail a program refresh over it.
+    }
+    res.json({ ...result, nutritionPlan });
+  })
+);
+
+// ── POST /nutrition/generate : build/evolve the diet plan on demand ───────────
+dataRouter.post(
+  "/nutrition/generate",
+  asyncHandler(async (req, res) => {
+    const userId = uid(req as AuthedRequest);
+    const profile = await loadProfile(userId);
+    if (!profile) {
+      res.status(400).json({ error: "Complete onboarding first" });
+      return;
+    }
+    // Optional metabolic fields can be sent to patch the profile before planning
+    // (lets the Nutrition tab capture height/age/activity/diet goal inline).
+    const patch = profileSchema.partial().parse(req.body ?? {});
+    let effective: UserProfile & { onboarded: boolean } = profile;
+    if (Object.keys(patch).length) {
+      const { data } = await supabaseAdmin
+        .from("profiles").upsert(profileToRow(userId, patch)).select().single();
+      if (data) effective = rowToProfile(data);
+    }
+
+    const routines = await loadRoutinesLite(userId);
+    const plan = await persistNutritionPlan(userId, effective, routines);
+    res.json({ nutritionPlan: plan, profile: effective });
   })
 );
 
