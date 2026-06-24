@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, Send, RotateCcw, AlertTriangle, ClipboardList } from "lucide-react";
+import { Sparkles, Send, RotateCcw, AlertTriangle, ClipboardList, Pencil, Check, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "@/lib/store";
 import { api } from "@/lib/api";
@@ -38,6 +38,8 @@ export function AiCoach() {
   const [done, setDone] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editText, setEditText] = useState("");
   const [mixPicker, setMixPicker] = useState(false);
   const [mixSelected, setMixSelected] = useState<string[]>([]);
   const [mixOtherText, setMixOtherText] = useState("");
@@ -150,6 +152,25 @@ export function AiCoach() {
       if (!generating) setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 50);
     }
+  };
+
+  const startEdit = (i: number) => {
+    setEditingIdx(i);
+    setEditText(messages[i].content);
+  };
+
+  const cancelEdit = () => {
+    setEditingIdx(null);
+    setEditText("");
+  };
+
+  const confirmEdit = () => {
+    if (editingIdx === null || !editText.trim()) return;
+    const truncated = messages.slice(0, editingIdx);
+    setMessages(truncated);
+    setDone(false);
+    setEditingIdx(null);
+    void sendText(editText.trim());
   };
 
   const handleSuggestion = (s: string) => {
@@ -267,16 +288,58 @@ export function AiCoach() {
                   <Sparkles className="h-3.5 w-3.5" />
                 </div>
               )}
-              <div
-                className={cn(
-                  "max-w-[78%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed",
-                  m.role === "user"
-                    ? "rounded-tr-sm bg-primary text-primary-foreground"
-                    : "rounded-tl-sm border border-border bg-card"
-                )}
-              >
-                {m.content}
-              </div>
+
+              {m.role === "user" && editingIdx === i ? (
+                /* ── inline edit mode ── */
+                <div className="flex w-[85%] items-end gap-1.5">
+                  <button
+                    onClick={cancelEdit}
+                    className="shrink-0 rounded-full p-1.5 text-muted-foreground tap hover:text-foreground"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                  <input
+                    autoFocus
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) confirmEdit();
+                      if (e.key === "Escape") cancelEdit();
+                    }}
+                    className="flex-1 rounded-2xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground placeholder:text-primary-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary-foreground/40"
+                  />
+                  <button
+                    onClick={confirmEdit}
+                    disabled={!editText.trim()}
+                    className="shrink-0 rounded-full bg-primary p-1.5 text-primary-foreground tap disabled:opacity-40"
+                  >
+                    <Check className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                /* ── normal bubble ── */
+                <div className={cn("flex items-end gap-1.5", m.role === "user" && "flex-row-reverse")}>
+                  <div
+                    className={cn(
+                      "max-w-[78%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                      m.role === "user"
+                        ? "rounded-tr-sm bg-primary text-primary-foreground"
+                        : "rounded-tl-sm border border-border bg-card"
+                    )}
+                  >
+                    {m.content}
+                  </div>
+                  {m.role === "user" && !loading && !done && !generating && editingIdx === null && (
+                    <button
+                      onClick={() => startEdit(i)}
+                      className="shrink-0 rounded-full p-1.5 text-muted-foreground/50 tap hover:text-muted-foreground"
+                      title="Edit message"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Suggestion chips — only on the most recent model message */}
