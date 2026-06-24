@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   Moon, Sun, Timer, Bell, Trash2, Weight, User, LogOut, Mail, Sparkles,
+  Activity, Volume2,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useStore } from "@/lib/store";
@@ -103,6 +104,31 @@ export function SettingsPage() {
             <Toggle on={settings.remindersEnabled} onClick={toggleReminders} />
           </Row>
         )}
+      </SettingGroup>
+
+      {/* Smart rep counter */}
+      <SettingGroup title="Smart rep counter">
+        <Row
+          icon={<Activity className="h-5 w-5" />}
+          label="Sensitivity"
+          desc="Accelerometer auto-count tuning"
+        >
+          <div className="w-32">
+            <SegmentedControl
+              columns={3}
+              options={[
+                { label: "Low", value: "low" as const },
+                { label: "Med", value: "medium" as const },
+                { label: "High", value: "high" as const },
+              ]}
+              value={settings.repSensitivity}
+              onChange={(v) => setSetting("repSensitivity", v)}
+            />
+          </div>
+        </Row>
+        <Row icon={<Volume2 className="h-5 w-5" />} label="Rep tick sound" desc="Audible cue on each rep">
+          <Toggle on={settings.repSound} onClick={() => setSetting("repSound", !settings.repSound)} />
+        </Row>
       </SettingGroup>
 
       {/* Nutrition */}

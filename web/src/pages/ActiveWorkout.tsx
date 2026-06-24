@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Check, Plus, X, Timer, MoreVertical, Trash2, Flag, ChevronLeft, Info,
+  Check, Plus, X, Timer, MoreVertical, Trash2, Flag, ChevronLeft, Info, Activity,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useNow } from "@/lib/hooks";
@@ -12,6 +12,7 @@ import { Modal } from "@/components/ui/modal";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { ExerciseDetail } from "@/components/ExerciseDetail";
 import { RestTimerBar } from "@/components/RestTimerBar";
+import { RepCounter } from "@/components/RepCounter";
 
 // Find the most recent completed set for a given exercise+set index.
 function usePrevious(history: WorkoutSession[]) {
@@ -51,6 +52,7 @@ export function ActiveWorkout() {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [menuFor, setMenuFor] = useState<number | null>(null);
   const [detail, setDetail] = useState<Exercise | null>(null);
+  const [counter, setCounter] = useState<{ exIdx: number; setIdx: number } | null>(null);
 
   const prev = usePrevious(history);
   const now = useNow(!!active, 1000);
@@ -75,6 +77,26 @@ export function ActiveWorkout() {
       haptic(20);
       startRest(active.exercises[exIdx].restSeconds || 90);
     }
+  };
+
+  // Launch the Smart Rep Counter against an exercise's current set — the first
+  // not-yet-completed set, falling back to the last set when all are done.
+  const openCounter = (exIdx: number) => {
+    const sets = active.exercises[exIdx].sets;
+    const firstOpen = sets.findIndex((s) => !s.completed);
+    setCounter({ exIdx, setIdx: firstOpen === -1 ? sets.length - 1 : firstOpen });
+  };
+
+  // Commit the counted reps to the targeted set, marking it complete and
+  // kicking off the rest timer (mirrors toggleSet's completion behavior).
+  const logFromCounter = (reps: number) => {
+    if (!counter) return;
+    const { exIdx, setIdx } = counter;
+    const wasCompleted = active.exercises[exIdx].sets[setIdx].completed;
+    logSet(exIdx, setIdx, { reps, completed: true });
+    haptic(20);
+    if (!wasCompleted) startRest(active.exercises[exIdx].restSeconds || 90);
+    setCounter(null);
   };
 
   const onPick = (e: Exercise) => addExerciseToActive(e);
@@ -255,6 +277,15 @@ export function ActiveWorkout() {
                   <Plus className="h-4 w-4" />
                   Add set
                 </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1 border-primary/30 text-primary"
+                  onClick={() => openCounter(exIdx)}
+                >
+                  <Activity className="h-4 w-4" />
+                  Rep counter
+                </Button>
                 {ex.sets.length > 1 && (
                   <Button
                     variant="ghost"
@@ -285,6 +316,24 @@ export function ActiveWorkout() {
       <RestTimerBar />
       <ExercisePicker open={picker} onClose={() => setPicker(false)} onPick={onPick} />
       <ExerciseDetail exercise={detail} open={!!detail} onClose={() => setDetail(null)} />
+
+      {counter && (
+        <RepCounter
+          open
+          exerciseName={active.exercises[counter.exIdx].name}
+          setNumber={counter.setIdx + 1}
+          targetReps={active.exercises[counter.exIdx].sets[counter.setIdx].reps || undefined}
+          initialReps={
+            active.exercises[counter.exIdx].sets[counter.setIdx].completed
+              ? active.exercises[counter.exIdx].sets[counter.setIdx].reps
+              : 0
+          }
+          weight={active.exercises[counter.exIdx].sets[counter.setIdx].weight}
+          units={units}
+          onClose={() => setCounter(null)}
+          onLog={logFromCounter}
+        />
+      )}
 
       <Modal open={confirmFinish} onClose={() => setConfirmFinish(false)} title="Finish workout?">
         <p className="text-sm text-muted-foreground">

@@ -61,3 +61,45 @@ export function haptic(ms = 12) {
     /* no-op */
   }
 }
+
+// Lazily-created, shared AudioContext. Browsers cap the number of contexts a
+// page may open, so we reuse one and resume it on demand (it can be suspended
+// until the first user gesture).
+let _audioCtx: AudioContext | null = null;
+function getAudioCtx(): AudioContext | null {
+  try {
+    const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AC) return null;
+    if (!_audioCtx) _audioCtx = new AC();
+    if (_audioCtx.state === "suspended") void _audioCtx.resume();
+    return _audioCtx;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Play a crisp, short "tick" cue — used to confirm a logged rep without the
+ * user needing to look at the screen. Best-effort: silently ignored where the
+ * Web Audio API is blocked or unavailable.
+ */
+export function playTick(frequency = 1040) {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "triangle";
+    osc.frequency.value = frequency;
+    const t = ctx.currentTime;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.22, t + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    osc.start(t);
+    osc.stop(t + 0.13);
+  } catch {
+    /* no-op */
+  }
+}

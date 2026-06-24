@@ -14,6 +14,8 @@ export type Equipment =
   | "other";
 export type Experience = "beginner" | "intermediate" | "advanced";
 export type WorkoutCategory = "calisthenics" | "weightlifting" | "cardio" | "yoga_pilates" | "mixed" | "other";
+// Smart Rep Counter motion sensitivity. Higher → detects subtler movements.
+export type RepSensitivity = "low" | "medium" | "high";
 export type MuscleGroup =
   | "Chest"
   | "Back"

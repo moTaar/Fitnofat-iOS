@@ -3,8 +3,8 @@ import { persist } from "zustand/middleware";
 import { format } from "date-fns";
 import type {
   ActiveWorkout, Cuisine, Exercise, FoodLookupResult, LoggedExercise,
-  LoggedFood, NutritionLog, NutritionPlan, Program, Routine, UserProfile,
-  WorkoutSession,
+  LoggedFood, NutritionLog, NutritionPlan, Program, RepSensitivity, Routine,
+  UserProfile, WorkoutSession,
 } from "./types";
 import { SEED_EXERCISES } from "./exercises";
 import { sessionVolume, uid } from "./utils";
@@ -16,6 +16,9 @@ interface Settings {
   theme: "dark" | "light";
   defaultRestSeconds: number;
   remindersEnabled: boolean;
+  // Smart Rep Counter
+  repSensitivity: RepSensitivity; // accelerometer detection sensitivity
+  repSound: boolean; // audible "tick" cue on each logged rep
 }
 
 interface AppState {
@@ -130,7 +133,13 @@ export const useStore = create<AppState>()(
       nutritionLog: null,
       history: [],
       active: null,
-      settings: { theme: "dark", defaultRestSeconds: 90, remindersEnabled: false },
+      settings: {
+        theme: "dark",
+        defaultRestSeconds: 90,
+        remindersEnabled: false,
+        repSensitivity: "medium",
+        repSound: true,
+      },
 
       // ── auth ────────────────────────────────────────────────────────────
       login: async (email, password) => {
@@ -540,7 +549,14 @@ export const useStore = create<AppState>()(
         const p = (persisted ?? {}) as Partial<AppState>;
         const seedIds = new Set(SEED_EXERCISES.map((e) => e.id));
         const customs = (p.exercises ?? []).filter((e) => !seedIds.has(e.id));
-        return { ...current, ...p, exercises: [...SEED_EXERCISES, ...customs] };
+        return {
+          ...current,
+          ...p,
+          exercises: [...SEED_EXERCISES, ...customs],
+          // Merge settings field-by-field so newly-added defaults (e.g. the
+          // Smart Rep Counter prefs) survive for users with older saved state.
+          settings: { ...current.settings, ...(p.settings ?? {}) },
+        };
       },
     }
   )
