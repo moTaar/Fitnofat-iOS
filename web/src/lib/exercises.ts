@@ -61,6 +61,12 @@ const raw: Omit<Exercise, "id">[] = [
   { name: "Jump Rope", muscleGroup: "Cardio", equipment: "Bodyweight" },
   { name: "Burpee", muscleGroup: "Full Body", equipment: "Bodyweight" },
   { name: "Kettlebell Swing", muscleGroup: "Full Body", equipment: "Kettlebell" },
+  // 5 Tibetans
+  { name: "Tibetan Rite 1 - Spinning", muscleGroup: "Full Body", equipment: "Bodyweight" },
+  { name: "Tibetan Rite 2 - Leg Raise", muscleGroup: "Core", equipment: "Bodyweight" },
+  { name: "Tibetan Rite 3 - Kneeling Backbend", muscleGroup: "Full Body", equipment: "Bodyweight" },
+  { name: "Tibetan Rite 4 - Table Pose", muscleGroup: "Full Body", equipment: "Bodyweight" },
+  { name: "Tibetan Rite 5 - Up-Down Dog", muscleGroup: "Full Body", equipment: "Bodyweight" },
 ];
 
 export function slugify(name: string): string {
