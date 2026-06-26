@@ -4,7 +4,7 @@ import { format } from "date-fns";
 import type {
   ActiveWorkout, Cuisine, Exercise, FoodLookupResult, LoggedExercise,
   LoggedFood, NutritionLog, NutritionPlan, Program, RepSensitivity, Routine,
-  UserProfile, WorkoutSession,
+  Subscription, UserProfile, WorkoutSession,
 } from "./types";
 import { SEED_EXERCISES } from "./exercises";
 import { sessionVolume, uid } from "./utils";
@@ -34,6 +34,7 @@ interface AppState {
   nutritionLog: NutritionLog | null; // today's offline meal checklist
   history: WorkoutSession[];
   active: ActiveWorkout | null;
+  subscription: Subscription | null; // billing tier/status (accounts service)
   settings: Settings;
 
   // auth
@@ -41,6 +42,12 @@ interface AppState {
   signup: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => void;
   bootstrap: () => Promise<void>;
+
+  // account & billing (accounts microservice)
+  loadSubscription: () => Promise<void>;
+  updateAccount: (patch: { name?: string; email?: string }) => Promise<void>;
+  changePassword: (password: string) => Promise<void>;
+  deleteAccount: () => Promise<void>;
 
   // AI / onboarding
   generateProgram: (profile: UserProfile) => Promise<void>;
@@ -84,6 +91,8 @@ interface AppState {
   finishWorkout: () => Promise<void>;
   cancelWorkout: () => void;
   syncPending: () => Promise<void>;
+  // Merge a workout the AI coach reconstructed + saved server-side into history.
+  receiveLoggedWorkout: (workout: WorkoutSession) => void;
 
   // settings
   setSetting: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
@@ -133,6 +142,7 @@ export const useStore = create<AppState>()(
       nutritionLog: null,
       history: [],
       active: null,
+      subscription: null,
       settings: {
         theme: "dark",
         defaultRestSeconds: 90,
@@ -165,8 +175,39 @@ export const useStore = create<AppState>()(
           nutritionLog: null,
           history: [],
           active: null,
+          subscription: null,
           exercises: SEED_EXERCISES,
         });
+      },
+
+      // ── account & billing ───────────────────────────────────────────────
+      loadSubscription: async () => {
+        if (!auth.isAuthenticated()) return;
+        try {
+          const subscription = await api.getSubscription();
+          set({ subscription });
+        } catch {
+          /* best-effort; gating still enforced server-side */
+        }
+      },
+
+      updateAccount: async (patch) => {
+        await api.updateAccount(patch);
+        const p = get().profile;
+        if (patch.name !== undefined && p) set({ profile: { ...p, name: patch.name } });
+        if (patch.email !== undefined) {
+          const u = get().user;
+          if (u) set({ user: { ...u, email: patch.email } });
+        }
+      },
+
+      changePassword: async (password) => {
+        await api.changePassword(password);
+      },
+
+      deleteAccount: async () => {
+        await api.deleteAccount();
+        get().logout();
       },
 
       bootstrap: async () => {
@@ -219,6 +260,8 @@ export const useStore = create<AppState>()(
 
           // Best-effort flush of anything queued offline.
           if (pendingLocal.length) void get().syncPending();
+          // Pull billing tier/status from the accounts service (non-blocking).
+          void get().loadSubscription();
         } catch (err) {
           if (err instanceof AuthExpiredError) get().logout();
           // Offline or transient error: keep the cached state, mark hydrated.
@@ -500,6 +543,18 @@ export const useStore = create<AppState>()(
 
       cancelWorkout: () => set({ active: null }),
 
+      receiveLoggedWorkout: (workout) =>
+        set((s) => {
+          const key = workout.clientId ?? workout.id;
+          // Idempotent: replace if we've already got this session, else prepend.
+          const exists = s.history.some((w) => (w.clientId ?? w.id) === key);
+          return {
+            history: exists
+              ? s.history.map((w) => ((w.clientId ?? w.id) === key ? workout : w))
+              : [workout, ...s.history],
+          };
+        }),
+
       syncPending: async () => {
         if (!auth.isAuthenticated() || !navigator.onLine) return;
         const pending = get().history.filter((w) => !w.synced);
@@ -539,6 +594,7 @@ export const useStore = create<AppState>()(
         nutritionLog: s.nutritionLog,
         history: s.history,
         active: s.active,
+        subscription: s.subscription,
         settings: s.settings,
         user: s.user,
       }),

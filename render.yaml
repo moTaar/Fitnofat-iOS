@@ -32,6 +32,40 @@ services:
       - key: GEMINI_MODEL
         value: gemini-2.0-flash
 
+  # ── Accounts microservice (auth + accounts + Stripe billing) ─────────────
+  - type: web
+    name: forgefit-accounts
+    runtime: node
+    rootDir: accounts
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: PORT
+        value: "8090"
+      # The static site URL (for CORS) and where Stripe redirects back to.
+      - key: CORS_ORIGIN
+        sync: false
+      - key: APP_URL
+        sync: false
+      # Same Supabase project as the data API.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Stripe — Dashboard → Developers. Webhook endpoint: <this URL>/webhooks/stripe
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_PRO
+        sync: false
+
   # ── Frontend PWA (static) ────────────────────────────────────────────────
   - type: web
     name: forgefit-web
@@ -42,6 +76,9 @@ services:
     envVars:
       # Set to the deployed API URL, e.g. https://forgefit-api.onrender.com
       - key: VITE_API_URL
+        sync: false
+      # Set to the deployed accounts service URL, e.g. https://forgefit-accounts.onrender.com
+      - key: VITE_ACCOUNTS_URL
         sync: false
     routes:
       # SPA fallback so client-side routes resolve.

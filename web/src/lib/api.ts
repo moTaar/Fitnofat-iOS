@@ -3,11 +3,15 @@
 // an expired access token once on a 401.
 
 import type {
-  Exercise, FoodLookupResult, NutritionPlan, Program, Routine,
-  UserProfile, WorkoutSession,
+  Exercise, FoodLookupResult, NutritionPlan, Plan, PlanInfo, Program, Routine,
+  Subscription, UserProfile, WorkoutSession,
 } from "./types";
 
+// Two backends: the data API (workouts/programs/nutrition) and the accounts
+// microservice (auth, account management, Stripe billing). They share Supabase,
+// so the same Supabase JWT authenticates against both.
 const API_BASE = (import.meta.env.VITE_API_URL ?? "http://localhost:8080").replace(/\/$/, "");
+const ACCOUNTS_BASE = (import.meta.env.VITE_ACCOUNTS_URL ?? "http://localhost:8090").replace(/\/$/, "");
 const SESSION_KEY = "forgefit-session-v1";
 
 export interface Session {
@@ -27,6 +31,14 @@ export class ApiError extends Error {
 export class AuthExpiredError extends ApiError {
   constructor() {
     super("Session expired", 401);
+  }
+}
+// Thrown when the data API rejects a premium route for a non-Pro user (402).
+export class UpgradeRequiredError extends ApiError {
+  feature?: string;
+  constructor(message: string, feature?: string) {
+    super(message, 402);
+    this.feature = feature;
   }
 }
 
@@ -59,17 +71,24 @@ export const auth = {
   clear: () => persist(null),
 };
 
-async function rawRequest(path: string, init: RequestInit, withAuth: boolean): Promise<Response> {
+async function rawRequest(
+  base: string,
+  path: string,
+  init: RequestInit,
+  withAuth: boolean
+): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
   if (withAuth && session) headers.set("Authorization", `Bearer ${session.accessToken}`);
-  return fetch(`${API_BASE}${path}`, { ...init, headers });
+  return fetch(`${base}${path}`, { ...init, headers });
 }
 
 async function refreshSession(): Promise<boolean> {
   if (!session?.refreshToken) return false;
+  // Auth (incl. refresh) is served by the accounts microservice.
   const res = await rawRequest(
-    "/api/auth/refresh",
+    ACCOUNTS_BASE,
+    "/auth/refresh",
     { method: "POST", body: JSON.stringify({ refreshToken: session.refreshToken }) },
     false
   );
@@ -81,30 +100,43 @@ async function refreshSession(): Promise<boolean> {
   return true;
 }
 
-async function request<T>(path: string, init: RequestInit = {}, withAuth = true): Promise<T> {
-  let res = await rawRequest(path, init, withAuth);
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  withAuth = true,
+  base: string = API_BASE
+): Promise<T> {
+  let res = await rawRequest(base, path, init, withAuth);
 
   if (res.status === 401 && withAuth && session) {
     // Try a one-time refresh, then retry the original request.
     const refreshed = await refreshSession();
     if (!refreshed) throw new AuthExpiredError();
-    res = await rawRequest(path, init, withAuth);
+    res = await rawRequest(base, path, init, withAuth);
   }
 
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
+    let feature: string | undefined;
     try {
       const body = await res.json();
       if (body?.error) message = body.error;
+      if (body?.feature) feature = body.feature;
     } catch {
       /* ignore */
     }
     if (res.status === 401) throw new AuthExpiredError();
+    if (res.status === 402) throw new UpgradeRequiredError(message, feature);
     throw new ApiError(message, res.status);
   }
 
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
+}
+
+// Convenience wrapper for accounts-service calls (auth/account/billing).
+function accountsRequest<T>(path: string, init: RequestInit = {}, withAuth = true): Promise<T> {
+  return request<T>(path, init, withAuth, ACCOUNTS_BASE);
 }
 
 // ── Bootstrap payload ─────────────────────────────────────────────────────
@@ -124,10 +156,10 @@ interface ProgramResult {
 }
 
 export const api = {
-  // auth
+  // auth — served by the accounts microservice
   async signup(email: string, password: string, name?: string): Promise<Session> {
-    const s = await request<Session>(
-      "/api/auth/signup",
+    const s = await accountsRequest<Session>(
+      "/auth/signup",
       { method: "POST", body: JSON.stringify({ email, password, name }) },
       false
     );
@@ -135,8 +167,8 @@ export const api = {
     return s;
   },
   async login(email: string, password: string): Promise<Session> {
-    const s = await request<Session>(
-      "/api/auth/login",
+    const s = await accountsRequest<Session>(
+      "/auth/login",
       { method: "POST", body: JSON.stringify({ email, password }) },
       false
     );
@@ -146,6 +178,32 @@ export const api = {
   logout() {
     persist(null);
   },
+
+  // account management — accounts microservice
+  getAccount: () =>
+    accountsRequest<{
+      id: string; email: string; name: string;
+      plan: Plan; status: string; currentPeriodEnd: string | null;
+    }>("/account"),
+  updateAccount: (patch: { name?: string; email?: string }) =>
+    accountsRequest<{ ok: true }>("/account", { method: "PATCH", body: JSON.stringify(patch) }),
+  changePassword: (password: string) =>
+    accountsRequest<{ ok: true }>("/account/password", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }),
+  deleteAccount: () => accountsRequest<void>("/account", { method: "DELETE" }),
+
+  // billing — accounts microservice
+  getPlans: () => accountsRequest<{ plans: PlanInfo[] }>("/billing/plans"),
+  getSubscription: () => accountsRequest<Subscription>("/billing/subscription"),
+  startCheckout: (plan: "pro") =>
+    accountsRequest<{ url: string }>("/billing/checkout", {
+      method: "POST",
+      body: JSON.stringify({ plan }),
+    }),
+  openBillingPortal: () =>
+    accountsRequest<{ url: string }>("/billing/portal", { method: "POST" }),
 
   // data
   bootstrap: () => request<BootstrapData>("/api/bootstrap"),
@@ -216,5 +274,6 @@ export const api = {
     request<
       | { type: "message"; text: string; suggestions?: string[] }
       | { type: "update"; text: string; program: Program; routines: Routine[] }
+      | { type: "log"; text: string; workout: WorkoutSession }
     >("/api/ai/coach", { method: "POST", body: JSON.stringify({ messages }) }),
 };

@@ -112,6 +112,21 @@ create table if not exists public.nutrition_plans (
 );
 create index if not exists nutrition_plans_user_idx on public.nutrition_plans (user_id, created_at desc);
 
+-- ── subscriptions (billing state, owned by the accounts microservice) ─────────
+-- One row per user; created (free/inactive) at signup, kept in sync with Stripe
+-- via webhooks. The data API reads this table to gate premium features. Tiers
+-- live in code (accounts/src/entitlements.ts), not here.
+create table if not exists public.subscriptions (
+  user_id                uuid primary key references auth.users (id) on delete cascade,
+  stripe_customer_id     text unique,
+  stripe_subscription_id text,
+  plan                   text not null default 'free',     -- 'free' | 'pro'
+  status                 text not null default 'inactive',  -- active|trialing|past_due|canceled|inactive
+  current_period_end     timestamptz,
+  updated_at             timestamptz not null default now()
+);
+create index if not exists subscriptions_customer_idx on public.subscriptions (stripe_customer_id);
+
 -- ── Row Level Security ───────────────────────────────────────────────────────
 alter table public.profiles        enable row level security;
 alter table public.programs        enable row level security;
@@ -119,11 +134,12 @@ alter table public.routines        enable row level security;
 alter table public.exercises       enable row level security;
 alter table public.workouts        enable row level security;
 alter table public.nutrition_plans enable row level security;
+alter table public.subscriptions   enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['profiles','programs','routines','exercises','workouts','nutrition_plans'] loop
+  foreach t in array array['profiles','programs','routines','exercises','workouts','nutrition_plans','subscriptions'] loop
     execute format('drop policy if exists "owner_all" on public.%I;', t);
     -- profiles keys on user_id; others also key on user_id
     execute format(

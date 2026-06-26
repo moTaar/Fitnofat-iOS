@@ -681,10 +681,58 @@ export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply
 // with thinking + Google Search grounding for accurate, current advice.
 
 export interface CoachReply {
-  type: "message" | "update";
+  type: "message" | "update" | "log";
   text: string;
   suggestions?: string[];
   program?: AIProgramResponse; // present when type === "update"
+  workout?: LoggedWorkoutDraft; // present when type === "log"
+}
+
+// A completed session the athlete described in free text, translated by the
+// coach into concrete exercises ready to persist to their history.
+export interface LoggedWorkoutDraft {
+  routineName: string;
+  durationSec: number;
+  exercises: {
+    name: string;
+    muscleGroup: MuscleGroup;
+    equipment?: string;
+    restSeconds: number;
+    notes?: string;
+    sets: { reps: number; weight: number }[];
+  }[];
+}
+
+// Defensive normalizer for the [LOG] JSON the model emits — clamps muscle
+// groups to the valid enum, drops empty sets/exercises and coerces numbers so a
+// slightly-malformed reply can still be saved.
+function normalizeLoggedWorkout(w: any): LoggedWorkoutDraft {
+  const rawExercises = Array.isArray(w?.exercises) ? w.exercises : [];
+  const exercises = rawExercises
+    .map((e: any) => ({
+      name: typeof e?.name === "string" && e.name.trim() ? e.name.trim() : "Exercise",
+      muscleGroup: VALID_GROUPS.includes(e?.muscleGroup as MuscleGroup)
+        ? (e.muscleGroup as MuscleGroup)
+        : "Full Body",
+      equipment: typeof e?.equipment === "string" && e.equipment.trim() ? e.equipment.trim() : undefined,
+      restSeconds: Number(e?.restSeconds) > 0 ? Math.round(Number(e.restSeconds)) : 60,
+      notes: typeof e?.notes === "string" && e.notes.trim() ? e.notes.trim() : undefined,
+      sets: (Array.isArray(e?.sets) ? e.sets : [])
+        .map((s: any) => ({
+          reps: Math.max(0, Math.round(Number(s?.reps) || 0)),
+          weight: Math.max(0, Number(s?.weight) || 0),
+        }))
+        .filter((s: { reps: number }) => s.reps > 0),
+    }))
+    .filter((e: { sets: unknown[] }) => e.sets.length > 0);
+  return {
+    routineName:
+      typeof w?.routineName === "string" && w.routineName.trim()
+        ? w.routineName.trim()
+        : "Logged Workout",
+    durationSec: Number(w?.durationSec) > 0 ? Math.round(Number(w.durationSec)) : 0,
+    exercises,
+  };
 }
 
 function coachSystem(p: UserProfile, routines: unknown): string {
@@ -720,7 +768,20 @@ When the athlete asks to change, adjust, improve, regenerate, rebuild, add to, o
    - Apply their preferences and use realistic loads for a ${p.experience} athlete (weight 0 for bodyweight moves).
    - EVERY exercise MUST obey the equipment constraints above — never program gear the athlete doesn't have.
 
-For purely informational replies, do NOT output [UPDATE]. You MAY append a final line [SUGGESTIONS: option | option | option] with 2-4 short, relevant follow-up actions (e.g. "Make it harder | Add more cardio | Explain this plan").`;
+When the athlete TELLS you what they ALREADY DID / completed (e.g. "I did 1 hour of biking and 5 tibetans", "just finished 4x10 bench at 60kg", "ran 5k this morning", "30 min yoga + 50 push-ups") — i.e. they are REPORTING a finished session, not asking you to change their plan — translate it into a logged workout and save it:
+1. Use your knowledge to expand shorthand and named routines into concrete exercises. Examples: the "Five Tibetan Rites" (a.k.a. "5 tibetans") = 5 distinct exercises, each traditionally 21 reps; a "5k run" ≈ 25–30 min of cardio. Honor the athlete's wording.
+2. If an ESSENTIAL detail is missing, ask ONE short clarifying question and ask for missing details ONE AT A TIME across turns (never a long list). Essential = which exercises, and for each either the reps×sets (strength) or the duration (cardio/holds). Weight is OPTIONAL — assume bodyweight (weight 0) when not stated and do NOT ask for it unless it clearly matters. Do not ask about anything you can reasonably infer.
+3. Once you have enough, write ONE short confirmation sentence of what you're logging, then on a NEW line output the marker [LOG] immediately followed by a single JSON object (and NOTHING after it) matching EXACTLY this schema:
+[LOG]
+{"routineName":"...","durationSec":<int>,"exercises":[{"name":"...","muscleGroup":"<Chest|Back|Shoulders|Biceps|Triceps|Legs|Glutes|Core|Cardio|Full Body>","equipment":"...","restSeconds":<int>,"notes":"...","sets":[{"reps":<int>,"weight":<number>}]}]}
+   - routineName: a short title for the session (e.g. "Biking + Five Tibetans").
+   - durationSec: your best estimate of the TOTAL session length in seconds.
+   - One set object PER set actually performed. weight is in ${p.units} (use 0 for bodyweight moves).
+   - For TIME-BASED cardio or holds (biking, running, rowing, plank, etc.): use a SINGLE set with reps = the total MINUTES performed and weight = 0, and put the real duration in "notes" (e.g. "60 min steady ride").
+   - muscleGroup MUST be one of the allowed values; use "Cardio" for conditioning work.
+[LOG] and [UPDATE] are MUTUALLY EXCLUSIVE — logging a past session never modifies the athlete's program, so never emit both in one reply.
+
+For purely informational replies, do NOT output [UPDATE] or [LOG]. You MAY append a final line [SUGGESTIONS: option | option | option] with 2-4 short, relevant follow-up actions (e.g. "Make it harder | Add more cardio | Explain this plan").`;
 }
 
 export async function chatCoach(
@@ -759,6 +820,33 @@ export async function chatCoach(
   const parts: any[] = data?.candidates?.[0]?.content?.parts ?? [];
   const raw: string = parts.map((p) => p?.text ?? "").join("").trim();
   if (!raw) throw new Error("Gemini returned an empty coach response.");
+
+  // Workout-logging path: the athlete described a session they completed.
+  const logIdx = raw.indexOf("[LOG]");
+  if (logIdx !== -1) {
+    const after = raw.slice(logIdx + 5);
+    const start = after.indexOf("{");
+    const end = after.lastIndexOf("}");
+    const closingText = raw.slice(0, logIdx).trim();
+    if (start !== -1 && end > start) {
+      try {
+        const workout = normalizeLoggedWorkout(JSON.parse(after.slice(start, end + 1)));
+        if (workout.exercises.length) {
+          return { type: "log", text: closingText || "Logged your session! 💪", workout };
+        }
+      } catch {
+        // Fall through to the clarifying message below.
+      }
+    }
+    // Marker present but we couldn't build a valid workout — never leak the raw
+    // [LOG] JSON to the user; ask them to clarify instead.
+    return {
+      type: "message",
+      text:
+        closingText ||
+        "I couldn't quite parse that workout — tell me which exercises you did and the reps or duration for each, and I'll log it.",
+    };
+  }
 
   // Routine-update path.
   const updIdx = raw.indexOf("[UPDATE]");

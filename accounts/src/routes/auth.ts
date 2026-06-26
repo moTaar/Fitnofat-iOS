@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabaseAdmin, supabaseAuth } from "../supabase";
 import { asyncHandler } from "../middleware";
+import { ensureStripeCustomer } from "../stripe";
 
 export const authRouter = Router();
 
@@ -20,7 +21,7 @@ function sessionPayload(session: any, user: any) {
   };
 }
 
-// POST /api/auth/signup
+// POST /auth/signup
 authRouter.post(
   "/signup",
   asyncHandler(async (req, res) => {
@@ -37,12 +38,26 @@ authRouter.post(
       return;
     }
 
+    const userId = created.user.id;
+
     // Seed an empty profile row.
     await supabaseAdmin.from("profiles").upsert({
-      user_id: created.user.id,
+      user_id: userId,
       name: name ?? "",
       onboarded: false,
     });
+
+    // Seed a free subscription row and create the Stripe customer up front, so
+    // billing is one call away later. Best-effort: a Stripe hiccup must not block
+    // signup — `ensureStripeCustomer` will retry lazily at checkout time.
+    await supabaseAdmin
+      .from("subscriptions")
+      .upsert({ user_id: userId, plan: "free", status: "inactive" }, { onConflict: "user_id" });
+    try {
+      await ensureStripeCustomer(userId, email);
+    } catch (err) {
+      console.warn("[signup] Stripe customer creation deferred:", err);
+    }
 
     const { data: signIn, error: signErr } = await supabaseAuth.auth.signInWithPassword({
       email,
@@ -56,7 +71,7 @@ authRouter.post(
   })
 );
 
-// POST /api/auth/login
+// POST /auth/login
 authRouter.post(
   "/login",
   asyncHandler(async (req, res) => {
@@ -70,7 +85,7 @@ authRouter.post(
   })
 );
 
-// POST /api/auth/refresh
+// POST /auth/refresh
 authRouter.post(
   "/refresh",
   asyncHandler(async (req, res) => {
@@ -81,5 +96,14 @@ authRouter.post(
       return;
     }
     res.json(sessionPayload(data.session, data.user));
+  })
+);
+
+// POST /auth/logout — sessions are stateless JWTs; the client clears its copy.
+// Provided for symmetry and future server-side revocation.
+authRouter.post(
+  "/logout",
+  asyncHandler(async (_req, res) => {
+    res.status(204).end();
   })
 );

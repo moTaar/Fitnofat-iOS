@@ -14,10 +14,10 @@ const MIX_OPTIONS = ["Calisthenics", "Weightlifting", "Cardio", "Yoga / Pilates"
 const EQUIPMENT_MIX_OPTIONS = ["Bodyweight", "Dumbbells", "Resistance bands", "Kettlebells", "Barbell", "Cables / machines", "Pull-up bar", "Bench"];
 
 const COACH_SUGGESTIONS = [
+  "Log today's workout",
   "Adjust my routines",
   "Make my program harder",
   "Explain my current plan",
-  "Add more cardio",
 ];
 
 export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onClose?: () => void } = {}) {
@@ -25,6 +25,7 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
   const [params] = useSearchParams();
   const generateProgram = useStore((s) => s.generateProgram);
   const applyProgramUpdate = useStore((s) => s.applyProgramUpdate);
+  const receiveLoggedWorkout = useStore((s) => s.receiveLoggedWorkout);
   const onboarded = useStore((s) => s.onboarded);
   const profile = useStore((s) => s.profile);
 
@@ -71,7 +72,7 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
       setMessages([
         {
           role: "model",
-          content: `Hey${name}! I'm your ForgeFit coach. Ask me anything about training, or tell me how you'd like to tweak your routines — I'll adjust them for you.`,
+          content: `Hey${name}! I'm your ForgeFit coach. Ask me anything about training, tell me how you'd like to tweak your routines, or just tell me what you did today (e.g. "1 hour biking and 5 tibetans") and I'll log it for you.`,
           suggestions: COACH_SUGGESTIONS,
         },
       ]);
@@ -113,6 +114,22 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
               role: "model",
               content: `${reply.text}\n\n${reply.program.summary ?? ""}`.trim(),
               suggestions: ["View my routines", "Tweak it further", "Explain the changes"],
+            },
+          ]);
+        } else if (reply.type === "log") {
+          receiveLoggedWorkout(reply.workout);
+          toast.success("Workout logged!");
+          const { exercises, durationSec } = reply.workout;
+          const mins = Math.round(durationSec / 60);
+          const recap = `${exercises.length} exercise${exercises.length === 1 ? "" : "s"}${
+            mins > 0 ? ` · ~${mins} min` : ""
+          }`;
+          setMessages([
+            ...next,
+            {
+              role: "model",
+              content: `${reply.text}\n\nSaved to your history (${recap}).`.trim(),
+              suggestions: ["View history", "Log another", "Anything else?"],
             },
           ]);
         } else {
@@ -177,6 +194,15 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
     if (s === "View my routines") {
       onClose?.();
       navigate("/routines");
+      return;
+    }
+    if (s === "View history") {
+      onClose?.();
+      navigate("/history");
+      return;
+    }
+    if (s === "Log another") {
+      void sendText("I did another workout I want to log");
       return;
     }
     if (!coachMode && s === "Mixed") {

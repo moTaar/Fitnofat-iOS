@@ -2,7 +2,6 @@ import express from "express";
 import cors from "cors";
 import { config } from "./config";
 import { errorHandler } from "./middleware";
-import { authRouter } from "./routes/auth";
 import { dataRouter } from "./routes/data";
 import { chatOnboarding } from "./gemini";
 
@@ -33,7 +32,8 @@ app.get("/ai-test", async (_req, res) => {
   }
 });
 
-app.use("/api/auth", authRouter);
+// NOTE: Auth (signup/login/refresh) now lives in the separate accounts service.
+// Tokens remain Supabase JWTs, so requireAuth keeps verifying them locally here.
 app.use("/api", dataRouter);
 
 app.use(errorHandler);

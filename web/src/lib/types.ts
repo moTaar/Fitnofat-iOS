@@ -273,3 +273,22 @@ export interface AIProgramResponse {
   summary: string;
   routines: AIGeneratedRoutine[];
 }
+
+// ── Subscriptions / billing (accounts microservice) ──────────────────────────
+export type Plan = "free" | "pro";
+export type Feature = "ai_coach" | "ai_nutrition" | "program_refresh" | "ai_exercise";
+
+export interface PlanInfo {
+  id: Plan;
+  name: string;
+  priceUsd: number;
+  features: Feature[];
+  blurb: string;
+  purchasable: boolean;
+}
+
+export interface Subscription {
+  plan: Plan;
+  status: string; // 'active' | 'trialing' | 'past_due' | 'canceled' | 'inactive'
+  currentPeriodEnd: string | null;
+}

@@ -2,7 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { asyncHandler, requireAuth, AuthedRequest } from "../middleware";
-import { generateProgram, refreshProgram, chatOnboarding, chatCoach, generateExerciseGuide, identifyExercise, type ChatMessage } from "../gemini";
+import { requireEntitlement } from "../entitlements";
+import { generateProgram, refreshProgram, chatOnboarding, chatCoach, generateExerciseGuide, identifyExercise, type ChatMessage, type LoggedWorkoutDraft } from "../gemini";
 import { generateNutritionPlan, lookupFood, type RoutineLite } from "../nutrition";
 import { buildRefreshSummary, SessionLite } from "../analytics";
 import { slugify } from "../util";
@@ -184,6 +185,45 @@ async function persistProgram(userId: string, profile: UserProfile, ai: Awaited<
   };
 }
 
+// Persist a workout the AI coach reconstructed from the athlete's free-text
+// description ("I biked an hour and did 5 tibetans"). Mirrors the shape the
+// client's finishWorkout produces so it shows up identically in History.
+async function persistLoggedWorkout(userId: string, draft: LoggedWorkoutDraft) {
+  const endedAt = Date.now();
+  const startedAt = endedAt - (draft.durationSec || 0) * 1000;
+  const exercises = draft.exercises.map((e) => ({
+    exerciseId: slugify(e.name),
+    name: e.name,
+    muscleGroup: e.muscleGroup,
+    restSeconds: e.restSeconds,
+    notes: e.notes,
+    sets: e.sets.map((s) => ({ weight: s.weight, reps: s.reps, completed: true })),
+  }));
+  const totalVolume = exercises.reduce(
+    (sum, ex) => sum + ex.sets.reduce((v, s) => v + s.weight * s.reps, 0),
+    0
+  );
+  const clientId = `coachlog_${endedAt}_${Math.random().toString(36).slice(2, 8)}`;
+  const { data, error } = await supabaseAdmin
+    .from("workouts")
+    .insert({
+      user_id: userId,
+      client_id: clientId,
+      routine_id: null,
+      routine_name: draft.routineName,
+      started_at: new Date(startedAt).toISOString(),
+      ended_at: new Date(endedAt).toISOString(),
+      duration_sec: draft.durationSec,
+      total_volume: totalVolume,
+      notes: "Logged via AI Coach",
+      exercises,
+    })
+    .select()
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Failed to save logged workout");
+  return rowToWorkout(data);
+}
+
 // ── GET /bootstrap : everything the client needs to hydrate ──────────────────
 dataRouter.get(
   "/bootstrap",
@@ -241,6 +281,7 @@ dataRouter.post(
 // ── POST /program/refresh : adaptive evolution ───────────────────────────────
 dataRouter.post(
   "/program/refresh",
+  requireEntitlement("program_refresh"),
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
     const profile = await loadProfile(userId);
@@ -278,6 +319,7 @@ dataRouter.post(
 // ── POST /nutrition/generate : build/evolve the diet plan on demand ───────────
 dataRouter.post(
   "/nutrition/generate",
+  requireEntitlement("ai_nutrition"),
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
     const profile = await loadProfile(userId);
@@ -395,6 +437,7 @@ dataRouter.post(
 // ── AI exercise assist (name → muscle group + equipment + guide in one shot) ──
 dataRouter.post(
   "/exercises/ai-assist",
+  requireEntitlement("ai_exercise"),
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
     const { name } = z.object({ name: z.string().min(1) }).parse(req.body);
@@ -438,6 +481,7 @@ dataRouter.post(
 // ── AI exercise how-to guide (lazy: generated + cached on first view) ─────────
 dataRouter.post(
   "/exercises/guide",
+  requireEntitlement("ai_exercise"),
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
     const body = z
@@ -543,6 +587,7 @@ dataRouter.post(
 // ── AI ongoing coaching (for onboarded users — answers + routine adjustments) ──
 dataRouter.post(
   "/ai/coach",
+  requireEntitlement("ai_coach"),
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
     const { messages } = z.object({ messages: z.array(chatMessageSchema) }).parse(req.body);
@@ -566,6 +611,14 @@ dataRouter.post(
       });
       return;
     }
+
+    // The athlete described a completed session — persist it to their history.
+    if (reply.type === "log" && reply.workout) {
+      const saved = await persistLoggedWorkout(userId, reply.workout);
+      res.json({ type: "log", text: reply.text, workout: saved });
+      return;
+    }
+
     res.json({ type: "message", text: reply.text, suggestions: reply.suggestions });
   })
 );

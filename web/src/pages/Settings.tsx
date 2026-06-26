@@ -1,20 +1,24 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Moon, Sun, Timer, Bell, Trash2, Weight, User, LogOut, Mail, Sparkles,
-  Activity, Volume2,
+  Activity, Volume2, Crown, ChevronRight, KeyRound, UserX,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "@/lib/store";
 import { useTheme } from "@/lib/hooks";
+import { effectivePlan } from "@/lib/entitlements";
 import { requestNotificationPermission, notificationsSupported } from "@/lib/notifications";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { SegmentedControl } from "@/components/ui/misc";
+import { Input, Label } from "@/components/ui/input";
+import { SegmentedControl, Spinner } from "@/components/ui/misc";
 import { Modal } from "@/components/ui/modal";
 import { CuisineSelector } from "@/components/CuisineSelector";
+import { toast } from "@/lib/toast";
 
 export function SettingsPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { theme, toggle } = useTheme();
   const settings = useStore((s) => s.settings);
   const setSetting = useStore((s) => s.setSetting);
@@ -23,8 +27,29 @@ export function SettingsPage() {
   const profile = useStore((s) => s.profile);
   const user = useStore((s) => s.user);
   const logout = useStore((s) => s.logout);
+  const subscription = useStore((s) => s.subscription);
+  const loadSubscription = useStore((s) => s.loadSubscription);
+  const updateAccount = useStore((s) => s.updateAccount);
+  const changePassword = useStore((s) => s.changePassword);
+  const deleteAccount = useStore((s) => s.deleteAccount);
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [emailModal, setEmailModal] = useState(false);
+  const [passwordModal, setPasswordModal] = useState(false);
+  const [deleteModal, setDeleteModal] = useState(false);
+
+  const isPro = effectivePlan(subscription) === "pro";
+
+  // On return from Stripe Checkout, toast the result and refresh billing state.
+  useEffect(() => {
+    const billing = searchParams.get("billing");
+    if (!billing) return;
+    if (billing === "success") toast.success("Welcome to Pro! 🎉 Your plan is now active.");
+    else if (billing === "cancel") toast.show("Checkout canceled — no charge was made.");
+    void loadSubscription();
+    searchParams.delete("billing");
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams, loadSubscription]);
 
   const toggleReminders = async () => {
     if (!settings.remindersEnabled) {
@@ -62,6 +87,30 @@ export function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Subscription */}
+      <SettingGroup title="Subscription">
+        <button
+          onClick={() => navigate("/billing")}
+          className="flex w-full items-center gap-3 p-4 text-left tap"
+        >
+          <div className={`rounded-lg p-2 ${isPro ? "bg-primary/15 text-primary" : "bg-secondary text-muted-foreground"}`}>
+            <Crown className="h-5 w-5" />
+          </div>
+          <div className="flex-1">
+            <p className="font-medium">{isPro ? "ForgeFit Pro" : "Free plan"}</p>
+            <p className="text-xs text-muted-foreground">
+              {isPro ? "Manage your subscription & billing" : "Upgrade to unlock AI features"}
+            </p>
+          </div>
+          {!isPro && (
+            <span className="rounded-full bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground">
+              Upgrade
+            </span>
+          )}
+          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+        </button>
+      </SettingGroup>
 
       {/* Appearance */}
       <SettingGroup title="Appearance">
@@ -164,6 +213,20 @@ export function SettingsPage() {
       {/* Account actions */}
       <SettingGroup title="Account">
         <button
+          onClick={() => setEmailModal(true)}
+          className="flex w-full items-center gap-3 p-4 text-left tap"
+        >
+          <Mail className="h-5 w-5 text-muted-foreground" />
+          <p className="font-medium">Change email</p>
+        </button>
+        <button
+          onClick={() => setPasswordModal(true)}
+          className="flex w-full items-center gap-3 p-4 text-left tap"
+        >
+          <KeyRound className="h-5 w-5 text-muted-foreground" />
+          <p className="font-medium">Change password</p>
+        </button>
+        <button
           onClick={() => setConfirmLogout(true)}
           className="flex w-full items-center gap-3 p-4 text-left tap"
         >
@@ -178,6 +241,16 @@ export function SettingsPage() {
           <div>
             <p className="font-medium">Clear local data</p>
             <p className="text-xs opacity-70">Logs out and wipes this device’s cache</p>
+          </div>
+        </button>
+        <button
+          onClick={() => setDeleteModal(true)}
+          className="flex w-full items-center gap-3 p-4 text-left text-destructive tap"
+        >
+          <UserX className="h-5 w-5" />
+          <div>
+            <p className="font-medium">Delete account</p>
+            <p className="text-xs opacity-70">Permanently erases your account and all data</p>
           </div>
         </button>
       </SettingGroup>
@@ -218,7 +291,182 @@ export function SettingsPage() {
           </Button>
         </div>
       </Modal>
+
+      <ChangeEmailModal
+        open={emailModal}
+        currentEmail={user?.email ?? ""}
+        onClose={() => setEmailModal(false)}
+        onSave={async (email) => {
+          await updateAccount({ email });
+          toast.success("Email updated.");
+        }}
+      />
+
+      <ChangePasswordModal
+        open={passwordModal}
+        onClose={() => setPasswordModal(false)}
+        onSave={async (password) => {
+          await changePassword(password);
+          toast.success("Password updated.");
+        }}
+      />
+
+      <DeleteAccountModal
+        open={deleteModal}
+        onClose={() => setDeleteModal(false)}
+        onConfirm={async () => {
+          await deleteAccount();
+          location.href = "/login";
+        }}
+      />
     </div>
+  );
+}
+
+function ChangeEmailModal({
+  open, currentEmail, onClose, onSave,
+}: {
+  open: boolean;
+  currentEmail: string;
+  onClose: () => void;
+  onSave: (email: string) => Promise<void>;
+}) {
+  const [email, setEmail] = useState(currentEmail);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onSave(email.trim());
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update email");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Change email">
+      <Label htmlFor="new-email">New email</Label>
+      <Input
+        id="new-email" type="email" autoComplete="email" className="mt-1.5"
+        value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com"
+      />
+      {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
+      <div className="mt-4 flex gap-2">
+        <Button variant="outline" className="flex-1" onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button className="flex-1" onClick={submit} disabled={busy || !email.trim()}>
+          {busy ? <Spinner /> : null} Save
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
+function ChangePasswordModal({
+  open, onClose, onSave,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSave: (password: string) => Promise<void>;
+}) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = () => { setPassword(""); setConfirm(""); setError(null); };
+
+  const submit = async () => {
+    if (password.length < 6) { setError("Password must be at least 6 characters"); return; }
+    if (password !== confirm) { setError("Passwords don't match"); return; }
+    setBusy(true);
+    setError(null);
+    try {
+      await onSave(password);
+      reset();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update password");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={() => { reset(); onClose(); }} title="Change password">
+      <Label htmlFor="new-password">New password</Label>
+      <Input
+        id="new-password" type="password" autoComplete="new-password" className="mt-1.5"
+        value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
+      />
+      <Label htmlFor="confirm-password" className="mt-3 block">Confirm password</Label>
+      <Input
+        id="confirm-password" type="password" autoComplete="new-password" className="mt-1.5"
+        value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••••••"
+      />
+      {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
+      <div className="mt-4 flex gap-2">
+        <Button variant="outline" className="flex-1" onClick={() => { reset(); onClose(); }} disabled={busy}>Cancel</Button>
+        <Button className="flex-1" onClick={submit} disabled={busy}>
+          {busy ? <Spinner /> : null} Save
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
+function DeleteAccountModal({
+  open, onClose, onConfirm,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onConfirm();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete account");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={() => { setConfirmText(""); onClose(); }} title="Delete account?">
+      <p className="text-sm text-muted-foreground">
+        This permanently deletes your account, cancels any subscription, and erases all your
+        programs, routines, workouts, and nutrition data. This cannot be undone.
+      </p>
+      <Label htmlFor="delete-confirm" className="mt-4 block">
+        Type <b className="font-semibold text-foreground">DELETE</b> to confirm
+      </Label>
+      <Input
+        id="delete-confirm" className="mt-1.5" value={confirmText}
+        onChange={(e) => setConfirmText(e.target.value)} placeholder="DELETE"
+      />
+      {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
+      <div className="mt-4 flex gap-2">
+        <Button variant="outline" className="flex-1" onClick={() => { setConfirmText(""); onClose(); }} disabled={busy}>
+          Cancel
+        </Button>
+        <Button
+          variant="destructive" className="flex-1"
+          onClick={submit} disabled={busy || confirmText !== "DELETE"}
+        >
+          {busy ? <Spinner /> : null} Delete account
+        </Button>
+      </div>
+    </Modal>
   );
 }
 

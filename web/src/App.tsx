@@ -15,6 +15,7 @@ import { AiCoach } from "./pages/AiCoach";
 import { Nutrition } from "./pages/Nutrition";
 import { History } from "./pages/History";
 import { SettingsPage } from "./pages/Settings";
+import { Billing } from "./pages/Billing";
 import { Dumbbell } from "lucide-react";
 import { Spinner } from "./components/ui/misc";
 import { Toaster } from "./components/ui/toast";
@@ -185,6 +186,7 @@ export default function App() {
           <Route path="/nutrition" element={<Nutrition />} />
           <Route path="/history" element={<History />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/billing" element={<Billing />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
