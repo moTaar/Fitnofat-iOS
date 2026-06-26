@@ -491,20 +491,17 @@ Optional (ask only if the conversation feels natural):
 9. Their name
 10. Any injuries or preferences
 
-IMPORTANT — after every question (not at [DONE]), append a suggestions line on its own line:
-[SUGGESTIONS: option1 | option2 | option3 | option4]
-Tailor the options to the question. Examples:
-- Goal question → [SUGGESTIONS: Build muscle | Lose weight | Get stronger | Stay fit]
-- Category question → [SUGGESTIONS: Calisthenics | Weightlifting | Mixed | Cardio]
-- Equipment question → [SUGGESTIONS: Full gym | Bodyweight | Dumbbells | Resistance bands | Custom mix]
-- Experience question → [SUGGESTIONS: Beginner (<1 yr) | Intermediate (1–3 yrs) | Advanced (3+ yrs)]
-- Days/week question → [SUGGESTIONS: 3 days | 4 days | 5 days | 2 days]
-- Session length question → [SUGGESTIONS: 45 min | 60 min | 30 min | 90 min]
-- Units question → [SUGGESTIONS: kg | lb]
-- Body weight question → [SUGGESTIONS: Skip]
-- Name question → [SUGGESTIONS: Skip]
-- Injuries/preferences question → [SUGGESTIONS: No injuries | Skip]
-Use 2–5 short options that cover the most common answers. Keep each option under 25 chars.
+ASK ONLY ONE QUESTION PER TURN.
+
+IMPORTANT — every time you ask a question (i.e. NOT on the [DONE] turn), the LAST line of your reply MUST be a topic tag naming which item the question collects:
+[TOPIC: <id>]
+where <id> is EXACTLY ONE of: goal, style, equipment, experience, days, session_length, units, bodyweight, name, injuries.
+Map the numbered items above to ids: 1→goal, 2→style, 3→equipment, 4→experience, 5→days, 6→session_length, 7→units, 8→bodyweight, 9→name, 10→injuries.
+The app renders the tappable answer chips from this tag, so it MUST match the question you actually asked. Output the tag verbatim on its own final line. Examples:
+- "What's your main fitness goal?" → [TOPIC: goal]
+- "How long would you like each training session to be?" → [TOPIC: session_length]
+- "How long have you been training?" → [TOPIC: experience]
+Do NOT write the answer options yourself — only the [TOPIC] tag.
 
 Once you have answers for items 1–8, end with a short friendly closing sentence then:
 [DONE]
@@ -513,7 +510,42 @@ Notes:
 - Only include "equipmentMix" when equipment is "mixed". List the specific items the user mentioned (e.g. ["Dumbbells","Resistance bands","Bodyweight"]).
 - "bodyweightKg" stores the numeric value the user gave (e.g. 75 for "75 kg", 165 for "165 lb"). Set to null if skipped.
 
-Do NOT include [SUGGESTIONS: ...] on the [DONE] line.`;
+Do NOT include a [TOPIC: ...] tag on the [DONE] turn.`;
+
+// ── Onboarding question topics → answer chips ────────────────────────────────
+// Robustness model: we do NOT guess the question's topic from prose as the
+// primary signal (that proved fragile — e.g. "training session" wrongly read as
+// the "experience" topic). Instead the model emits an explicit [TOPIC: <id>]
+// tag (see CHAT_SYSTEM) which we map to canonical chips here. Keyword detection
+// (classifyTopic) is only a fallback for when the tag is missing/invalid.
+//
+// TOPIC_CHIPS is the single source of truth for the chips of every question —
+// changing the wording of an option is a one-line edit here.
+type OnboardingTopic =
+  | "goal" | "style" | "equipment" | "experience" | "days"
+  | "session_length" | "units" | "bodyweight" | "name" | "injuries";
+
+const TOPIC_CHIPS: Record<OnboardingTopic, string[]> = {
+  goal: ["Build muscle", "Lose weight", "Get stronger", "Stay fit"],
+  style: ["Calisthenics", "Weightlifting", "Cardio", "Mixed"],
+  equipment: ["Full gym", "Bodyweight", "Dumbbells", "Resistance bands", "Custom mix"],
+  experience: ["Beginner (<1 yr)", "Intermediate (1–3 yrs)", "Advanced (3+ yrs)"],
+  days: ["3 days", "4 days", "5 days", "2 days"],
+  session_length: ["45 min", "60 min", "30 min", "90 min"],
+  units: ["kg", "lb"],
+  bodyweight: ["Skip"],
+  name: ["Skip"],
+  injuries: ["No injuries", "Skip"],
+};
+
+const TOPIC_MARKER = /\[TOPIC:\s*([a-z_]+)\s*\]/i;
+
+// Read the model's explicit topic tag. Returns undefined if absent or not a
+// recognised id (so the caller falls back to the keyword classifier).
+function parseTopic(raw: string): OnboardingTopic | undefined {
+  const id = raw.match(TOPIC_MARKER)?.[1]?.toLowerCase();
+  return id && id in TOPIC_CHIPS ? (id as OnboardingTopic) : undefined;
+}
 
 // Focus topic-detection on the actual question, not the recap of the previous
 // answer. Replies usually open with an acknowledgement (e.g. "Got it, a mix of
@@ -525,25 +557,47 @@ function questionText(text: string): string {
   return (questions.length ? questions.join(" ") : text).toLowerCase();
 }
 
-function detectOnboardingSuggestions(text: string): string[] | undefined {
+// Fallback classifier used ONLY when the model omits a valid [TOPIC] tag.
+// Ordered most-specific-first and the easily-confused pairs are disambiguated so
+// no question can fall through to the wrong topic:
+//   • session_length is tested BEFORE experience, and the experience pattern is
+//     anchored to "been training / experience level" phrasing so a "training
+//     session" question can never be read as experience.
+//   • bodyweight is tested BEFORE units so "weigh in kg" isn't read as units.
+function classifyTopic(text: string): OnboardingTopic | undefined {
   const t = questionText(text);
-  if (/what.*goal|your goal\?|fitness goal|main goal|primary goal|trying to achieve|\baim\b|\baims\b|what.*objective|what.*looking to/.test(t))
-    return ["Build muscle", "Lose weight", "Get stronger", "Stay fit"];
-  if (/workout style|training style|type of (workout|training)|calisthenics|weightlifting|cardio|yoga|pilates/.test(t))
-    return ["Calisthenics", "Weightlifting", "Cardio", "Mixed"];
-  if (/equipment|gym|dumbbells|bodyweight|resistance|machine|kettlebell/.test(t))
-    return ["Full gym", "Bodyweight", "Dumbbells", "Resistance bands", "Custom mix"];
-  if (/experience|beginner|intermediate|advanced|how long.*train|trained|training for/.test(t))
-    return ["Beginner (<1 yr)", "Intermediate (1–3 yrs)", "Advanced (3+ yrs)"];
-  if (/days.*(per|a) week|how (many|often).*day|times.*(per|a) week|days.*train/.test(t))
-    return ["3 days", "4 days", "5 days", "2 days"];
-  if (/\bkg\b|\blb\b|pound|kilogram|weight unit|track.*weight/.test(t))
-    return ["kg", "lb"];
-  if (/body.?weight|how much.*weigh|current.*weight|weigh.*current|your weight|what.*weight/.test(t))
-    return ["Skip"];
-  if (/how long.*session|session.*(length|long|duration)|each.*session|per.*session|\bminutes? per\b|\bminute.*session\b/.test(t))
-    return ["45 min", "60 min", "30 min", "90 min"];
+  if (/\bgoal\b|fitness goal|main goal|primary goal|trying to achieve|looking to (achieve|do|get)|what.*objective|\baim\b/.test(t))
+    return "goal";
+  if (/workout style|training style|style of (workout|training)|type of (workout|training)|\bcalisthenics\b|\bweightlifting\b|\byoga\b|\bpilates\b|prefer.*(cardio|weights|bodyweight movement)/.test(t))
+    return "style";
+  if (/\bequipment\b|\bgear\b|what.*(have|own|access).*(train|work ?out|gym|equipment|gear|weights?)|do you (have|own).*(equipment|gym|dumbbell|barbell|kettlebell|band|machine|weight|\bbar\b|rack|gear)|access to (a |an )?(gym|equipment|weights?|dumbbell|barbell|machine)|\bgym\b|dumbbell|barbell|kettlebell|resistance band|machines?\b/.test(t))
+    return "equipment";
+  // session_length BEFORE experience so "training session" can't match experience.
+  if (/how long.*(session|workout)|session.*(length|long|duration|last|be\b)|each (session|workout).*(long|last|be)|(minutes?|mins?).*(per|each|a) (session|workout|day)|how many minutes|duration.*(session|workout)|session length/.test(t))
+    return "session_length";
+  if (/how many days|days (per|a) week|days.*(train|workout|week)|times (per|a) week|how often.*(train|week)|train.*per week/.test(t))
+    return "days";
+  if (/\bexperience\b|experience level|how experienced|(training|lifting|workout|fitness) experience|how (long|many years) have you (been )?(training|lifting|working out|exercising)|been (training|lifting) for|new to (training|lifting|the gym|fitness|working out)|\bbeginner\b|\bintermediate\b|\badvanced\b/.test(t))
+    return "experience";
+  // bodyweight BEFORE units — the bodyweight question may mention kg/lb.
+  if (/how much.*weigh|current (body ?)?weight|\bbody ?weight\b|what.*you weigh|your (body ?)?weight\b|weigh (currently|right now)/.test(t))
+    return "bodyweight";
+  if (/which units?|what units?|prefer.*(kg|lb|kilograms?|pounds?)|kg or lb|lb or kg|metric or imperial|measure.*weights? in|\bweight units?\b/.test(t))
+    return "units";
+  if (/your name|what.*name|call you/.test(t))
+    return "name";
+  if (/injur|limitation|\bpain\b|niggle|medical|condition|any preference/.test(t))
+    return "injuries";
   return undefined;
+}
+
+// Resolve the chips for a model reply. Priority: explicit [TOPIC] tag → keyword
+// classifier → the model's free-form [SUGGESTIONS] line (legacy fallback).
+function resolveSuggestions(raw: string, text: string): string[] | undefined {
+  const topic = parseTopic(raw) ?? classifyTopic(text);
+  if (topic) return TOPIC_CHIPS[topic];
+  const sug = raw.match(/\[SUGGESTIONS:\s*([^\]]+)\]/i);
+  return sug ? sug[1].split("|").map((s) => s.trim()).filter(Boolean) : undefined;
 }
 
 export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply> {
@@ -610,12 +664,13 @@ export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply
     }
   }
 
-  // Parse optional [SUGGESTIONS: a | b | c] marker from the question.
-  const sugMatch = raw.match(/\[SUGGESTIONS:\s*([^\]]+)\]/i);
-  const text = raw.replace(/\[SUGGESTIONS:[^\]]*\]/i, "").trim();
-  // Always guarantee topic-appropriate chips — Gemini sometimes omits or repeats wrong ones.
-  const suggestions = detectOnboardingSuggestions(text) ??
-    (sugMatch ? sugMatch[1].split("|").map((s) => s.trim()).filter(Boolean) : undefined);
+  // Strip the control markers ([TOPIC]/[SUGGESTIONS]) before showing the text,
+  // then resolve chips: explicit topic tag → keyword classifier → legacy line.
+  const text = raw
+    .replace(TOPIC_MARKER, "")
+    .replace(/\[SUGGESTIONS:[^\]]*\]/i, "")
+    .trim();
+  const suggestions = resolveSuggestions(raw, text);
 
   return { type: "question", text, suggestions };
 }
