@@ -20,7 +20,7 @@ const COACH_SUGGESTIONS = [
   "Add more cardio",
 ];
 
-export function AiCoach() {
+export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onClose?: () => void } = {}) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const generateProgram = useStore((s) => s.generateProgram);
@@ -175,6 +175,7 @@ export function AiCoach() {
 
   const handleSuggestion = (s: string) => {
     if (s === "View my routines") {
+      onClose?.();
       navigate("/routines");
       return;
     }
@@ -219,7 +220,10 @@ export function AiCoach() {
   const activeChipIdx = lastModelIdx === -1 ? -1 : messages.length - 1 - lastModelIdx;
 
   return (
-    <div className="flex flex-col" style={{ height: "calc(100dvh - 120px)" }}>
+    <div
+      className={cn("flex flex-col", embedded && "h-full")}
+      style={embedded ? undefined : { height: "calc(100dvh - 120px)" }}
+    >
       {/* Header */}
       <div className="flex items-center justify-between pb-3 pt-2">
         <div className="flex items-center gap-2">

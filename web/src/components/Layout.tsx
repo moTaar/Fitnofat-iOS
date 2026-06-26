@@ -1,15 +1,15 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Home, Dumbbell, Sparkles, Apple, BarChart3, Settings, WifiOff, Play } from "lucide-react";
+import { Home, Dumbbell, Apple, BarChart3, Settings, WifiOff, Play } from "lucide-react";
 import { cn, formatDuration } from "@/lib/utils";
 import { useNow, useOnlineStatus } from "@/lib/hooks";
 import { useStore } from "@/lib/store";
 import { InstallPrompt } from "./InstallPrompt";
 import { RestTimerBar } from "./RestTimerBar";
+import { CoachBubble } from "./CoachBubble";
 
 const NAV = [
   { to: "/", label: "Home", icon: Home, end: true },
   { to: "/routines", label: "Routines", icon: Dumbbell, end: false },
-  { to: "/ai-coach", label: "Coach", icon: Sparkles, end: false },
   { to: "/nutrition", label: "Nutrition", icon: Apple, end: false },
   { to: "/history", label: "History", icon: BarChart3, end: false },
   { to: "/settings", label: "Settings", icon: Settings, end: false },
@@ -85,10 +85,13 @@ export function Layout() {
       <RestTimerBar />
       <ActiveWorkoutBanner />
 
+      {/* Floating AI Coach launcher — hidden on the restart/onboarding chat page. */}
+      {location.pathname !== "/ai-coach" && <CoachBubble />}
+
       {!inWorkout && <InstallPrompt />}
 
       <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md border-t border-border bg-card/95 backdrop-blur safe-bottom">
-        <div className="grid grid-cols-6">
+        <div className="grid grid-cols-5">
           {NAV.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
