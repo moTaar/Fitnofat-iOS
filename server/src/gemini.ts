@@ -606,13 +606,12 @@ function resolveSuggestions(raw: string, text: string): string[] | undefined {
 
 export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply> {
   const key = config.geminiApiKey.trim();
-  if (!key) {
-    return {
-      type: "done",
-      text: "Great! Let me build your program now.",
-      profile: { name: "", goal: "general", category: "mixed", equipment: "full_gym", experience: "beginner", daysPerWeek: 3, sessionMinutes: 60, units: "kg", notes: "" },
-    };
-  }
+  // No key configured → the AI interview cannot run. Signal the client (which
+  // falls back to the manual quick-setup form) instead of silently returning a
+  // generic "done" profile. The old behaviour skipped the entire interview and
+  // built an untailored program for everyone, making the chat look broken: it
+  // greeted with "Let me build your program now." and finished on any input.
+  if (!key) throw new Error("AI_UNAVAILABLE");
 
   // Gemini requires at least one user turn.
   const contents =

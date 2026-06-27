@@ -20,6 +20,16 @@ const COACH_SUGGESTIONS = [
   "Explain my current plan",
 ];
 
+// Map a thrown API error to the reason the AI is offline, or null if it's an
+// ordinary (retryable) error. "unavailable" = server has no Gemini key;
+// "quota" = key is rate-limited. Both route the user to the manual setup form.
+function aiErrorReason(e: unknown): "quota" | "unavailable" | null {
+  const msg = e instanceof Error ? e.message : "";
+  if (msg.includes("QUOTA_EXCEEDED")) return "quota";
+  if (msg.includes("AI_UNAVAILABLE")) return "unavailable";
+  return null;
+}
+
 export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onClose?: () => void } = {}) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -38,7 +48,9 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [quotaExceeded, setQuotaExceeded] = useState(false);
+  // Why the AI is offline, if it is: "quota" (rate-limited) or "unavailable"
+  // (no server key). Both fall back to the manual quick-setup form.
+  const [aiError, setAiError] = useState<null | "quota" | "unavailable">(null);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
   const [mixPicker, setMixPicker] = useState(false);
@@ -62,7 +74,7 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
   const startConversation = async () => {
     setMessages([]);
     setDone(false);
-    setQuotaExceeded(false);
+    setAiError(null);
     setInput("");
 
     if (coachMode) {
@@ -85,9 +97,9 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
       const reply = await api.aiChat([]);
       setMessages([{ role: "model", content: reply.text, suggestions: reply.suggestions }]);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "";
-      if (msg.includes("QUOTA_EXCEEDED")) setQuotaExceeded(true);
-      else toast.error(msg || "Couldn't reach the AI coach.");
+      const reason = aiErrorReason(e);
+      if (reason) setAiError(reason);
+      else toast.error((e instanceof Error && e.message) || "Couldn't reach the AI coach.");
     } finally {
       setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 100);
@@ -157,11 +169,11 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
         }
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "";
-      if (msg.includes("QUOTA_EXCEEDED")) {
-        setQuotaExceeded(true);
+      const reason = aiErrorReason(e);
+      if (reason) {
+        setAiError(reason);
       } else {
-        toast.error(msg || "AI error — please try again.");
+        toast.error((e instanceof Error && e.message) || "AI error — please try again.");
         setMessages(next.slice(0, -1));
         setInput(text.trim());
       }
@@ -277,19 +289,22 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
         </button>
       </div>
 
-      {/* Quota exceeded banner */}
-      {quotaExceeded && (
+      {/* AI offline banner — quota-exceeded or no server key configured. */}
+      {aiError && (
         <div className="mb-3 flex flex-col gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
           <div className="flex gap-3">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
             <div>
-              <p className="font-semibold text-amber-500">Gemini quota exceeded</p>
+              <p className="font-semibold text-amber-500">
+                {aiError === "quota" ? "Gemini quota exceeded" : "AI coach unavailable"}
+              </p>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                Your API key has hit its limit. The chat is unavailable until the quota resets
-                (usually a few hours).{" "}
+                {aiError === "quota"
+                  ? "Your API key has hit its limit. The chat is unavailable until the quota resets (usually a few hours). "
+                  : "The AI coach isn't set up on the server right now. "}
                 {coachMode
                   ? "You can still edit routines manually."
-                  : "Use the quick form instead — it works offline too."}
+                  : "Use the quick setup form instead — it works without AI."}
               </p>
             </div>
           </div>
