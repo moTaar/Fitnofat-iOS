@@ -568,7 +568,16 @@ function classifyTopic(text: string): OnboardingTopic | undefined {
   const t = questionText(text);
   if (/\bgoal\b|fitness goal|main goal|primary goal|trying to achieve|looking to (achieve|do|get)|what.*objective|\baim\b/.test(t))
     return "goal";
-  if (/workout style|training style|style of (workout|training)|type of (workout|training)|\bcalisthenics\b|\bweightlifting\b|\byoga\b|\bpilates\b|prefer.*(cardio|weights|bodyweight movement)/.test(t))
+  // units BEFORE style — "prefer to see weights in kg/lb" contains the word
+  // "weights" which the style pattern previously caught first.
+  // bodyweight also BEFORE units — the bodyweight question may mention kg/lb.
+  if (/how much.*weigh|current (body ?)?weight|\bbody ?weight\b|what.*you weigh|your (body ?)?weight\b|weigh (currently|right now)/.test(t))
+    return "bodyweight";
+  if (/which units?|what units?|prefer.*(kg|lb|kilograms?|pounds?)|kg or lb|lb or kg|metric or imperial|measure.*weights? in|\bweight units?\b/.test(t))
+    return "units";
+  // "weights" removed from style pattern — it's too generic and clashes with
+  // the units question ("prefer to see weights in kg"). Use "weightlifting" instead.
+  if (/workout style|training style|style of (workout|training)|type of (workout|training)|\bcalisthenics\b|\bweightlifting\b|\byoga\b|\bpilates\b|prefer.*(cardio|weightlifting|bodyweight movement)/.test(t))
     return "style";
   if (/\bequipment\b|\bgear\b|what.*(have|own|access).*(train|work ?out|gym|equipment|gear|weights?)|do you (have|own).*(equipment|gym|dumbbell|barbell|kettlebell|band|machine|weight|\bbar\b|rack|gear)|access to (a |an )?(gym|equipment|weights?|dumbbell|barbell|machine)|\bgym\b|dumbbell|barbell|kettlebell|resistance band|machines?\b/.test(t))
     return "equipment";
@@ -579,11 +588,6 @@ function classifyTopic(text: string): OnboardingTopic | undefined {
     return "days";
   if (/\bexperience\b|experience level|how experienced|(training|lifting|workout|fitness) experience|how (long|many years) have you (been )?(training|lifting|working out|exercising)|been (training|lifting) for|new to (training|lifting|the gym|fitness|working out)|\bbeginner\b|\bintermediate\b|\badvanced\b/.test(t))
     return "experience";
-  // bodyweight BEFORE units — the bodyweight question may mention kg/lb.
-  if (/how much.*weigh|current (body ?)?weight|\bbody ?weight\b|what.*you weigh|your (body ?)?weight\b|weigh (currently|right now)/.test(t))
-    return "bodyweight";
-  if (/which units?|what units?|prefer.*(kg|lb|kilograms?|pounds?)|kg or lb|lb or kg|metric or imperial|measure.*weights? in|\bweight units?\b/.test(t))
-    return "units";
   if (/your name|what.*name|call you/.test(t))
     return "name";
   if (/injur|limitation|\bpain\b|niggle|medical|condition|any preference/.test(t))
