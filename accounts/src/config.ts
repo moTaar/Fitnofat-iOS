@@ -27,4 +27,7 @@ export const config = {
   stripeWebhookSecret: required("STRIPE_WEBHOOK_SECRET"),
   // Recurring price for the Pro tier. Mapped back to the `pro` plan on webhooks.
   stripePricePro: process.env.STRIPE_PRICE_PRO ?? "",
+  // Secret key that gates all /admin/* routes. Set to a long random string.
+  // Generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  adminApiKey: process.env.ADMIN_API_KEY ?? "",
 };

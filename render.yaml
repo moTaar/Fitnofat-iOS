@@ -65,6 +65,24 @@ services:
         sync: false
       - key: STRIPE_PRICE_PRO
         sync: false
+      - key: ADMIN_API_KEY
+        sync: false
+
+  # ── Admin panel (static) ─────────────────────────────────────────────────
+  - type: web
+    name: forgefit-admin
+    runtime: static
+    rootDir: admin
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      # URL of the accounts microservice, e.g. https://forgefit-accounts.onrender.com
+      - key: VITE_ACCOUNTS_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
 
   # ── Frontend PWA (static) ────────────────────────────────────────────────
   - type: web

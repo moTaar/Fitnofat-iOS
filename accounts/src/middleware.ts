@@ -36,6 +36,29 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   next();
 }
 
+/** Gates admin routes — caller must supply the ADMIN_API_KEY as a Bearer token
+ *  or in the X-Admin-Key header. Returns 401 if the key is missing/wrong. */
+export function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  // Import here to avoid a circular dep at module load time.
+  const { config } = require("./config") as typeof import("./config");
+  const key = config.adminApiKey;
+  if (!key) {
+    res.status(503).json({ error: "Admin API not configured (missing ADMIN_API_KEY)" });
+    return;
+  }
+  const header = req.headers["x-admin-key"] ?? req.headers.authorization ?? "";
+  const provided = Array.isArray(header)
+    ? header[0]
+    : header.startsWith("Bearer ")
+    ? header.slice(7)
+    : header;
+  if (provided !== key) {
+    res.status(401).json({ error: "Invalid or missing admin key" });
+    return;
+  }
+  next();
+}
+
 export function errorHandler(
   err: unknown,
   _req: Request,

@@ -5,6 +5,7 @@ import { errorHandler } from "./middleware";
 import { authRouter } from "./routes/auth";
 import { accountRouter } from "./routes/account";
 import { billingRouter } from "./routes/billing";
+import { adminRouter } from "./routes/admin";
 import { stripeWebhook } from "./routes/webhook";
 
 const app = express();
@@ -41,6 +42,7 @@ app.get("/health", (_req, res) => {
 app.use("/auth", authRouter);
 app.use("/account", accountRouter);
 app.use("/billing", billingRouter);
+app.use("/admin", adminRouter);
 
 app.use(errorHandler);
 
