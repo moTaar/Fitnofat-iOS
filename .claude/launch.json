@@ -9,6 +9,13 @@
       "port": 5173
     },
     {
+      "name": "web-pwa",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "preview", "--", "--port", "4173"],
+      "cwd": "${workspaceFolder}/web",
+      "port": 4173
+    },
+    {
       "name": "admin",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],

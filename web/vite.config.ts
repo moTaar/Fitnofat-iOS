@@ -67,20 +67,35 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
+        globPatterns: ["**/*.{js,css,html,svg,png,ico,woff,woff2,webmanifest}"],
+        // Serve the SPA shell for any in-app navigation when offline (deep links
+        // like /history work after a hard refresh with no network)…
         navigateFallback: "index.html",
+        // …but never hijack API calls or the SW assets with the shell.
+        navigateFallbackDenylist: [/^\/api\//, /\/sw\.js$/, /\/manifest\.webmanifest$/],
+        // Take control of open tabs immediately so the app is offline-ready on the
+        // very next navigation after the first load (no second visit required).
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
+        // The app bundle grows over time — make sure it always gets precached.
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         runtimeCaching: [
           {
-            // Cache the Gemini API responses are NOT cached (always fresh),
-            // but Google Fonts / static CDN assets are cached.
-            urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,
+            // Gemini/API responses are never cached (always fresh + auth-bound);
+            // the Google Fonts stylesheet + font files are cached for offline use.
+            urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+            handler: "StaleWhileRevalidate",
+            options: {
+              cacheName: "google-fonts-stylesheets",
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+          {
+            urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
             handler: "CacheFirst",
             options: {
-              cacheName: "google-fonts-cache",
-              expiration: {
-                maxEntries: 20,
-                maxAgeSeconds: 60 * 60 * 24 * 365,
-              },
+              cacheName: "google-fonts-webfonts",
+              expiration: { maxEntries: 30, maxAgeSeconds: 60 * 60 * 24 * 365 },
               cacheableResponse: { statuses: [0, 200] },
             },
           },
