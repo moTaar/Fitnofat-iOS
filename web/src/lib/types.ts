@@ -145,6 +145,10 @@ export interface Exercise {
   isCustom?: boolean;
   instructions?: string;
   guide?: ExerciseGuide; // AI-generated how-to, cached for exercises not in the seed library
+  // Cached MET (metabolic equivalent) for this exercise. Resolved once — from the
+  // built-in Compendium table or, for unknowns, the AI — then reused for every
+  // future calorie estimate of this exercise (no repeat AI cost).
+  met?: number;
 }
 
 // How-to guidance for performing an exercise with correct form.

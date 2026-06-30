@@ -127,6 +127,7 @@ export function rowToExercise(row: any) {
     equipment: row.equipment,
     isCustom: row.source !== "ai",
     guide: row.guide ?? undefined,
+    met: row.met != null ? Number(row.met) : undefined,
   };
 }
 

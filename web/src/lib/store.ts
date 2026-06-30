@@ -8,8 +8,16 @@ import type {
 } from "./types";
 import { SEED_EXERCISES } from "./exercises";
 import { sessionVolume, uid } from "./utils";
-import { estimateSessionCalories, resolveKind } from "./calories";
+import { estimateSessionCalories, needsAiMet, resolveKind } from "./calories";
 import { api, auth, AuthExpiredError, type Session } from "./api";
+
+// Cached METs keyed by exercise id/slug, for reusing known values in calorie
+// estimates (so repeated exercises never re-hit the AI).
+function metMapFrom(exercises: Exercise[]): Record<string, number | undefined> {
+  const m: Record<string, number | undefined> = {};
+  for (const e of exercises) if (e.met != null) m[e.id] = e.met;
+  return m;
+}
 
 export const todayKey = () => format(new Date(), "yyyy-MM-dd");
 
@@ -116,6 +124,10 @@ interface AppState {
   saveManualSession: (draft: ManualSessionDraft) => Promise<void>;
   // Remove a session from history (optimistic) and delete it server-side.
   deleteWorkout: (id: string) => Promise<void>;
+  // For exercises whose MET the local table can't classify, fetch a precise MET
+  // from the AI (cached server-side), store it, and recompute the session's
+  // calories. Cheap + best-effort; makes thin-data logs accurate after a beat.
+  backfillSessionCalories: (sessionId: string) => Promise<void>;
 
   // settings
   setSetting: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
@@ -597,10 +609,11 @@ export const useStore = create<AppState>()(
         const endedAt = Date.now();
         const durationSec = Math.round((endedAt - s.active.startedAt) / 1000);
         const bodyweightKg = s.profile?.bodyweightKg ?? undefined;
+        const metMap = metMapFrom(s.exercises);
         const exercises = s.active.exercises
           .map((ex) => ({ ...ex, sets: ex.sets.filter((st) => st.completed) }))
           .filter((ex) => ex.sets.length > 0)
-          .map((ex) => ({ ...ex, calories: estimateSessionCalories([ex], bodyweightKg) }));
+          .map((ex) => ({ ...ex, calories: estimateSessionCalories([ex], bodyweightKg, metMap) }));
         if (exercises.length === 0) {
           set({ active: null });
           return;
@@ -616,12 +629,14 @@ export const useStore = create<AppState>()(
           durationSec,
           exercises,
           totalVolume: sessionVolume(exercises),
-          calories: estimateSessionCalories(exercises, bodyweightKg),
+          calories: estimateSessionCalories(exercises, bodyweightKg, metMap),
           synced: false,
         };
         set({ active: null, history: [session, ...s.history] });
         // Attempt immediate upload; if offline it stays queued.
         await get().syncPending();
+        // Refine calories for any exercises the local MET table couldn't classify.
+        void get().backfillSessionCalories(clientId);
       },
 
       cancelWorkout: () => set({ active: null }),
@@ -641,12 +656,13 @@ export const useStore = create<AppState>()(
       saveManualSession: async (draft) => {
         const s = get();
         const bodyweightKg = s.profile?.bodyweightKg ?? undefined;
+        const metMap = metMapFrom(s.exercises);
         // Stamp per-exercise calories + resolved kind so detail views and progress
         // treat a manual/cloned entry exactly like a live-logged one.
         const exercises: LoggedExercise[] = draft.exercises.map((ex) => ({
           ...ex,
           kind: ex.kind ?? resolveKind(ex),
-          calories: estimateSessionCalories([ex], bodyweightKg),
+          calories: estimateSessionCalories([ex], bodyweightKg, metMap),
         }));
         const clientId = uid("manual");
         const session: WorkoutSession = {
@@ -658,12 +674,13 @@ export const useStore = create<AppState>()(
           durationSec: draft.durationSec,
           exercises,
           totalVolume: sessionVolume(exercises),
-          calories: estimateSessionCalories(exercises, bodyweightKg),
+          calories: estimateSessionCalories(exercises, bodyweightKg, metMap),
           notes: draft.notes,
           synced: false,
         };
         set({ history: [session, ...s.history].sort((a, b) => b.startedAt - a.startedAt) });
         await get().syncPending();
+        void get().backfillSessionCalories(clientId);
       },
 
       deleteWorkout: async (id) => {
@@ -677,6 +694,64 @@ export const useStore = create<AppState>()(
             /* best-effort; the optimistic local delete stands */
           }
         }
+      },
+
+      backfillSessionCalories: async (sessionId) => {
+        if (!auth.isAuthenticated() || !navigator.onLine) return;
+        const s = get();
+        const session = s.history.find((w) => w.id === sessionId || w.clientId === sessionId);
+        if (!session) return;
+        const metMap = metMapFrom(s.exercises);
+        // Only the exercises our local Compendium table can't classify need the AI.
+        const targets = session.exercises.filter((ex) => needsAiMet(ex, metMap[ex.exerciseId]));
+        if (!targets.length) return;
+
+        const resolved: Record<string, number> = {};
+        await Promise.all(
+          targets.map(async (ex) => {
+            try {
+              const r = await api.exerciseMet({ name: ex.name, muscleGroup: ex.muscleGroup, kind: ex.kind });
+              if (r.met > 0) resolved[ex.exerciseId] = r.met;
+            } catch {
+              /* leave the generic estimate in place */
+            }
+          })
+        );
+        if (!Object.keys(resolved).length) return;
+
+        set((st) => {
+          // Merge the resolved METs into the exercise library (update or add).
+          const exercises = [...st.exercises];
+          for (const [slug, met] of Object.entries(resolved)) {
+            const idx = exercises.findIndex((e) => e.id === slug);
+            if (idx >= 0) exercises[idx] = { ...exercises[idx], met };
+            else {
+              const le = session.exercises.find((e) => e.exerciseId === slug);
+              if (le)
+                exercises.push({
+                  id: slug,
+                  name: le.name,
+                  muscleGroup: le.muscleGroup,
+                  equipment: "Other",
+                  isCustom: false,
+                  met,
+                });
+            }
+          }
+          // Recompute the affected session's calories with the improved METs.
+          const updatedMap = metMapFrom(exercises);
+          const bw = st.profile?.bodyweightKg ?? undefined;
+          const history = st.history.map((w) => {
+            if (w.id !== session.id) return w;
+            const exs = w.exercises.map((e) => ({
+              ...e,
+              calories: estimateSessionCalories([e], bw, updatedMap),
+            }));
+            return { ...w, exercises: exs, calories: estimateSessionCalories(exs, bw, updatedMap), synced: false };
+          });
+          return { exercises, history };
+        });
+        await get().syncPending();
       },
 
       syncPending: async () => {

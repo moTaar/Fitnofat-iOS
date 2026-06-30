@@ -1165,6 +1165,59 @@ export async function identifyExercise(name: string): Promise<{
   }
 }
 
+// ── AI MET estimation (calorie accuracy for unknown movements) ───────────────
+// Only called when the deterministic Compendium table can't classify an exercise.
+// Returns the activity's moderate-intensity MET so calories can be computed with
+// the ACSM formula. The result is cached per-exercise by the caller, so any given
+// movement costs at most one tiny AI call ever. Returns 0 when unavailable (the
+// caller then falls back to a coarse kind-based MET).
+const metSchema = {
+  type: "object",
+  properties: { met: { type: "number" } },
+  required: ["met"],
+};
+
+const MET_SYSTEM = `You are an exercise physiologist. Given an exercise, return its MET (metabolic equivalent of task) at a TYPICAL MODERATE training intensity, consistent with the Compendium of Physical Activities.
+Return ONLY JSON: {"met": <number>}.
+Reference ranges: stretching/gentle yoga 2–3, walking 3–4.5, moderate weight training 3.5–5, vigorous weight training / calisthenics 6–8, cycling 6–10, rowing 6–9, running 8–12, jump rope 11–12, sprinting 13–16.`;
+
+export async function estimateMet(
+  name: string,
+  equipment?: string,
+  kind?: string
+): Promise<number> {
+  const key = config.geminiApiKey.trim();
+  if (!key) return 0; // caller falls back to a deterministic kind-based MET
+
+  const prompt = `Exercise: ${name}${equipment ? `\nEquipment: ${equipment}` : ""}${
+    kind ? `\nType: ${kind}` : ""
+  }\nReturn its moderate-intensity MET value.`;
+  try {
+    const res = await fetch(ENDPOINT(config.geminiModel, key), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: MET_SYSTEM }] },
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.2,
+          responseMimeType: "application/json",
+          responseSchema: metSchema,
+        },
+      }),
+    });
+    if (!res.ok) return 0;
+    const data: any = await res.json();
+    const text: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) return 0;
+    const met = Number(JSON.parse(text)?.met);
+    // Guard against nonsense; the Compendium tops out around 18-23 METs.
+    return met > 0.5 && met < 25 ? Math.round(met * 10) / 10 : 0;
+  } catch {
+    return 0;
+  }
+}
+
 // ── Local deterministic fallback (works with no Gemini key) ───────────────────
 function localProgram(profile: UserProfile): AIProgramResponse {
   const bw = profile.equipment === "bodyweight";

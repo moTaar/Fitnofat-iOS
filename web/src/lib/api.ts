@@ -242,6 +242,14 @@ export const api = {
   aiAssistExercise: (name: string) =>
     request<Exercise>("/api/exercises/ai-assist", { method: "POST", body: JSON.stringify({ name }) }),
 
+  // Resolve (and cache server-side) a MET for an exercise the client's built-in
+  // Compendium table can't classify, so calories become accurate. Cheap + cached.
+  exerciseMet: (e: { name: string; muscleGroup?: string; equipment?: string; kind?: string }) =>
+    request<{ slug: string; met: number; source: string }>("/api/exercises/met", {
+      method: "POST",
+      body: JSON.stringify(e),
+    }),
+
   // Generate/evolve the nutrition plan. Optional profile fields (metabolic data
   // or the chosen `cuisine`) patch the profile server-side before planning.
   generateNutrition: (patch?: Partial<UserProfile>) =>

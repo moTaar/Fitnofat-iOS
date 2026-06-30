@@ -3,10 +3,10 @@ import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { asyncHandler, requireAuth, AuthedRequest } from "../middleware";
 import { requireEntitlement } from "../entitlements";
-import { generateProgram, refreshProgram, chatOnboarding, chatCoach, generateExerciseGuide, identifyExercise, type ChatMessage, type LoggedWorkoutDraft } from "../gemini";
+import { generateProgram, refreshProgram, chatOnboarding, chatCoach, generateExerciseGuide, identifyExercise, estimateMet, type ChatMessage, type LoggedWorkoutDraft } from "../gemini";
 import { generateNutritionPlan, lookupFood, type RoutineLite } from "../nutrition";
 import { buildRefreshSummary, SessionLite } from "../analytics";
-import { estimateExerciseCalories } from "../calories";
+import { estimateExerciseCalories, needsAiMet, metFromName } from "../calories";
 import { slugify } from "../util";
 import {
   aiRoutinesToRows, profileToRow, rowToExercise, rowToProfile,
@@ -195,6 +195,36 @@ async function persistProgram(userId: string, profile: UserProfile, ai: Awaited<
 // Persist a workout the AI coach reconstructed from the athlete's free-text
 // description ("I biked an hour and did 5 tibetans"). Mirrors the shape the
 // client's finishWorkout produces so it shows up identically in History.
+// Persist AI-resolved METs into the exercises table: update the row if the
+// exercise already exists (preserving its guide/source), else insert a light
+// library entry. Best-effort — a cache miss just means we re-resolve next time.
+async function cacheResolvedMets(
+  userId: string,
+  resolved: Map<string, { name: string; muscleGroup: string; equipment: string; met: number }>,
+  existingSlugs: Set<string>
+) {
+  if (!resolved.size) return;
+  const inserts: any[] = [];
+  for (const [slug, v] of resolved) {
+    if (existingSlugs.has(slug)) {
+      await supabaseAdmin.from("exercises").update({ met: v.met }).eq("user_id", userId).eq("slug", slug);
+    } else {
+      inserts.push({
+        user_id: userId,
+        slug,
+        name: v.name,
+        muscle_group: v.muscleGroup,
+        equipment: v.equipment,
+        met: v.met,
+        source: "ai",
+      });
+    }
+  }
+  if (inserts.length) {
+    await supabaseAdmin.from("exercises").upsert(inserts, { onConflict: "user_id,slug" });
+  }
+}
+
 async function persistLoggedWorkout(
   userId: string,
   draft: LoggedWorkoutDraft,
@@ -202,7 +232,25 @@ async function persistLoggedWorkout(
 ) {
   const endedAt = Date.now();
   const startedAt = endedAt - (draft.durationSec || 0) * 1000;
-  const exercises = draft.exercises.map((e) => {
+
+  // Pull any METs we've already resolved for these exercises so repeats reuse
+  // them for free (no AI). Keyed by slug.
+  const slugs = [...new Set(draft.exercises.map((e) => slugify(e.name)))];
+  const { data: knownRows } = await supabaseAdmin
+    .from("exercises")
+    .select("slug,met")
+    .eq("user_id", userId)
+    .in("slug", slugs);
+  const metBySlug = new Map<string, number>();
+  for (const r of knownRows ?? []) if (r.met != null) metBySlug.set(r.slug, Number(r.met));
+
+  // METs we newly resolve via AI this call — persisted afterwards so they're
+  // cached for next time (and for the client's offline calculator).
+  const newlyResolved = new Map<string, { name: string; muscleGroup: string; equipment: string; met: number }>();
+
+  const exercises: any[] = [];
+  for (const e of draft.exercises) {
+    const slug = slugify(e.name);
     const sets = e.sets.map((s) => ({
       weight: s.weight,
       reps: s.reps,
@@ -212,7 +260,7 @@ async function persistLoggedWorkout(
       ...(s.rpe ? { rpe: s.rpe } : {}),
     }));
     const exercise = {
-      exerciseId: slugify(e.name),
+      exerciseId: slug,
       name: e.name,
       muscleGroup: e.muscleGroup,
       kind: e.kind,
@@ -220,10 +268,32 @@ async function persistLoggedWorkout(
       notes: e.notes,
       sets,
     };
-    return { ...exercise, calories: estimateExerciseCalories(exercise, bodyweightKg ?? undefined) };
-  });
+
+    // Resolve MET: cached → deterministic table → AI (only when truly unknown).
+    let knownMet = metBySlug.get(slug) ?? null;
+    if (knownMet == null && needsAiMet(exercise)) {
+      const aiMet = await estimateMet(e.name, e.equipment, e.kind);
+      if (aiMet > 0) {
+        knownMet = aiMet;
+        newlyResolved.set(slug, {
+          name: e.name,
+          muscleGroup: e.muscleGroup,
+          equipment: e.equipment ?? "Other",
+          met: aiMet,
+        });
+      }
+    }
+
+    exercises.push({
+      ...exercise,
+      calories: estimateExerciseCalories(exercise, bodyweightKg ?? undefined, knownMet),
+    });
+  }
+
+  // Cache the freshly-resolved METs so future logs (and the client) reuse them.
+  await cacheResolvedMets(userId, newlyResolved, new Set((knownRows ?? []).map((r) => r.slug)));
   const totalVolume = exercises.reduce(
-    (sum, ex) => sum + ex.sets.reduce((v, s) => v + s.weight * s.reps, 0),
+    (sum, ex) => sum + ex.sets.reduce((v: number, s: any) => v + s.weight * s.reps, 0),
     0
   );
   const calories = exercises.reduce((sum, ex) => sum + (ex.calories ?? 0), 0);
@@ -553,6 +623,65 @@ dataRouter.post(
       .single();
     if (error) throw new Error(error.message);
     res.json(rowToExercise(data));
+  })
+);
+
+// ── AI MET lookup (lazy: resolved + cached on first need) ─────────────────────
+// The client calls this only for exercises its own deterministic table can't
+// classify. We cache the resolved MET so it's reused for free thereafter.
+dataRouter.post(
+  "/exercises/met",
+  requireEntitlement("ai_exercise"),
+  asyncHandler(async (req, res) => {
+    const userId = uid(req as AuthedRequest);
+    const body = z
+      .object({
+        name: z.string().min(1),
+        muscleGroup: z.string().optional(),
+        equipment: z.string().optional(),
+        kind: z.string().optional(),
+      })
+      .parse(req.body);
+    const slug = slugify(body.name);
+
+    const { data: existing } = await supabaseAdmin
+      .from("exercises")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("slug", slug)
+      .maybeSingle();
+    if (existing?.met != null) {
+      res.json({ slug, met: Number(existing.met), source: "cache" });
+      return;
+    }
+
+    // Deterministic table first (free), then AI for genuinely unknown movements.
+    let met = metFromName(body.name) ?? 0;
+    let source = met > 0 ? "table" : "ai";
+    if (met <= 0) met = await estimateMet(body.name, body.equipment, body.kind);
+    if (met <= 0) {
+      res.json({ slug, met: 0, source: "unresolved" });
+      return;
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("exercises")
+      .upsert(
+        {
+          user_id: userId,
+          slug,
+          name: body.name,
+          muscle_group: body.muscleGroup ?? existing?.muscle_group ?? "Full Body",
+          equipment: body.equipment ?? existing?.equipment ?? "Other",
+          met,
+          source: existing?.source ?? "ai",
+        },
+        { onConflict: "user_id,slug" }
+      )
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    res.json({ slug, met: Number(data.met), source });
   })
 );
 

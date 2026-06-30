@@ -72,9 +72,15 @@ export function ActiveWorkout() {
   );
   const volume = sessionVolume(active.exercises);
   // Running calorie estimate over completed sets only (mirrors how finishWorkout saves).
+  const metMap = useMemo(() => {
+    const m: Record<string, number | undefined> = {};
+    for (const e of exercises) if (e.met != null) m[e.id] = e.met;
+    return m;
+  }, [exercises]);
   const calories = estimateSessionCalories(
     active.exercises.map((ex) => ({ ...ex, sets: ex.sets.filter((s) => s.completed) })),
-    bodyweightKg ?? undefined
+    bodyweightKg ?? undefined,
+    metMap
   );
 
   const toggleSet = (exIdx: number, setIdx: number) => {

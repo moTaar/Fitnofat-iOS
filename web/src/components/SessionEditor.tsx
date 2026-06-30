@@ -97,6 +97,7 @@ export function SessionEditor({
 }) {
   const units = useStore((s) => s.profile?.units ?? "kg");
   const bodyweightKg = useStore((s) => s.profile?.bodyweightKg);
+  const libraryExercises = useStore((s) => s.exercises);
   const saveManualSession = useStore((s) => s.saveManualSession);
 
   const [name, setName] = useState("");
@@ -118,9 +119,14 @@ export function SessionEditor({
   }
 
   const logged = useMemo(() => exercises.map(draftToLogged), [exercises]);
+  const metMap = useMemo(() => {
+    const m: Record<string, number | undefined> = {};
+    for (const e of libraryExercises) if (e.met != null) m[e.id] = e.met;
+    return m;
+  }, [libraryExercises]);
   const calories = useMemo(
-    () => estimateSessionCalories(logged, bodyweightKg ?? undefined),
-    [logged, bodyweightKg]
+    () => estimateSessionCalories(logged, bodyweightKg ?? undefined, metMap),
+    [logged, bodyweightKg, metMap]
   );
   const volume = useMemo(() => sessionVolume(logged), [logged]);
 
