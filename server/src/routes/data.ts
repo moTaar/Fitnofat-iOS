@@ -6,6 +6,7 @@ import { requireEntitlement } from "../entitlements";
 import { generateProgram, refreshProgram, chatOnboarding, chatCoach, generateExerciseGuide, identifyExercise, type ChatMessage, type LoggedWorkoutDraft } from "../gemini";
 import { generateNutritionPlan, lookupFood, type RoutineLite } from "../nutrition";
 import { buildRefreshSummary, SessionLite } from "../analytics";
+import { estimateExerciseCalories } from "../calories";
 import { slugify } from "../util";
 import {
   aiRoutinesToRows, profileToRow, rowToExercise, rowToProfile,
@@ -68,6 +69,9 @@ const loggedSet = z.object({
   weight: z.number(),
   reps: z.number(),
   completed: z.boolean(),
+  durationSec: z.number().optional(),
+  distanceKm: z.number().optional(),
+  rpe: z.number().optional(),
 });
 const workoutSchema = z.object({
   clientId: z.string(),
@@ -77,6 +81,7 @@ const workoutSchema = z.object({
   endedAt: z.number().optional(),
   durationSec: z.number(),
   totalVolume: z.number(),
+  calories: z.number().optional(),
   notes: z.string().optional(),
   exercises: z.array(
     z.object({
@@ -84,6 +89,8 @@ const workoutSchema = z.object({
       name: z.string(),
       muscleGroup: z.string(),
       restSeconds: z.number(),
+      kind: z.enum(["strength", "cardio", "hold"]).optional(),
+      calories: z.number().optional(),
       sets: z.array(loggedSet),
     })
   ),
@@ -188,21 +195,38 @@ async function persistProgram(userId: string, profile: UserProfile, ai: Awaited<
 // Persist a workout the AI coach reconstructed from the athlete's free-text
 // description ("I biked an hour and did 5 tibetans"). Mirrors the shape the
 // client's finishWorkout produces so it shows up identically in History.
-async function persistLoggedWorkout(userId: string, draft: LoggedWorkoutDraft) {
+async function persistLoggedWorkout(
+  userId: string,
+  draft: LoggedWorkoutDraft,
+  bodyweightKg?: number | null
+) {
   const endedAt = Date.now();
   const startedAt = endedAt - (draft.durationSec || 0) * 1000;
-  const exercises = draft.exercises.map((e) => ({
-    exerciseId: slugify(e.name),
-    name: e.name,
-    muscleGroup: e.muscleGroup,
-    restSeconds: e.restSeconds,
-    notes: e.notes,
-    sets: e.sets.map((s) => ({ weight: s.weight, reps: s.reps, completed: true })),
-  }));
+  const exercises = draft.exercises.map((e) => {
+    const sets = e.sets.map((s) => ({
+      weight: s.weight,
+      reps: s.reps,
+      completed: true,
+      ...(s.durationSec ? { durationSec: s.durationSec } : {}),
+      ...(s.distanceKm ? { distanceKm: s.distanceKm } : {}),
+      ...(s.rpe ? { rpe: s.rpe } : {}),
+    }));
+    const exercise = {
+      exerciseId: slugify(e.name),
+      name: e.name,
+      muscleGroup: e.muscleGroup,
+      kind: e.kind,
+      restSeconds: e.restSeconds,
+      notes: e.notes,
+      sets,
+    };
+    return { ...exercise, calories: estimateExerciseCalories(exercise, bodyweightKg ?? undefined) };
+  });
   const totalVolume = exercises.reduce(
     (sum, ex) => sum + ex.sets.reduce((v, s) => v + s.weight * s.reps, 0),
     0
   );
+  const calories = exercises.reduce((sum, ex) => sum + (ex.calories ?? 0), 0);
   const clientId = `coachlog_${endedAt}_${Math.random().toString(36).slice(2, 8)}`;
   const { data, error } = await supabaseAdmin
     .from("workouts")
@@ -215,6 +239,7 @@ async function persistLoggedWorkout(userId: string, draft: LoggedWorkoutDraft) {
       ended_at: new Date(endedAt).toISOString(),
       duration_sec: draft.durationSec,
       total_volume: totalVolume,
+      calories,
       notes: "Logged via AI Coach",
       exercises,
     })
@@ -548,6 +573,7 @@ dataRouter.post(
       ended_at: w.endedAt ? new Date(w.endedAt).toISOString() : null,
       duration_sec: w.durationSec,
       total_volume: w.totalVolume,
+      calories: w.calories ?? 0,
       notes: w.notes ?? null,
       exercises: w.exercises,
     }));
@@ -614,7 +640,7 @@ dataRouter.post(
 
     // The athlete described a completed session — persist it to their history.
     if (reply.type === "log" && reply.workout) {
-      const saved = await persistLoggedWorkout(userId, reply.workout);
+      const saved = await persistLoggedWorkout(userId, reply.workout, profile.bodyweightKg);
       res.json({ type: "log", text: reply.text, workout: saved });
       return;
     }

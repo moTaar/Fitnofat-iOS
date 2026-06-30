@@ -30,6 +30,23 @@ export function formatVolume(volume: number, units: "kg" | "lb"): string {
   return `${Math.round(volume)} ${units}`;
 }
 
+/** "420 kcal" / "1.2k kcal" for the calories-burned figure. */
+export function formatCalories(kcal: number): string {
+  const v = Math.round(kcal || 0);
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k kcal`;
+  return `${v} kcal`;
+}
+
+/** Compact "45:00" / "1:02:00" label for a duration in seconds (cardio/holds). */
+export function formatClock(totalSec: number): string {
+  return formatDuration(totalSec);
+}
+
+/** Seconds → minutes, rounded, for compact summaries (e.g. "45 min"). */
+export function minutesLabel(totalSec: number): string {
+  return `${Math.round(totalSec / 60)} min`;
+}
+
 export function sessionVolume(
   exercises: { sets: { weight: number; reps: number; completed: boolean }[] }[]
 ): number {

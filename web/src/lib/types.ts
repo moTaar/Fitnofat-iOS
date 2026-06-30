@@ -199,11 +199,23 @@ export interface Program {
   summary?: string; // AI rationale for this iteration
 }
 
-// A logged set during/after a workout
+// How an exercise is measured. Drives which inputs are shown, how volume and
+// calories are computed, and how progress is charted.
+//   strength → weight × reps (e1RM trend)
+//   cardio   → time/distance (run, bike, row, jump rope…)
+//   hold     → time under tension (plank, wall-sit, yoga holds…)
+export type ExerciseKind = "strength" | "cardio" | "hold";
+
+// A logged set during/after a workout. `weight`/`reps` drive strength work;
+// `durationSec`/`distanceKm` carry cardio & holds. All extras are optional so
+// historical sessions (saved before these fields existed) keep working.
 export interface LoggedSet {
   weight: number;
   reps: number;
   completed: boolean;
+  durationSec?: number; // time-based work (cardio / holds): real seconds
+  distanceKm?: number; // distance cardio (run / bike / row)
+  rpe?: number; // rate of perceived exertion, 1–10 (also feeds calorie intensity)
 }
 
 export interface LoggedExercise {
@@ -212,6 +224,8 @@ export interface LoggedExercise {
   muscleGroup: MuscleGroup;
   restSeconds: number;
   sets: LoggedSet[];
+  kind?: ExerciseKind; // defaults to "strength" when absent
+  calories?: number; // estimated kcal burned for this exercise
 }
 
 export interface WorkoutSession {
@@ -224,6 +238,7 @@ export interface WorkoutSession {
   durationSec: number;
   exercises: LoggedExercise[];
   totalVolume: number;
+  calories?: number; // total estimated kcal burned for the session
   notes?: string;
   synced: boolean; // for offline → server sync
 }

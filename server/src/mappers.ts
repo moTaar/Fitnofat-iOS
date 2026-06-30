@@ -111,6 +111,7 @@ export function rowToWorkout(row: any) {
     endedAt: row.ended_at ? ms(row.ended_at) : undefined,
     durationSec: row.duration_sec,
     totalVolume: Number(row.total_volume),
+    calories: row.calories != null ? Number(row.calories) : undefined,
     exercises: row.exercises ?? [],
     notes: row.notes ?? undefined,
     synced: true,

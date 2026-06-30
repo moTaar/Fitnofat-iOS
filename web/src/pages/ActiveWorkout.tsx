@@ -5,8 +5,9 @@ import {
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useNow } from "@/lib/hooks";
-import { cn, formatDuration, haptic, sessionVolume } from "@/lib/utils";
-import type { Exercise, WorkoutSession } from "@/lib/types";
+import { cn, formatDuration, formatCalories, haptic, sessionVolume } from "@/lib/utils";
+import { estimateSessionCalories, resolveKind } from "@/lib/calories";
+import type { Exercise, ExerciseKind, WorkoutSession } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { ExercisePicker } from "@/components/ExercisePicker";
@@ -38,11 +39,13 @@ export function ActiveWorkout() {
   const history = useStore((s) => s.history);
   const exercises = useStore((s) => s.exercises);
   const units = useStore((s) => s.profile?.units ?? "kg");
+  const bodyweightKg = useStore((s) => s.profile?.bodyweightKg);
   const logSet = useStore((s) => s.logSet);
   const addSetToExercise = useStore((s) => s.addSetToExercise);
   const removeSet = useStore((s) => s.removeSet);
   const addExerciseToActive = useStore((s) => s.addExerciseToActive);
   const removeExerciseFromActive = useStore((s) => s.removeExerciseFromActive);
+  const setActiveExerciseKind = useStore((s) => s.setActiveExerciseKind);
   const startRest = useStore((s) => s.startRest);
   const finishWorkout = useStore((s) => s.finishWorkout);
   const cancelWorkout = useStore((s) => s.cancelWorkout);
@@ -68,6 +71,11 @@ export function ActiveWorkout() {
     0
   );
   const volume = sessionVolume(active.exercises);
+  // Running calorie estimate over completed sets only (mirrors how finishWorkout saves).
+  const calories = estimateSessionCalories(
+    active.exercises.map((ex) => ({ ...ex, sets: ex.sets.filter((s) => s.completed) })),
+    bodyweightKg ?? undefined
+  );
 
   const toggleSet = (exIdx: number, setIdx: number) => {
     const set = active.exercises[exIdx].sets[setIdx];
@@ -141,7 +149,10 @@ export function ActiveWorkout() {
             <b className="text-foreground">{active.exercises.length}</b> exercises
           </span>
           <span>
-            <b className="text-foreground">{Math.round(volume)}</b> {units} volume
+            <b className="text-foreground">{Math.round(volume)}</b> {units} vol
+          </span>
+          <span>
+            <b className="text-primary">{Math.round(calories)}</b> kcal
           </span>
         </div>
       </header>
@@ -158,14 +169,25 @@ export function ActiveWorkout() {
 
         {active.exercises.map((ex, exIdx) => {
           const previous = prev.get(ex.exerciseId);
+          const kind: ExerciseKind = ex.kind ?? resolveKind(ex);
+          const isStrength = kind === "strength";
+          const nextKind: ExerciseKind =
+            kind === "strength" ? "cardio" : kind === "cardio" ? "hold" : "strength";
           return (
             <div key={`${ex.exerciseId}-${exIdx}`} className="rounded-2xl border border-border bg-card">
               <div className="flex items-center justify-between p-3 pb-2">
                 <div className="flex items-center gap-2">
                   <div>
                     <h3 className="font-semibold leading-tight">{ex.name}</h3>
-                    <p className="text-xs text-muted-foreground">
-                      {ex.muscleGroup} · {ex.restSeconds}s rest
+                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      {ex.muscleGroup} · {ex.restSeconds}s rest ·
+                      <button
+                        onClick={() => setActiveExerciseKind(exIdx, nextKind)}
+                        className="rounded-full bg-secondary px-2 py-0.5 font-medium text-primary tap"
+                        title="Change how this exercise is measured"
+                      >
+                        {kind === "strength" ? "Strength" : kind === "cardio" ? "Cardio" : "Hold"}
+                      </button>
                     </p>
                   </div>
                   <button
@@ -213,9 +235,19 @@ export function ActiveWorkout() {
               {/* Column headers */}
               <div className="grid grid-cols-[2.2rem_1fr_1fr_1fr_2.6rem] items-center gap-2 px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 <span>Set</span>
-                <span className="text-center">Prev</span>
-                <span className="text-center">{units}</span>
-                <span className="text-center">Reps</span>
+                {isStrength ? (
+                  <>
+                    <span className="text-center">Prev</span>
+                    <span className="text-center">{units}</span>
+                    <span className="text-center">Reps</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-center">Min</span>
+                    <span className="text-center">{kind === "cardio" ? "Km" : "—"}</span>
+                    <span className="text-center">RPE</span>
+                  </>
+                )}
                 <span />
               </div>
 
@@ -233,29 +265,69 @@ export function ActiveWorkout() {
                       <span className="text-center text-sm font-semibold text-muted-foreground">
                         {setIdx + 1}
                       </span>
-                      <span className="text-center text-xs text-muted-foreground">
-                        {p ? `${p.weight}×${p.reps}` : "—"}
-                      </span>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        value={set.weight || ""}
-                        placeholder={p ? String(p.weight) : "0"}
-                        onChange={(e) =>
-                          logSet(exIdx, setIdx, { weight: parseFloat(e.target.value) || 0 })
-                        }
-                        className="h-10 w-full rounded-lg border border-input bg-background text-center text-base font-semibold focus:border-primary focus:outline-none"
-                      />
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        value={set.reps || ""}
-                        placeholder={p ? String(p.reps) : "0"}
-                        onChange={(e) =>
-                          logSet(exIdx, setIdx, { reps: parseInt(e.target.value) || 0 })
-                        }
-                        className="h-10 w-full rounded-lg border border-input bg-background text-center text-base font-semibold focus:border-primary focus:outline-none"
-                      />
+                      {isStrength ? (
+                        <>
+                          <span className="text-center text-xs text-muted-foreground">
+                            {p ? `${p.weight}×${p.reps}` : "—"}
+                          </span>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            value={set.weight || ""}
+                            placeholder={p ? String(p.weight) : "0"}
+                            onChange={(e) =>
+                              logSet(exIdx, setIdx, { weight: parseFloat(e.target.value) || 0 })
+                            }
+                            className="h-10 w-full rounded-lg border border-input bg-background text-center text-base font-semibold focus:border-primary focus:outline-none"
+                          />
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            value={set.reps || ""}
+                            placeholder={p ? String(p.reps) : "0"}
+                            onChange={(e) =>
+                              logSet(exIdx, setIdx, { reps: parseInt(e.target.value) || 0 })
+                            }
+                            className="h-10 w-full rounded-lg border border-input bg-background text-center text-base font-semibold focus:border-primary focus:outline-none"
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            value={set.durationSec ? Math.round(set.durationSec / 60) : ""}
+                            placeholder="0"
+                            onChange={(e) =>
+                              logSet(exIdx, setIdx, {
+                                durationSec: Math.round((parseFloat(e.target.value) || 0) * 60),
+                              })
+                            }
+                            className="h-10 w-full rounded-lg border border-input bg-background text-center text-base font-semibold focus:border-primary focus:outline-none"
+                          />
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            disabled={kind !== "cardio"}
+                            value={set.distanceKm || ""}
+                            placeholder={kind === "cardio" ? "0" : "—"}
+                            onChange={(e) =>
+                              logSet(exIdx, setIdx, { distanceKm: parseFloat(e.target.value) || 0 })
+                            }
+                            className="h-10 w-full rounded-lg border border-input bg-background text-center text-base font-semibold focus:border-primary focus:outline-none disabled:opacity-40"
+                          />
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            value={set.rpe || ""}
+                            placeholder="–"
+                            onChange={(e) =>
+                              logSet(exIdx, setIdx, { rpe: parseFloat(e.target.value) || 0 })
+                            }
+                            className="h-10 w-full rounded-lg border border-input bg-background text-center text-base font-semibold focus:border-primary focus:outline-none"
+                          />
+                        </>
+                      )}
                       <button
                         onClick={() => toggleSet(exIdx, setIdx)}
                         className={cn(
@@ -277,15 +349,17 @@ export function ActiveWorkout() {
                   <Plus className="h-4 w-4" />
                   Add set
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 border-primary/30 text-primary"
-                  onClick={() => openCounter(exIdx)}
-                >
-                  <Activity className="h-4 w-4" />
-                  Rep counter
-                </Button>
+                {isStrength && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 border-primary/30 text-primary"
+                    onClick={() => openCounter(exIdx)}
+                  >
+                    <Activity className="h-4 w-4" />
+                    Rep counter
+                  </Button>
+                )}
                 {ex.sets.length > 1 && (
                   <Button
                     variant="ghost"

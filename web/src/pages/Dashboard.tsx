@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { weekStats, currentStreak } from "@/lib/analytics";
-import { formatVolume, goalLabel, cn } from "@/lib/utils";
+import { formatVolume, formatCalories, cn } from "@/lib/utils";
 import {
   requestNotificationPermission, scheduleReminder, notificationsSupported,
 } from "@/lib/notifications";
@@ -137,7 +137,7 @@ export function Dashboard() {
           <div className="mt-3 grid grid-cols-3 gap-2 text-center">
             <Stat label="Trained" value={`${stats.trained}`} />
             <Stat label="Volume" value={formatVolume(stats.volume, profile.units)} />
-            <Stat label="Goal" value={goalLabel(profile.goal).split(" ")[0]} />
+            <Stat label="Calories" value={formatCalories(stats.calories)} />
           </div>
         </CardContent>
       </Card>

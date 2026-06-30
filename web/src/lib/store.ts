@@ -8,9 +8,20 @@ import type {
 } from "./types";
 import { SEED_EXERCISES } from "./exercises";
 import { sessionVolume, uid } from "./utils";
+import { estimateSessionCalories, resolveKind } from "./calories";
 import { api, auth, AuthExpiredError, type Session } from "./api";
 
 export const todayKey = () => format(new Date(), "yyyy-MM-dd");
+
+// Input for saveManualSession — the editable parts of a session; the store fills
+// in id/clientId/volume/calories.
+export interface ManualSessionDraft {
+  routineName: string;
+  startedAt: number;
+  durationSec: number;
+  exercises: LoggedExercise[];
+  notes?: string;
+}
 
 interface Settings {
   theme: "dark" | "light";
@@ -81,11 +92,18 @@ interface AppState {
 
   // active workout
   startWorkout: (routine?: Routine) => void;
-  logSet: (exIdx: number, setIdx: number, patch: Partial<{ weight: number; reps: number; completed: boolean }>) => void;
+  // Re-do a past session live: seeds the active workout from its exercises.
+  startWorkoutFromSession: (session: WorkoutSession) => void;
+  logSet: (
+    exIdx: number,
+    setIdx: number,
+    patch: Partial<{ weight: number; reps: number; completed: boolean; durationSec: number; distanceKm: number; rpe: number }>
+  ) => void;
   addSetToExercise: (exIdx: number) => void;
   removeSet: (exIdx: number, setIdx: number) => void;
   addExerciseToActive: (exercise: Exercise) => void;
   removeExerciseFromActive: (exIdx: number) => void;
+  setActiveExerciseKind: (exIdx: number, kind: LoggedExercise["kind"]) => void;
   startRest: (seconds: number) => void;
   stopRest: () => void;
   finishWorkout: () => Promise<void>;
@@ -93,6 +111,11 @@ interface AppState {
   syncPending: () => Promise<void>;
   // Merge a workout the AI coach reconstructed + saved server-side into history.
   receiveLoggedWorkout: (workout: WorkoutSession) => void;
+  // Save an edited/cloned/manual session as a NEW history entry (fresh id/date),
+  // recomputing volume + calories, then sync.
+  saveManualSession: (draft: ManualSessionDraft) => Promise<void>;
+  // Remove a session from history (optimistic) and delete it server-side.
+  deleteWorkout: (id: string) => Promise<void>;
 
   // settings
   setSetting: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
@@ -105,6 +128,7 @@ function routineToLoggedExercises(routine: Routine): LoggedExercise[] {
     name: re.name,
     muscleGroup: re.muscleGroup,
     restSeconds: re.restSeconds,
+    kind: re.muscleGroup === "Cardio" ? "cardio" : "strength",
     sets: re.sets.map((s) => ({
       weight: s.targetWeight ?? 0,
       reps: s.targetReps,
@@ -122,6 +146,7 @@ function workoutToApi(w: WorkoutSession) {
     endedAt: w.endedAt,
     durationSec: w.durationSec,
     totalVolume: w.totalVolume,
+    calories: w.calories,
     notes: w.notes,
     exercises: w.exercises,
   };
@@ -456,6 +481,36 @@ export const useStore = create<AppState>()(
         });
       },
 
+      startWorkoutFromSession: (session) => {
+        const rest = get().settings.defaultRestSeconds;
+        // Re-seed the exercises but clear completion + per-set timing so the user
+        // logs the new session fresh (keeping the planned weights/reps as targets).
+        const exercises: LoggedExercise[] = session.exercises.map((ex) => ({
+          exerciseId: ex.exerciseId,
+          name: ex.name,
+          muscleGroup: ex.muscleGroup,
+          restSeconds: ex.restSeconds,
+          kind: ex.kind ?? resolveKind(ex),
+          sets: ex.sets.map((s) => ({
+            weight: s.weight,
+            reps: s.reps,
+            completed: false,
+            ...(s.durationSec ? { durationSec: s.durationSec } : {}),
+            ...(s.distanceKm ? { distanceKm: s.distanceKm } : {}),
+          })),
+        }));
+        set({
+          active: {
+            id: uid("ses"),
+            routineId: session.routineId,
+            routineName: session.routineName,
+            startedAt: Date.now(),
+            exercises,
+            restTimer: { active: false, endsAt: null, durationSec: rest },
+          },
+        });
+      },
+
       logSet: (exIdx, setIdx, patch) =>
         set((s) => {
           if (!s.active) return {};
@@ -488,14 +543,39 @@ export const useStore = create<AppState>()(
       addExerciseToActive: (exercise) =>
         set((s) => {
           if (!s.active) return {};
+          const kind = exercise.muscleGroup === "Cardio" ? "cardio" : "strength";
           const logged: LoggedExercise = {
             exerciseId: exercise.id,
             name: exercise.name,
             muscleGroup: exercise.muscleGroup,
             restSeconds: s.settings.defaultRestSeconds,
-            sets: [{ weight: 0, reps: 10, completed: false }],
+            kind,
+            sets:
+              kind === "cardio"
+                ? [{ weight: 0, reps: 0, completed: false, durationSec: 0 }]
+                : [{ weight: 0, reps: 10, completed: false }],
           };
           return { active: { ...s.active, exercises: [...s.active.exercises, logged] } };
+        }),
+
+      setActiveExerciseKind: (exIdx, kind) =>
+        set((s) => {
+          if (!s.active) return {};
+          const exercises = s.active.exercises.map((ex, i) => {
+            if (i !== exIdx) return ex;
+            // Seed a sensible empty set for the new measurement type.
+            const sets =
+              kind === "strength"
+                ? ex.sets.map((st) => ({ weight: st.weight, reps: st.reps || 10, completed: st.completed }))
+                : ex.sets.map((st) => ({
+                    weight: 0,
+                    reps: 0,
+                    completed: st.completed,
+                    durationSec: st.durationSec ?? 0,
+                  }));
+            return { ...ex, kind, sets };
+          });
+          return { active: { ...s.active, exercises } };
         }),
 
       removeExerciseFromActive: (exIdx) =>
@@ -516,9 +596,11 @@ export const useStore = create<AppState>()(
         if (!s.active) return;
         const endedAt = Date.now();
         const durationSec = Math.round((endedAt - s.active.startedAt) / 1000);
+        const bodyweightKg = s.profile?.bodyweightKg ?? undefined;
         const exercises = s.active.exercises
           .map((ex) => ({ ...ex, sets: ex.sets.filter((st) => st.completed) }))
-          .filter((ex) => ex.sets.length > 0);
+          .filter((ex) => ex.sets.length > 0)
+          .map((ex) => ({ ...ex, calories: estimateSessionCalories([ex], bodyweightKg) }));
         if (exercises.length === 0) {
           set({ active: null });
           return;
@@ -534,6 +616,7 @@ export const useStore = create<AppState>()(
           durationSec,
           exercises,
           totalVolume: sessionVolume(exercises),
+          calories: estimateSessionCalories(exercises, bodyweightKg),
           synced: false,
         };
         set({ active: null, history: [session, ...s.history] });
@@ -554,6 +637,47 @@ export const useStore = create<AppState>()(
               : [workout, ...s.history],
           };
         }),
+
+      saveManualSession: async (draft) => {
+        const s = get();
+        const bodyweightKg = s.profile?.bodyweightKg ?? undefined;
+        // Stamp per-exercise calories + resolved kind so detail views and progress
+        // treat a manual/cloned entry exactly like a live-logged one.
+        const exercises: LoggedExercise[] = draft.exercises.map((ex) => ({
+          ...ex,
+          kind: ex.kind ?? resolveKind(ex),
+          calories: estimateSessionCalories([ex], bodyweightKg),
+        }));
+        const clientId = uid("manual");
+        const session: WorkoutSession = {
+          id: clientId,
+          clientId,
+          routineName: draft.routineName || "Logged Workout",
+          startedAt: draft.startedAt,
+          endedAt: draft.startedAt + draft.durationSec * 1000,
+          durationSec: draft.durationSec,
+          exercises,
+          totalVolume: sessionVolume(exercises),
+          calories: estimateSessionCalories(exercises, bodyweightKg),
+          notes: draft.notes,
+          synced: false,
+        };
+        set({ history: [session, ...s.history].sort((a, b) => b.startedAt - a.startedAt) });
+        await get().syncPending();
+      },
+
+      deleteWorkout: async (id) => {
+        const target = get().history.find((w) => w.id === id || w.clientId === id);
+        set((s) => ({ history: s.history.filter((w) => w.id !== id && w.clientId !== id) }));
+        // Only synced sessions exist server-side; offline-only ones are already gone.
+        if (target?.synced && auth.isAuthenticated()) {
+          try {
+            await api.deleteWorkout(target.id);
+          } catch {
+            /* best-effort; the optimistic local delete stands */
+          }
+        }
+      },
 
       syncPending: async () => {
         if (!auth.isAuthenticated() || !navigator.onLine) return;

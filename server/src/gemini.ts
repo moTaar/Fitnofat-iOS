@@ -693,16 +693,19 @@ export interface CoachReply {
 
 // A completed session the athlete described in free text, translated by the
 // coach into concrete exercises ready to persist to their history.
+export type LoggedExerciseKind = "strength" | "cardio" | "hold";
 export interface LoggedWorkoutDraft {
   routineName: string;
   durationSec: number;
   exercises: {
     name: string;
     muscleGroup: MuscleGroup;
+    kind: LoggedExerciseKind;
     equipment?: string;
     restSeconds: number;
     notes?: string;
-    sets: { reps: number; weight: number }[];
+    // strength → weight × reps; cardio/hold → durationSec (+ optional distanceKm).
+    sets: { reps: number; weight: number; durationSec?: number; distanceKm?: number; rpe?: number }[];
   }[];
 }
 
@@ -710,23 +713,46 @@ export interface LoggedWorkoutDraft {
 // groups to the valid enum, drops empty sets/exercises and coerces numbers so a
 // slightly-malformed reply can still be saved.
 function normalizeLoggedWorkout(w: any): LoggedWorkoutDraft {
+  const VALID_KINDS: LoggedExerciseKind[] = ["strength", "cardio", "hold"];
   const rawExercises = Array.isArray(w?.exercises) ? w.exercises : [];
   const exercises = rawExercises
-    .map((e: any) => ({
-      name: typeof e?.name === "string" && e.name.trim() ? e.name.trim() : "Exercise",
-      muscleGroup: VALID_GROUPS.includes(e?.muscleGroup as MuscleGroup)
+    .map((e: any) => {
+      const muscleGroup: MuscleGroup = VALID_GROUPS.includes(e?.muscleGroup as MuscleGroup)
         ? (e.muscleGroup as MuscleGroup)
-        : "Full Body",
-      equipment: typeof e?.equipment === "string" && e.equipment.trim() ? e.equipment.trim() : undefined,
-      restSeconds: Number(e?.restSeconds) > 0 ? Math.round(Number(e.restSeconds)) : 60,
-      notes: typeof e?.notes === "string" && e.notes.trim() ? e.notes.trim() : undefined,
-      sets: (Array.isArray(e?.sets) ? e.sets : [])
-        .map((s: any) => ({
-          reps: Math.max(0, Math.round(Number(s?.reps) || 0)),
-          weight: Math.max(0, Number(s?.weight) || 0),
-        }))
-        .filter((s: { reps: number }) => s.reps > 0),
-    }))
+        : "Full Body";
+      const kind: LoggedExerciseKind = VALID_KINDS.includes(e?.kind)
+        ? e.kind
+        : muscleGroup === "Cardio"
+          ? "cardio"
+          : "strength";
+      const sets = (Array.isArray(e?.sets) ? e.sets : [])
+        .map((s: any) => {
+          const reps = Math.max(0, Math.round(Number(s?.reps) || 0));
+          const weight = Math.max(0, Number(s?.weight) || 0);
+          const durationSec = Math.max(0, Math.round(Number(s?.durationSec) || 0));
+          const distanceKm = Math.max(0, Number(s?.distanceKm) || 0);
+          const rpeNum = Number(s?.rpe);
+          const rpe = rpeNum >= 1 && rpeNum <= 10 ? Math.round(rpeNum * 10) / 10 : undefined;
+          return {
+            reps,
+            weight,
+            ...(durationSec > 0 ? { durationSec } : {}),
+            ...(distanceKm > 0 ? { distanceKm } : {}),
+            ...(rpe ? { rpe } : {}),
+          };
+        })
+        // A set is meaningful if it has reps OR a logged duration (time-based work).
+        .filter((s: { reps: number; durationSec?: number }) => s.reps > 0 || (s.durationSec ?? 0) > 0);
+      return {
+        name: typeof e?.name === "string" && e.name.trim() ? e.name.trim() : "Exercise",
+        muscleGroup,
+        kind,
+        equipment: typeof e?.equipment === "string" && e.equipment.trim() ? e.equipment.trim() : undefined,
+        restSeconds: Number(e?.restSeconds) > 0 ? Math.round(Number(e.restSeconds)) : 60,
+        notes: typeof e?.notes === "string" && e.notes.trim() ? e.notes.trim() : undefined,
+        sets,
+      };
+    })
     .filter((e: { sets: unknown[] }) => e.sets.length > 0);
   return {
     routineName:
@@ -773,15 +799,18 @@ When the athlete asks to change, adjust, improve, regenerate, rebuild, add to, o
 
 When the athlete TELLS you what they ALREADY DID / completed (e.g. "I did 1 hour of biking and 5 tibetans", "just finished 4x10 bench at 60kg", "ran 5k this morning", "30 min yoga + 50 push-ups") — i.e. they are REPORTING a finished session, not asking you to change their plan — translate it into a logged workout and save it:
 1. Use your knowledge to expand shorthand and named routines into concrete exercises. Examples: the "Five Tibetan Rites" (a.k.a. "5 tibetans") = 5 distinct exercises, each traditionally 21 reps; a "5k run" ≈ 25–30 min of cardio. Honor the athlete's wording.
-2. If an ESSENTIAL detail is missing, ask ONE short clarifying question and ask for missing details ONE AT A TIME across turns (never a long list). Essential = which exercises, and for each either the reps×sets (strength) or the duration (cardio/holds). Weight is OPTIONAL — assume bodyweight (weight 0) when not stated and do NOT ask for it unless it clearly matters. Do not ask about anything you can reasonably infer.
+2. If an ESSENTIAL detail is missing, ask ONE short clarifying question and ask for missing details ONE AT A TIME across turns (never a long list). Essential = which exercises, and for each: the reps×sets for STRENGTH work, or the duration (minutes) for CARDIO/HOLDS. Weight is OPTIONAL — assume bodyweight (weight 0) when not stated and do NOT ask for it unless it clearly matters. Intensity/effort is OPTIONAL — infer a sensible rpe when you can. Do not ask about anything you can reasonably infer.
 3. Once you have enough, write ONE short confirmation sentence of what you're logging, then on a NEW line output the marker [LOG] immediately followed by a single JSON object (and NOTHING after it) matching EXACTLY this schema:
 [LOG]
-{"routineName":"...","durationSec":<int>,"exercises":[{"name":"...","muscleGroup":"<Chest|Back|Shoulders|Biceps|Triceps|Legs|Glutes|Core|Cardio|Full Body>","equipment":"...","restSeconds":<int>,"notes":"...","sets":[{"reps":<int>,"weight":<number>}]}]}
+{"routineName":"...","durationSec":<int>,"exercises":[{"name":"...","muscleGroup":"<Chest|Back|Shoulders|Biceps|Triceps|Legs|Glutes|Core|Cardio|Full Body>","kind":"<strength|cardio|hold>","equipment":"...","restSeconds":<int>,"notes":"...","sets":[{"reps":<int>,"weight":<number>,"durationSec":<int>,"distanceKm":<number>,"rpe":<number>}]}]}
    - routineName: a short title for the session (e.g. "Biking + Five Tibetans").
    - durationSec: your best estimate of the TOTAL session length in seconds.
-   - One set object PER set actually performed. weight is in ${p.units} (use 0 for bodyweight moves).
-   - For TIME-BASED cardio or holds (biking, running, rowing, plank, etc.): use a SINGLE set with reps = the total MINUTES performed and weight = 0, and put the real duration in "notes" (e.g. "60 min steady ride").
+   - kind: "strength" for weight/rep work, "cardio" for conditioning (run/bike/row/jump rope/HIIT), "hold" for isometrics & yoga holds (plank, wall-sit, tree pose).
+   - For STRENGTH: one set object PER set performed, with "reps" and "weight" (weight in ${p.units}, 0 for bodyweight). Omit durationSec/distanceKm.
+   - For CARDIO/HOLDS (biking, running, rowing, plank, etc.): use ONE set with "durationSec" = the real time performed in SECONDS (e.g. 45 min ride → 2700), reps 0, weight 0. Add "distanceKm" when the athlete gave a distance (e.g. a 5k run → 5). Put a human note in "notes" (e.g. "45 min steady ride").
+   - "rpe" (1–10) is OPTIONAL on any set — include your best estimate of effort so calories are accurate (easy ride ≈ 4, hard intervals ≈ 9).
    - muscleGroup MUST be one of the allowed values; use "Cardio" for conditioning work.
+   - Do NOT compute calories — the app does that from duration, bodyweight and rpe.
 [LOG] and [UPDATE] are MUTUALLY EXCLUSIVE — logging a past session never modifies the athlete's program, so never emit both in one reply.
 
 For purely informational replies, do NOT output [UPDATE] or [LOG]. You MAY append a final line [SUGGESTIONS: option | option | option] with 2-4 short, relevant follow-up actions (e.g. "Make it harder | Add more cardio | Explain this plan").`;
