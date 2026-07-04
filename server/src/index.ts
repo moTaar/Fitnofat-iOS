@@ -16,7 +16,9 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json({ limit: "1mb" }));
+// 25mb: coach-chat messages can carry base64 photo attachments (up to 4 images
+// per message, client-side downscaled to ≤1280px JPEG before upload).
+app.use(express.json({ limit: "25mb" }));
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, ai: config.geminiApiKey ? "gemini" : "local-fallback", corsOrigins: config.corsOrigins });

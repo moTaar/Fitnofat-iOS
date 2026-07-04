@@ -9,7 +9,7 @@ import {
 import { format } from "date-fns";
 import { useNavigate } from "react-router-dom";
 import { useStore } from "@/lib/store";
-import { formatDuration, formatVolume, formatCalories, minutesLabel } from "@/lib/utils";
+import { formatDuration, formatVolume, formatCalories, minutesLabel, distanceUnit, formatDistance, kmToDisplayDistance } from "@/lib/utils";
 import {
   exerciseTrends, exerciseSeries, rangeSummary, weeklySeries, personalRecords,
   type TrendMetric,
@@ -28,9 +28,16 @@ const KIND_ICON: Record<ExerciseKind, typeof Dumbbell> = {
   hold: Timer,
 };
 
-// Friendly unit label for a trend/PR metric (e1RM uses the athlete's weight unit).
-function metricUnit(metric: TrendMetric, units: string): string {
-  return metric === "e1rm" ? units : metric === "reps" ? "reps" : metric === "duration" ? "min" : "km";
+// Friendly unit label for a trend/PR metric (e1RM uses the athlete's weight
+// unit, distance follows it: kg → km, lb → mi).
+function metricUnit(metric: TrendMetric, units: "kg" | "lb"): string {
+  return metric === "e1rm" ? units : metric === "reps" ? "reps" : metric === "duration" ? "min" : distanceUnit(units);
+}
+
+// Trend/PR values are stored in canonical units (distance in km) — convert
+// distance figures to the athlete's display unit.
+function metricValue(value: number, metric: TrendMetric, units: "kg" | "lb"): number {
+  return metric === "distance" ? kmToDisplayDistance(value, units) : value;
 }
 
 export function History() {
@@ -167,13 +174,13 @@ function Stat({ icon: Icon, text, accent }: { icon: typeof Clock; text: string; 
 }
 
 // ── Session detail sheet ──────────────────────────────────────────────────────
-function setLabel(ex: LoggedExercise, s: LoggedExercise["sets"][number], units: string): string {
+function setLabel(ex: LoggedExercise, s: LoggedExercise["sets"][number], units: "kg" | "lb"): string {
   const kind = ex.kind ?? resolveKind(ex);
   if (kind === "strength") {
     return s.weight > 0 ? `${s.weight} ${units} × ${s.reps}` : `${s.reps} reps`;
   }
   const mins = s.durationSec ? Math.round(s.durationSec / 60) : s.reps; // legacy fallback
-  const dist = s.distanceKm ? ` · ${s.distanceKm} km` : "";
+  const dist = s.distanceKm ? ` · ${formatDistance(s.distanceKm, units)}` : "";
   return `${mins} min${dist}`;
 }
 
@@ -320,10 +327,12 @@ function ProgressTab({ history, units }: { history: WorkoutSession[]; units: "kg
   const trends = useMemo(() => exerciseTrends(history), [history]);
   const prs = useMemo(() => personalRecords(history).slice(0, 6), [history]);
 
-  const chart = useMemo(
-    () => (chartExercise ? exerciseSeries(history, chartExercise) : null),
-    [chartExercise, history]
-  );
+  const chart = useMemo(() => {
+    if (!chartExercise) return null;
+    const c = exerciseSeries(history, chartExercise);
+    if (c.metric !== "distance") return c;
+    return { ...c, points: c.points.map((p) => ({ ...p, value: metricValue(p.value, c.metric, units) })) };
+  }, [chartExercise, history, units]);
   const chartUnit = chart ? metricUnit(chart.metric, units) : "";
 
   return (
@@ -382,7 +391,7 @@ function ProgressTab({ history, units }: { history: WorkoutSession[]; units: "kg
               <div key={pr.name} className="rounded-xl border border-border bg-card p-3">
                 <p className="truncate text-sm font-semibold leading-tight">{pr.name}</p>
                 <p className="mt-1 text-lg font-bold text-primary">
-                  {pr.value} <span className="text-xs font-medium text-muted-foreground">{metricUnit(pr.metric, units)}</span>
+                  {metricValue(pr.value, pr.metric, units)} <span className="text-xs font-medium text-muted-foreground">{metricUnit(pr.metric, units)}</span>
                 </p>
                 <p className="text-[11px] text-muted-foreground">{format(pr.at, "MMM d")}</p>
               </div>
@@ -405,7 +414,7 @@ function ProgressTab({ history, units }: { history: WorkoutSession[]; units: "kg
               <div className="flex-1 min-w-0">
                 <p className="truncate font-medium leading-tight">{t.name}</p>
                 <p className="text-xs text-muted-foreground">
-                  {t.sessions} sessions · best {t.best} {metricUnit(t.metric, units)}
+                  {t.sessions} sessions · best {metricValue(t.best, t.metric, units)} {metricUnit(t.metric, units)}
                 </p>
               </div>
               {t.stalled ? (
@@ -434,7 +443,7 @@ function ProgressTab({ history, units }: { history: WorkoutSession[]; units: "kg
             : chart?.metric === "reps"
               ? "Best set (reps)"
               : chart?.metric === "distance"
-                ? "Distance (km)"
+                ? `Distance (${distanceUnit(units)})`
                 : "Duration (min)"}{" "}
           over time
         </p>

@@ -37,6 +37,32 @@ export function formatCalories(kcal: number): string {
   return `${v} kcal`;
 }
 
+// ── Distance units ────────────────────────────────────────────────────────────
+// Distances are ALWAYS stored in kilometers; athletes on imperial weights (lb)
+// see and enter miles. These helpers convert at the display boundary only.
+const KM_PER_MILE = 1.609344;
+
+export function distanceUnit(units: "kg" | "lb"): "km" | "mi" {
+  return units === "lb" ? "mi" : "km";
+}
+
+/** Stored km → display value in the athlete's distance unit (2-decimal max). */
+export function kmToDisplayDistance(km: number, units: "kg" | "lb"): number {
+  const v = units === "lb" ? km / KM_PER_MILE : km;
+  return Math.round(v * 100) / 100;
+}
+
+/** Display value (km or mi) → stored kilometers. */
+export function displayDistanceToKm(value: number, units: "kg" | "lb"): number {
+  const km = units === "lb" ? value * KM_PER_MILE : value;
+  return Math.round(km * 1000) / 1000;
+}
+
+/** "5 km" / "3.11 mi" for a stored-km distance. */
+export function formatDistance(km: number, units: "kg" | "lb"): string {
+  return `${kmToDisplayDistance(km, units)} ${distanceUnit(units)}`;
+}
+
 /** Compact "45:00" / "1:02:00" label for a duration in seconds (cardio/holds). */
 export function formatClock(totalSec: number): string {
   return formatDuration(totalSec);

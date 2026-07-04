@@ -725,9 +725,17 @@ dataRouter.delete(
 );
 
 // ── AI conversational onboarding ─────────────────────────────────────────────
+// Photo attachments for the coach chat (screenshots of other apps, machine
+// consoles, unknown machines). Base64 without the data-URL prefix; the client
+// downscales before upload but we still cap size server-side (~6MB binary).
+const chatImageSchema = z.object({
+  mimeType: z.string().regex(/^image\//),
+  data: z.string().min(1).max(8_000_000),
+});
 const chatMessageSchema = z.object({
   role: z.enum(["user", "model"]),
   content: z.string(),
+  images: z.array(chatImageSchema).max(4).optional(),
 });
 
 dataRouter.post(
@@ -754,7 +762,28 @@ dataRouter.post(
     }
     const routines = await loadRoutines(userId);
 
-    const reply = await chatCoach(messages as ChatMessage[], profile, routines);
+    // Recent training context so the coach can reference real progress instead
+    // of coaching blind: 4-week analytics + a digest of the last few sessions.
+    const { data: workouts } = await supabaseAdmin
+      .from("workouts").select("*").eq("user_id", userId)
+      .order("started_at", { ascending: false }).limit(40);
+    const history: SessionLite[] = (workouts ?? []).map((w) => ({
+      startedAt: new Date(w.started_at).getTime(),
+      totalVolume: Number(w.total_volume),
+      exercises: w.exercises ?? [],
+    }));
+    let trainingContext: string | undefined;
+    if (history.length) {
+      const recent = (workouts ?? []).slice(0, 6).map((w) => {
+        const date = new Date(w.started_at).toDateString();
+        const mins = Math.round(Number(w.duration_sec || 0) / 60);
+        const names = (w.exercises ?? []).map((e: { name: string }) => e.name).join(", ");
+        return `   • ${date}: ${w.routine_name} (${mins} min${w.calories ? `, ~${Math.round(Number(w.calories))} kcal` : ""}) — ${names}`;
+      });
+      trainingContext = `${buildRefreshSummary(history, profile)}\n- Last sessions:\n${recent.join("\n")}`;
+    }
+
+    const reply = await chatCoach(messages as ChatMessage[], profile, routines, trainingContext);
 
     if (reply.type === "update" && reply.program) {
       const result = await persistProgram(userId, profile, reply.program);

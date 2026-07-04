@@ -462,9 +462,26 @@ export async function refreshProgram(
 
 // ── Conversational onboarding chat ───────────────────────────────────────────
 
+export interface ChatImage {
+  mimeType: string; // e.g. "image/jpeg"
+  data: string; // base64 (no data-URL prefix)
+}
+
 export interface ChatMessage {
   role: "user" | "model";
   content: string;
+  images?: ChatImage[]; // photo attachments (coach chat only)
+}
+
+// A chat message → Gemini content parts (text + inline image data). Gemini
+// rejects empty parts arrays, so a bare image message still gets a text stub.
+function messageParts(m: ChatMessage): Array<Record<string, unknown>> {
+  const parts: Array<Record<string, unknown>> = [];
+  if (m.content.trim() || !m.images?.length) parts.push({ text: m.content });
+  for (const img of m.images ?? []) {
+    parts.push({ inline_data: { mime_type: img.mimeType, data: img.data } });
+  }
+  return parts;
 }
 
 export interface ChatReply {
@@ -764,28 +781,40 @@ function normalizeLoggedWorkout(w: any): LoggedWorkoutDraft {
   };
 }
 
-function coachSystem(p: UserProfile, routines: unknown): string {
+function coachSystem(p: UserProfile, routines: unknown, trainingContext?: string): string {
   const catLabel = CATEGORY_TEXT[p.category ?? "mixed"] ?? "Mixed training";
   const eqLabel = p.equipment === "mixed" && p.equipmentMix?.length
     ? `Custom mix: ${p.equipmentMix.join(", ")}`
     : EQUIPMENT_TEXT[p.equipment] ?? p.equipment;
+  const distanceUnit = p.units === "lb" ? "miles" : "kilometers";
   return `You are ForgeFit's ongoing AI personal coach for an athlete who has ALREADY completed onboarding.
 You already know everything about them — NEVER re-ask onboarding questions (goal, equipment, days, etc.).
+
+Today's date: ${new Date().toDateString()}
 
 Athlete profile (JSON):
 ${JSON.stringify(p)}
 Equipment detail: ${eqLabel}
 Preferred workout style: ${catLabel}
+Preferred units: weights in ${p.units}, distances in ${distanceUnit}.
 
 ${equipmentConstraintBlock(p, allowedTokens(p))}
 
 Their current routines (JSON):
 ${JSON.stringify(routines)}
+${trainingContext ? `\nRecent training history (use this to personalize advice, spot progress/stalls and reference past sessions — never ask for information that is already here):\n${trainingContext}\n` : ""}
 
 How to behave:
 - Answer training, programming, form, recovery and nutrition questions concisely and accurately. Use evidence-based, up-to-date guidance (you have search grounding — use it for anything that benefits from current information).
 - Always honor the athlete's stated preferences (e.g. if they like biking or prefer calisthenics, weave that into your advice and any routine you build).
 - If a request is ambiguous, ask ONE short clarifying question — never a full questionnaire.
+- When mentioning weights use ${p.units}; when mentioning distances use ${distanceUnit}.
+
+PHOTOS — the athlete may attach pictures. Read them carefully and handle each case:
+1. Screenshot of another fitness app or watch (Strava, Garmin, Apple/Samsung fitness, Fitbit, a treadmill app, etc.): extract the activity type, duration, distance, pace, sets/reps and any other visible metrics, then log the session with [LOG] exactly as if the athlete had typed it. Mention device-reported calories or heart rate in "notes" only (the app computes its own calories).
+2. Photo of a cardio-machine console (treadmill, bike, rower, elliptical, stair climber display): read the time, distance, level/resistance and calories shown and log the session with [LOG]. Infer the machine type from the console when possible; if unclear, ask which machine it was.
+3. Photo of a gym machine the athlete doesn't know: identify the machine by name in your reply (e.g. "That's a seated cable row machine"), briefly say which muscles it trains, and use the proper exercise name when logging. If they already told you their sets/reps/weight (or the machine display shows them), log it with [LOG]; otherwise ask ONE short question for the missing sets×reps or duration.
+Rules for all photos: transcribe ONLY numbers you can actually see — NEVER invent metrics that aren't visible. If a value is cut off or blurry, say what you could read and ask for the missing piece. When several workouts appear in one screenshot, ask which one(s) to log unless it's obvious.
 
 When the athlete asks to change, adjust, improve, regenerate, rebuild, add to, or otherwise MODIFY their routines/program:
 1. Write a short confirmation sentence describing what you changed and why.
@@ -808,6 +837,8 @@ When the athlete TELLS you what they ALREADY DID / completed (e.g. "I did 1 hour
    - kind: "strength" for weight/rep work, "cardio" for conditioning (run/bike/row/jump rope/HIIT), "hold" for isometrics & yoga holds (plank, wall-sit, tree pose).
    - For STRENGTH: one set object PER set performed, with "reps" and "weight" (weight in ${p.units}, 0 for bodyweight). Omit durationSec/distanceKm.
    - For CARDIO/HOLDS (biking, running, rowing, plank, etc.): use ONE set with "durationSec" = the real time performed in SECONDS (e.g. 45 min ride → 2700), reps 0, weight 0. Add "distanceKm" when the athlete gave a distance (e.g. a 5k run → 5). Put a human note in "notes" (e.g. "45 min steady ride").
+   - "distanceKm" is ALWAYS stored in kilometers — convert other units before emitting JSON (miles × 1.609, meters ÷ 1000, e.g. a 1500 m swim → 1.5). Preserve the athlete's original figure in "notes" (e.g. "12 mile ride").
+   - Distance sports (outdoor/indoor biking, running, hiking, swimming, rowing, skiing) should carry "distanceKm" whenever the distance is known. If the athlete gives ONLY a distance (e.g. "40 km ride"), don't interrogate them — estimate a realistic "durationSec" for their level and say you assumed it (they can correct you).
    - "rpe" (1–10) is OPTIONAL on any set — include your best estimate of effort so calories are accurate (easy ride ≈ 4, hard intervals ≈ 9).
    - muscleGroup MUST be one of the allowed values; use "Cardio" for conditioning work.
    - Do NOT compute calories — the app does that from duration, bodyweight and rpe.
@@ -819,7 +850,8 @@ For purely informational replies, do NOT output [UPDATE] or [LOG]. You MAY appen
 export async function chatCoach(
   messages: ChatMessage[],
   profile: UserProfile,
-  routines: unknown
+  routines: unknown,
+  trainingContext?: string
 ): Promise<CoachReply> {
   const key = config.geminiApiKey.trim();
   if (!key) {
@@ -829,13 +861,13 @@ export async function chatCoach(
     };
   }
 
-  const contents = messages.map((m) => ({ role: m.role, parts: [{ text: m.content }] }));
+  const contents = messages.map((m) => ({ role: m.role, parts: messageParts(m) }));
 
   const res = await fetch(ENDPOINT(config.coachModel, key), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: coachSystem(profile, routines) }] },
+      systemInstruction: { parts: [{ text: coachSystem(profile, routines, trainingContext) }] },
       contents,
       tools: [{ google_search: {} }],
       generationConfig: { temperature: 0.7 },

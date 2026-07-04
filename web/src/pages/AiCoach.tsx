@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, Send, RotateCcw, AlertTriangle, ClipboardList, Pencil, Check, X } from "lucide-react";
+import { Sparkles, Send, RotateCcw, AlertTriangle, ClipboardList, Pencil, Check, X, ImagePlus } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "@/lib/store";
 import { api } from "@/lib/api";
@@ -8,13 +8,45 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/misc";
 import { cn } from "@/lib/utils";
 
-type ChatMsg = { role: "user" | "model"; content: string; suggestions?: string[] };
+type ChatImage = { mimeType: string; data: string };
+type ChatMsg = { role: "user" | "model"; content: string; suggestions?: string[]; images?: ChatImage[] };
+
+const MAX_IMAGES_PER_MESSAGE = 4;
+
+// Downscale a picked photo to ≤1280px JPEG and return raw base64. Keeps chat
+// payloads small (a phone photo would otherwise be 5–15MB of base64).
+async function fileToChatImage(file: File): Promise<ChatImage> {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const el = new Image();
+    el.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(el);
+    };
+    el.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Couldn't read that image."));
+    };
+    el.src = url;
+  });
+  const MAX = 1280;
+  const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Couldn't process that image.");
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+  return { mimeType: "image/jpeg", data: dataUrl.slice(dataUrl.indexOf(",") + 1) };
+}
 
 const MIX_OPTIONS = ["Calisthenics", "Weightlifting", "Cardio", "Yoga / Pilates"];
 const EQUIPMENT_MIX_OPTIONS = ["Bodyweight", "Dumbbells", "Resistance bands", "Kettlebells", "Barbell", "Cables / machines", "Pull-up bar", "Bench"];
 
 const COACH_SUGGESTIONS = [
   "Log today's workout",
+  "📷 Log from a photo",
   "Adjust my routines",
   "Make my program harder",
   "Explain my current plan",
@@ -59,8 +91,11 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
   const [equipMixPicker, setEquipMixPicker] = useState(false);
   const [equipMixSelected, setEquipMixSelected] = useState<string[]>([]);
   const [equipOtherText, setEquipOtherText] = useState("");
+  // Photos staged for the next message (coach mode only).
+  const [pendingImages, setPendingImages] = useState<ChatImage[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void startConversation();
@@ -76,6 +111,7 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
     setDone(false);
     setAiError(null);
     setInput("");
+    setPendingImages([]);
 
     if (coachMode) {
       // No API call — greet locally and offer quick actions. This avoids the
@@ -84,7 +120,7 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
       setMessages([
         {
           role: "model",
-          content: `Hey${name}! I'm your ForgeFit coach. Ask me anything about training, tell me how you'd like to tweak your routines, or just tell me what you did today (e.g. "1 hour biking and 5 tibetans") and I'll log it for you.`,
+          content: `Hey${name}! I'm your ForgeFit coach. Ask me anything about training, tell me how you'd like to tweak your routines, or just tell me what you did today (e.g. "1 hour biking and 5 tibetans" or "40 km outdoor ride") and I'll log it for you. You can also attach a photo 📷 — a screenshot from another fitness app, a cardio machine's display, or a machine you don't know the name of — and I'll read it and log or explain it.`,
           suggestions: COACH_SUGGESTIONS,
         },
       ]);
@@ -107,12 +143,23 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
   };
 
   const sendText = async (text: string) => {
-    if (!text.trim() || loading || done || generating) return;
-    const next: ChatMsg[] = [...messages, { role: "user", content: text.trim() }];
+    const images = coachMode ? pendingImages : [];
+    if ((!text.trim() && images.length === 0) || loading || done || generating) return;
+    const userMsg: ChatMsg = {
+      role: "user",
+      content: text.trim(),
+      ...(images.length ? { images } : {}),
+    };
+    const next: ChatMsg[] = [...messages, userMsg];
     setMessages(next);
     setInput("");
+    setPendingImages([]);
     setLoading(true);
-    const payload = next.map(({ role, content }) => ({ role, content }));
+    const payload = next.map(({ role, content, images: imgs }) => ({
+      role,
+      content,
+      ...(imgs?.length ? { images: imgs } : {}),
+    }));
 
     try {
       if (coachMode) {
@@ -176,6 +223,7 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
         toast.error((e instanceof Error && e.message) || "AI error — please try again.");
         setMessages(next.slice(0, -1));
         setInput(text.trim());
+        if (images.length) setPendingImages(images);
       }
     } finally {
       if (!generating) setLoading(false);
@@ -217,6 +265,10 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
       void sendText("I did another workout I want to log");
       return;
     }
+    if (s === "📷 Log from a photo") {
+      fileInputRef.current?.click();
+      return;
+    }
     if (!coachMode && s === "Mixed") {
       setMixSelected([]);
       setMixPicker(true);
@@ -240,6 +292,25 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
     const label = parts.length > 0 ? `Mixed (${parts.join(", ")})` : "Mixed";
     setMixOtherText("");
     void sendText(label);
+  };
+
+  const handlePickImages = async (files: FileList | null) => {
+    if (!files?.length) return;
+    try {
+      const picked = await Promise.all([...files].map(fileToChatImage));
+      setPendingImages((prev) => {
+        const all = [...prev, ...picked];
+        if (all.length > MAX_IMAGES_PER_MESSAGE) {
+          toast.error(`Up to ${MAX_IMAGES_PER_MESSAGE} photos per message.`);
+        }
+        return all.slice(0, MAX_IMAGES_PER_MESSAGE);
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't read that image.");
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      inputRef.current?.focus();
+    }
   };
 
   const handleEquipMixConfirm = () => {
@@ -372,6 +443,18 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
                         : "rounded-tl-sm border border-border bg-card"
                     )}
                   >
+                    {m.images && m.images.length > 0 && (
+                      <div className={cn("flex flex-wrap gap-1.5", m.content && "mb-2")}>
+                        {m.images.map((img, j) => (
+                          <img
+                            key={j}
+                            src={`data:${img.mimeType};base64,${img.data}`}
+                            alt="Attached photo"
+                            className="h-28 w-28 rounded-lg object-cover"
+                          />
+                        ))}
+                      </div>
+                    )}
                     {m.content}
                   </div>
                   {m.role === "user" && !loading && !done && !generating && editingIdx === null && (
@@ -530,12 +613,62 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
         </div>
       )}
 
+      {/* Pending photo previews (coach mode) */}
+      {pendingImages.length > 0 && (
+        <div className="flex gap-2 pt-2">
+          {pendingImages.map((img, i) => (
+            <div key={i} className="relative">
+              <img
+                src={`data:${img.mimeType};base64,${img.data}`}
+                alt="Photo to send"
+                className="h-16 w-16 rounded-xl border border-border object-cover"
+              />
+              <button
+                onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}
+                className="absolute -right-1.5 -top-1.5 rounded-full border border-border bg-secondary p-0.5 text-muted-foreground tap"
+                title="Remove photo"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Input */}
       <div className="flex gap-2 border-t border-border pt-3">
+        {coachMode && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => void handlePickImages(e.target.files)}
+            />
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading || done || generating}
+              className="shrink-0 px-3"
+              title="Attach a photo — app screenshot, machine display, or a machine you don't know"
+            >
+              <ImagePlus className="h-5 w-5" />
+            </Button>
+          </>
+        )}
         <input
           ref={inputRef}
           className="flex-1 rounded-xl border border-input bg-background px-4 py-3 text-base placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
-          placeholder={done || generating ? "Program is being built…" : "Type or tap a suggestion…"}
+          placeholder={
+            done || generating
+              ? "Program is being built…"
+              : pendingImages.length > 0
+                ? "Add a note, or just send the photo…"
+                : "Type or tap a suggestion…"
+          }
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && void sendText(input)}
@@ -544,7 +677,7 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
         <Button
           size="lg"
           onClick={() => sendText(input)}
-          disabled={!input.trim() || loading || done || generating}
+          disabled={(!input.trim() && pendingImages.length === 0) || loading || done || generating}
           className="shrink-0 px-4"
         >
           <Send className="h-5 w-5" />

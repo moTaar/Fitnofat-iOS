@@ -3,7 +3,7 @@ import { Plus, X, Trash2, Save, Dumbbell, HeartPulse, Timer } from "lucide-react
 import { useStore } from "@/lib/store";
 import type { Exercise, ExerciseKind, LoggedExercise, WorkoutSession } from "@/lib/types";
 import { estimateSessionCalories, resolveKind } from "@/lib/calories";
-import { formatCalories, sessionVolume } from "@/lib/utils";
+import { formatCalories, sessionVolume, distanceUnit, kmToDisplayDistance, displayDistanceToKm } from "@/lib/utils";
 import { Modal } from "./ui/modal";
 import { Button } from "./ui/button";
 import { ExercisePicker } from "./ExercisePicker";
@@ -273,7 +273,7 @@ export function SessionEditor({
                   ) : (
                     <>
                       <span className="text-center">Min</span>
-                      <span className="text-center">{ex.kind === "cardio" ? "Km" : "—"}</span>
+                      <span className="text-center">{ex.kind === "cardio" ? distanceUnit(units) : "—"}</span>
                     </>
                   )}
                   <span className="text-center">RPE</span>
@@ -307,9 +307,9 @@ export function SessionEditor({
                             onChange={(v) => patchSet(exIdx, setIdx, { minutes: v })}
                           />
                           <NumInput
-                            value={s.distanceKm}
+                            value={kmToDisplayDistance(s.distanceKm, units)}
                             disabled={ex.kind !== "cardio"}
-                            onChange={(v) => patchSet(exIdx, setIdx, { distanceKm: v })}
+                            onChange={(v) => patchSet(exIdx, setIdx, { distanceKm: displayDistanceToKm(v, units) })}
                           />
                         </>
                       )}

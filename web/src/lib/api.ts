@@ -278,7 +278,13 @@ export const api = {
       { method: "POST", body: JSON.stringify({ messages }) }
     ),
 
-  aiCoach: (messages: { role: "user" | "model"; content: string }[]) =>
+  aiCoach: (
+    messages: {
+      role: "user" | "model";
+      content: string;
+      images?: { mimeType: string; data: string }[];
+    }[]
+  ) =>
     request<
       | { type: "message"; text: string; suggestions?: string[] }
       | { type: "update"; text: string; program: Program; routines: Routine[] }

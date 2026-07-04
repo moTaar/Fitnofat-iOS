@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useNow } from "@/lib/hooks";
-import { cn, formatDuration, formatCalories, haptic, sessionVolume } from "@/lib/utils";
+import { cn, formatDuration, formatCalories, haptic, sessionVolume, distanceUnit, kmToDisplayDistance, displayDistanceToKm } from "@/lib/utils";
 import { estimateSessionCalories, resolveKind } from "@/lib/calories";
 import type { Exercise, ExerciseKind, WorkoutSession } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -250,7 +250,7 @@ export function ActiveWorkout() {
                 ) : (
                   <>
                     <span className="text-center">Min</span>
-                    <span className="text-center">{kind === "cardio" ? "Km" : "—"}</span>
+                    <span className="text-center">{kind === "cardio" ? distanceUnit(units) : "—"}</span>
                     <span className="text-center">RPE</span>
                   </>
                 )}
@@ -315,10 +315,12 @@ export function ActiveWorkout() {
                             type="number"
                             inputMode="decimal"
                             disabled={kind !== "cardio"}
-                            value={set.distanceKm || ""}
+                            value={set.distanceKm ? kmToDisplayDistance(set.distanceKm, units) : ""}
                             placeholder={kind === "cardio" ? "0" : "—"}
                             onChange={(e) =>
-                              logSet(exIdx, setIdx, { distanceKm: parseFloat(e.target.value) || 0 })
+                              logSet(exIdx, setIdx, {
+                                distanceKm: displayDistanceToKm(parseFloat(e.target.value) || 0, units),
+                              })
                             }
                             className="h-10 w-full rounded-lg border border-input bg-background text-center text-base font-semibold focus:border-primary focus:outline-none disabled:opacity-40"
                           />
