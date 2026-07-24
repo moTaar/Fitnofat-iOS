@@ -35,6 +35,19 @@ export function useOnlineStatus() {
   return online;
 }
 
+/** Fires `onVisible` each time the tab/app transitions from hidden to visible
+ *  (e.g. switching back from another app) — used to recover from requests that
+ *  got suspended while backgrounded and never resolved. */
+export function useOnVisible(onVisible: () => void) {
+  useEffect(() => {
+    const handler = () => {
+      if (document.visibilityState === "visible") onVisible();
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [onVisible]);
+}
+
 /** Re-renders every `intervalMs` while `active`, returning Date.now(). */
 export function useNow(active: boolean, intervalMs = 1000) {
   const [now, setNow] = useState(Date.now());

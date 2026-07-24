@@ -43,10 +43,12 @@ interface Settings {
 interface AppState {
   hydrated: boolean;
   bootstrapped: boolean;
+  bootstrapping: boolean; // in-flight guard so overlapping bootstrap() calls don't race
   user: Session["user"] | null;
   profile: UserProfile | null;
   onboarded: boolean;
   exercises: Exercise[];
+  hiddenExerciseIds: string[]; // excluded from routine-building suggestions
   routines: Routine[];
   program: Program | null;
   nutritionPlan: NutritionPlan | null;
@@ -61,6 +63,9 @@ interface AppState {
   signup: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => void;
   bootstrap: () => Promise<void>;
+  // Escape hatch for the launch splash: proceed with whatever's cached instead
+  // of waiting on a bootstrap request that's taking too long or is stuck.
+  skipBootstrap: () => void;
 
   // account & billing (accounts microservice)
   loadSubscription: () => Promise<void>;
@@ -97,6 +102,7 @@ interface AppState {
   addCustomExercise: (e: { name: string; muscleGroup: Exercise["muscleGroup"]; equipment: string }) => Promise<Exercise>;
   receiveExercise: (exercise: Exercise) => void;
   fetchExerciseGuide: (e: { name: string; muscleGroup?: Exercise["muscleGroup"]; equipment?: string; force?: boolean }) => Promise<Exercise>;
+  toggleExerciseHidden: (id: string) => void;
 
   // active workout
   startWorkout: (routine?: Routine) => void;
@@ -188,10 +194,12 @@ export const useStore = create<AppState>()(
     (set, get) => ({
       hydrated: false,
       bootstrapped: false,
+      bootstrapping: false,
       user: auth.getSession()?.user ?? null,
       profile: null,
       onboarded: false,
       exercises: SEED_EXERCISES,
+      hiddenExerciseIds: [],
       routines: [],
       program: null,
       nutritionPlan: null,
@@ -267,7 +275,8 @@ export const useStore = create<AppState>()(
       },
 
       bootstrap: async () => {
-        if (!auth.isAuthenticated()) return;
+        if (!auth.isAuthenticated() || get().bootstrapping) return;
+        set({ bootstrapping: true });
         try {
           const data = await api.bootstrap();
           const seedIds = new Set(SEED_EXERCISES.map((e) => e.id));
@@ -322,8 +331,12 @@ export const useStore = create<AppState>()(
           if (err instanceof AuthExpiredError) get().logout();
           // Offline or transient error: keep the cached state, mark hydrated.
           set({ bootstrapped: true });
+        } finally {
+          set({ bootstrapping: false });
         }
       },
+
+      skipBootstrap: () => set({ bootstrapped: true }),
 
       // ── AI / onboarding ─────────────────────────────────────────────────
       generateProgram: async (profile) => {
@@ -496,6 +509,13 @@ export const useStore = create<AppState>()(
         }));
         return exercise;
       },
+
+      toggleExerciseHidden: (id) =>
+        set((s) => ({
+          hiddenExerciseIds: s.hiddenExerciseIds.includes(id)
+            ? s.hiddenExerciseIds.filter((x) => x !== id)
+            : [...s.hiddenExerciseIds, id],
+        })),
 
       // ── active workout ──────────────────────────────────────────────────
       startWorkout: (routine) => {
@@ -826,6 +846,7 @@ export const useStore = create<AppState>()(
         profile: s.profile,
         onboarded: s.onboarded,
         exercises: s.exercises,
+        hiddenExerciseIds: s.hiddenExerciseIds,
         routines: s.routines,
         program: s.program,
         nutritionPlan: s.nutritionPlan,

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Search, Plus, Dumbbell, Check, ChevronRight } from "lucide-react";
+import { Search, Plus, Dumbbell, Check, ChevronRight, MoreVertical, EyeOff, Eye } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { MUSCLE_GROUPS } from "@/lib/exercises";
 import type { Exercise, MuscleGroup } from "@/lib/types";
@@ -12,7 +12,9 @@ import { cn } from "@/lib/utils";
 
 export function LibraryPage() {
   const exercises = useStore((s) => s.exercises);
+  const hiddenExerciseIds = useStore((s) => s.hiddenExerciseIds);
   const addCustomExercise = useStore((s) => s.addCustomExercise);
+  const toggleExerciseHidden = useStore((s) => s.toggleExerciseHidden);
 
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<MuscleGroup | "All">("All");
@@ -21,6 +23,7 @@ export function LibraryPage() {
   const [newGroup, setNewGroup] = useState<MuscleGroup>("Chest");
   const [newEquip, setNewEquip] = useState("Barbell");
   const [detail, setDetail] = useState<Exercise | null>(null);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -95,23 +98,66 @@ export function LibraryPage() {
               {g} <span className="opacity-60">({items.length})</span>
             </h2>
             <div className="space-y-1.5">
-              {items.map((e) => (
-                <button
-                  key={e.id}
-                  onClick={() => setDetail(e)}
-                  className="flex w-full items-center gap-3 rounded-xl border border-border bg-card p-3 text-left tap hover:border-muted-foreground/40"
-                >
-                  <div className="rounded-lg bg-secondary p-2 text-muted-foreground">
-                    <Dumbbell className="h-4 w-4" />
+              {items.map((e) => {
+                const hidden = hiddenExerciseIds.includes(e.id);
+                return (
+                  <div
+                    key={e.id}
+                    className={cn(
+                      "flex items-center gap-1 rounded-xl border border-border bg-card p-3 hover:border-muted-foreground/40",
+                      hidden && "opacity-60"
+                    )}
+                  >
+                    <button
+                      onClick={() => setDetail(e)}
+                      className="flex flex-1 items-center gap-3 text-left tap"
+                    >
+                      <div className="rounded-lg bg-secondary p-2 text-muted-foreground">
+                        <Dumbbell className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium leading-tight">{e.name}</p>
+                        <p className="text-xs text-muted-foreground">{e.equipment} · How to</p>
+                      </div>
+                      {e.isCustom && <Badge variant="outline">Custom</Badge>}
+                      {hidden && <Badge variant="muted">Hidden</Badge>}
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    </button>
+                    <div className="relative">
+                      <button
+                        onClick={() => setMenuFor(menuFor === e.id ? null : e.id)}
+                        className="rounded-full p-1.5 hover:bg-accent tap"
+                      >
+                        <MoreVertical className="h-4 w-4 text-muted-foreground" />
+                      </button>
+                      {menuFor === e.id && (
+                        <div
+                          className="absolute right-0 top-9 z-10 w-56 rounded-xl border border-border bg-card p-1 shadow-xl"
+                          onClick={(ev) => ev.stopPropagation()}
+                        >
+                          <button
+                            onClick={() => {
+                              toggleExerciseHidden(e.id);
+                              setMenuFor(null);
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-accent tap"
+                          >
+                            {hidden ? (
+                              <>
+                                <Eye className="h-4 w-4" /> Show in suggestions
+                              </>
+                            ) : (
+                              <>
+                                <EyeOff className="h-4 w-4" /> Hide from suggestions
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <p className="font-medium leading-tight">{e.name}</p>
-                    <p className="text-xs text-muted-foreground">{e.equipment} · How to</p>
-                  </div>
-                  {e.isCustom && <Badge variant="outline">Custom</Badge>}
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                </button>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))}

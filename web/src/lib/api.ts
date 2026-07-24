@@ -71,6 +71,12 @@ export const auth = {
   clear: () => persist(null),
 };
 
+// A request that's in flight when the app is backgrounded can be suspended by
+// the OS/browser and never settle once the app resumes (common on iOS/PWA),
+// leaving callers awaiting it forever. Bound every request so it always
+// rejects instead of hanging.
+const REQUEST_TIMEOUT_MS = 15_000;
+
 async function rawRequest(
   base: string,
   path: string,
@@ -80,7 +86,7 @@ async function rawRequest(
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
   if (withAuth && session) headers.set("Authorization", `Bearer ${session.accessToken}`);
-  return fetch(`${base}${path}`, { ...init, headers });
+  return fetch(`${base}${path}`, { ...init, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 }
 
 async function refreshSession(): Promise<boolean> {

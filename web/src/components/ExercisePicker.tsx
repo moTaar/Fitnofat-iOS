@@ -20,6 +20,7 @@ export function ExercisePicker({
   onPick: (e: Exercise) => void;
 }) {
   const exercises = useStore((s) => s.exercises);
+  const hiddenExerciseIds = useStore((s) => s.hiddenExerciseIds);
   const addCustomExercise = useStore((s) => s.addCustomExercise);
   const receiveExercise = useStore((s) => s.receiveExercise);
 
@@ -36,10 +37,11 @@ export function ExercisePicker({
     const q = query.trim().toLowerCase();
     return exercises.filter(
       (e) =>
+        !hiddenExerciseIds.includes(e.id) &&
         (group === "All" || e.muscleGroup === group) &&
         (!q || e.name.toLowerCase().includes(q))
     );
-  }, [exercises, query, group]);
+  }, [exercises, hiddenExerciseIds, query, group]);
 
   const pick = (e: Exercise) => {
     onPick(e);
