@@ -134,19 +134,38 @@ interface AppState {
   setUnits: (units: "kg" | "lb") => void;
 }
 
-function routineToLoggedExercises(routine: Routine): LoggedExercise[] {
-  return routine.exercises.map((re) => ({
-    exerciseId: re.exerciseId,
-    name: re.name,
-    muscleGroup: re.muscleGroup,
-    restSeconds: re.restSeconds,
-    kind: re.muscleGroup === "Cardio" ? "cardio" : "strength",
-    sets: re.sets.map((s) => ({
-      weight: s.targetWeight ?? 0,
-      reps: s.targetReps,
-      completed: false,
-    })),
-  }));
+// Most recently logged sets for an exercise, so a routine's static targets can
+// be overridden with what the user actually did last time (history is sorted
+// most-recent-first).
+function lastLoggedSets(history: WorkoutSession[], exerciseId: string) {
+  for (const session of history) {
+    const ex = session.exercises.find((e) => e.exerciseId === exerciseId);
+    if (ex) return ex.sets;
+  }
+  return undefined;
+}
+
+function routineToLoggedExercises(routine: Routine, history: WorkoutSession[]): LoggedExercise[] {
+  return routine.exercises.map((re) => {
+    const last = lastLoggedSets(history, re.exerciseId);
+    return {
+      exerciseId: re.exerciseId,
+      name: re.name,
+      muscleGroup: re.muscleGroup,
+      restSeconds: re.restSeconds,
+      kind: re.muscleGroup === "Cardio" ? "cardio" : "strength",
+      sets: re.sets.map((s, i) => {
+        const prev = last?.[i];
+        const rpe = prev?.rpe ?? s.rpe;
+        return {
+          weight: prev?.weight ?? s.targetWeight ?? 0,
+          reps: prev?.reps ?? s.targetReps,
+          completed: false,
+          ...(rpe != null ? { rpe } : {}),
+        };
+      }),
+    };
+  });
 }
 
 function workoutToApi(w: WorkoutSession) {
@@ -487,7 +506,7 @@ export const useStore = create<AppState>()(
             routineId: routine?.id,
             routineName: routine?.name ?? "Empty Workout",
             startedAt: Date.now(),
-            exercises: routine ? routineToLoggedExercises(routine) : [],
+            exercises: routine ? routineToLoggedExercises(routine, get().history) : [],
             restTimer: { active: false, endsAt: null, durationSec: rest },
           },
         });
@@ -509,6 +528,7 @@ export const useStore = create<AppState>()(
             completed: false,
             ...(s.durationSec ? { durationSec: s.durationSec } : {}),
             ...(s.distanceKm ? { distanceKm: s.distanceKm } : {}),
+            ...(s.rpe != null ? { rpe: s.rpe } : {}),
           })),
         }));
         set({
@@ -538,7 +558,18 @@ export const useStore = create<AppState>()(
           const exercises = s.active.exercises.map((ex, i) => {
             if (i !== exIdx) return ex;
             const last = ex.sets[ex.sets.length - 1];
-            return { ...ex, sets: [...ex.sets, { weight: last?.weight ?? 0, reps: last?.reps ?? 10, completed: false }] };
+            return {
+              ...ex,
+              sets: [
+                ...ex.sets,
+                {
+                  weight: last?.weight ?? 0,
+                  reps: last?.reps ?? 10,
+                  completed: false,
+                  ...(last?.rpe != null ? { rpe: last.rpe } : {}),
+                },
+              ],
+            };
           });
           return { active: { ...s.active, exercises } };
         }),
@@ -556,6 +587,7 @@ export const useStore = create<AppState>()(
         set((s) => {
           if (!s.active) return {};
           const kind = exercise.muscleGroup === "Cardio" ? "cardio" : "strength";
+          const last = lastLoggedSets(s.history, exercise.id)?.[0];
           const logged: LoggedExercise = {
             exerciseId: exercise.id,
             name: exercise.name,
@@ -564,8 +596,15 @@ export const useStore = create<AppState>()(
             kind,
             sets:
               kind === "cardio"
-                ? [{ weight: 0, reps: 0, completed: false, durationSec: 0 }]
-                : [{ weight: 0, reps: 10, completed: false }],
+                ? [{ weight: 0, reps: 0, completed: false, durationSec: last?.durationSec ?? 0 }]
+                : [
+                    {
+                      weight: last?.weight ?? 0,
+                      reps: last?.reps ?? 10,
+                      completed: false,
+                      ...(last?.rpe != null ? { rpe: last.rpe } : {}),
+                    },
+                  ],
           };
           return { active: { ...s.active, exercises: [...s.active.exercises, logged] } };
         }),
