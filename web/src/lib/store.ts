@@ -2,9 +2,9 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { format } from "date-fns";
 import type {
-  ActiveWorkout, Cuisine, Exercise, FoodLookupResult, LoggedExercise,
-  LoggedFood, NutritionLog, NutritionPlan, Program, RepSensitivity, Routine,
-  Subscription, UserProfile, WorkoutSession,
+  ActiveWorkout, Cuisine, EquipmentPrefCategory, EquipmentPreference, Exercise,
+  FoodLookupResult, LoggedExercise, LoggedFood, NutritionLog, NutritionPlan,
+  Program, RepSensitivity, Routine, Subscription, UserProfile, WorkoutSession,
 } from "./types";
 import { SEED_EXERCISES } from "./exercises";
 import { sessionVolume, uid } from "./utils";
@@ -138,6 +138,10 @@ interface AppState {
   // settings
   setSetting: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
   setUnits: (units: "kg" | "lb") => void;
+  // Equipment Preferences (Settings, collapsed by default): per-item override
+  // on top of `equipment`/`equipmentMix`. `value === undefined` clears back to
+  // "no preference" — persisted on the profile (server + local).
+  setEquipmentPref: (category: EquipmentPrefCategory, value: EquipmentPreference | undefined) => void;
 }
 
 // Most recently logged sets for an exercise, so a routine's static targets can
@@ -838,6 +842,15 @@ export const useStore = create<AppState>()(
         if (!p) return;
         set({ profile: { ...p, units } });
         void api.updateProfile({ units }).catch(() => {});
+      },
+      setEquipmentPref: (category, value) => {
+        const p = get().profile;
+        if (!p) return;
+        const equipmentPrefs = { ...p.equipmentPrefs };
+        if (value === undefined) delete equipmentPrefs[category];
+        else equipmentPrefs[category] = value;
+        set({ profile: { ...p, equipmentPrefs } });
+        void api.updateProfile({ equipmentPrefs }).catch(() => {});
       },
     }),
     {

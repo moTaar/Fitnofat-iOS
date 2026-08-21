@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
 import {
   Moon, Sun, Timer, Bell, Trash2, Weight, User, LogOut, Mail, Sparkles,
-  Activity, Volume2, Crown, ChevronRight, KeyRound, UserX,
+  Activity, Volume2, Crown, ChevronRight, ChevronDown, KeyRound, UserX, Dumbbell,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "@/lib/store";
 import { useTheme } from "@/lib/hooks";
 import { effectivePlan } from "@/lib/entitlements";
 import { requestNotificationPermission, notificationsSupported } from "@/lib/notifications";
+import { cn } from "@/lib/utils";
+import type { EquipmentPrefCategory } from "@/lib/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
-import { SegmentedControl, Spinner } from "@/components/ui/misc";
+import { SegmentedControl, Spinner, TriToggle, type TriState } from "@/components/ui/misc";
 import { Modal } from "@/components/ui/modal";
 import { CuisineSelector } from "@/components/CuisineSelector";
 import { toast } from "@/lib/toast";
@@ -24,6 +26,7 @@ export function SettingsPage() {
   const setSetting = useStore((s) => s.setSetting);
   const setUnits = useStore((s) => s.setUnits);
   const setCuisine = useStore((s) => s.setCuisine);
+  const setEquipmentPref = useStore((s) => s.setEquipmentPref);
   const profile = useStore((s) => s.profile);
   const user = useStore((s) => s.user);
   const logout = useStore((s) => s.logout);
@@ -195,6 +198,40 @@ export function SettingsPage() {
           </p>
         </div>
       </SettingGroup>
+
+      {/* Equipment Preferences — collapsed by default */}
+      <CollapsibleGroup title="Equipment Preferences" icon={<Dumbbell className="h-4 w-4" />}>
+        <div className="space-y-4 p-4">
+          <p className="text-xs text-muted-foreground">
+            Fine-tune extra equipment for AI-generated exercises, on top of your main setup
+            from onboarding. Leave anything on <b className="font-medium text-foreground">No pref</b> to
+            change nothing.
+          </p>
+          <EquipmentPrefRow
+            label="Resistance / tension bands"
+            category="bands"
+            prefs={profile?.equipmentPrefs}
+            onChange={setEquipmentPref}
+          />
+          <EquipmentPrefRow
+            label="Dumbbells & free weights"
+            category="freeWeights"
+            prefs={profile?.equipmentPrefs}
+            onChange={setEquipmentPref}
+          />
+          <EquipmentPrefRow
+            label="Machines"
+            category="machines"
+            prefs={profile?.equipmentPrefs}
+            onChange={setEquipmentPref}
+          />
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-3 text-[11px] text-muted-foreground">
+            <span><b className="font-semibold text-destructive">Never</b> — hard exclude</span>
+            <span><b className="font-semibold text-foreground">No pref</b> — default, no change</span>
+            <span><b className="font-semibold text-success">Maybe</b> — AI may use it if it wants</span>
+          </div>
+        </div>
+      </CollapsibleGroup>
 
       {/* AI Coach */}
       <SettingGroup title="AI Coach">
@@ -496,6 +533,68 @@ function SettingGroup({ title, children }: { title: string; children: React.Reac
         {title}
       </h2>
       <Card className="divide-y divide-border overflow-hidden">{children}</Card>
+    </div>
+  );
+}
+
+// Same header styling as SettingGroup, but starts closed and toggles on tap —
+// used for sections that are useful but not something most people need to
+// see every time (Equipment Preferences).
+function CollapsibleGroup({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="mb-2 flex w-full items-center gap-1.5 px-1 tap"
+      >
+        {icon && <span className="text-muted-foreground">{icon}</span>}
+        <h2 className="flex-1 text-left text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          {title}
+        </h2>
+        <ChevronDown
+          className={cn(
+            "h-4 w-4 text-muted-foreground transition-transform duration-200",
+            open && "rotate-180"
+          )}
+        />
+      </button>
+      {open && <Card className="divide-y divide-border overflow-hidden">{children}</Card>}
+    </div>
+  );
+}
+
+// One equipment-category row inside "Equipment Preferences": a label plus the
+// exclude/neutral/include tri-toggle, mapped to/from the profile's stored
+// `equipmentPrefs[category]` (undefined ⇒ "neutral").
+function EquipmentPrefRow({
+  label,
+  category,
+  prefs,
+  onChange,
+}: {
+  label: string;
+  category: EquipmentPrefCategory;
+  prefs: Partial<Record<EquipmentPrefCategory, "include" | "exclude">> | undefined;
+  onChange: (category: EquipmentPrefCategory, value: "include" | "exclude" | undefined) => void;
+}) {
+  const value: TriState = prefs?.[category] ?? "neutral";
+  return (
+    <div className="space-y-1.5">
+      <p className="text-sm font-medium">{label}</p>
+      <TriToggle
+        value={value}
+        onChange={(v) => onChange(category, v === "neutral" ? undefined : v)}
+      />
     </div>
   );
 }

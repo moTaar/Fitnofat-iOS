@@ -4,6 +4,7 @@ import type {
   AIGeneratedExercise,
   AIGeneratedRoutine,
   AIProgramResponse,
+  EquipmentPrefCategory,
   MuscleGroup,
   UserProfile,
 } from "./types";
@@ -158,18 +159,69 @@ function detectTokens(text: string): EquipmentToken[] {
   return [...out];
 }
 
+// Restricted tokens each Settings → Equipment Preferences category maps to.
+// Kept in sync with the categories offered in the UI (bands / free weights /
+// machines) — "freeWeights" covers both dumbbells and barbells since either
+// reasonably reads as "dumbbells and weight[s]".
+const PREF_CATEGORY_TOKENS: Record<EquipmentPrefCategory, EquipmentToken[]> = {
+  bands: ["resistance_band"],
+  freeWeights: ["dumbbell", "barbell"],
+  machines: ["machine", "cable"],
+};
+
+// The preset-derived base, adjusted by the athlete's explicit per-item
+// overrides (Settings → Equipment Preferences): "exclude" removes a token
+// even from an otherwise-unrestricted profile; "include" adds a token even
+// when the base preset wouldn't otherwise grant it. An item left unset
+// (the default) changes nothing — 100% backward compatible for anyone who
+// has never touched those toggles.
+function applyEquipmentPrefs(
+  base: Set<EquipmentToken> | null,
+  prefs: UserProfile["equipmentPrefs"]
+): Set<EquipmentToken> | null {
+  if (!prefs) return base;
+
+  const included: EquipmentToken[] = [];
+  const excluded: EquipmentToken[] = [];
+  for (const [category, tokens] of Object.entries(PREF_CATEGORY_TOKENS) as [
+    keyof typeof PREF_CATEGORY_TOKENS,
+    EquipmentToken[]
+  ][]) {
+    const state = prefs[category];
+    if (state === "include") included.push(...tokens);
+    else if (state === "exclude") excluded.push(...tokens);
+  }
+  if (!included.length && !excluded.length) return base;
+
+  // An unrestricted profile (base === null) only needs to materialize into a
+  // real Set when something is actually being excluded from it — a bare
+  // "include" on an already-unrestricted profile is a no-op.
+  if (base == null && !excluded.length) return null;
+
+  const result = new Set<EquipmentToken>(base ?? RESTRICTED_TOKENS);
+  for (const tok of included) result.add(tok);
+  for (const tok of excluded) result.delete(tok);
+  return result;
+}
+
 // The set of restricted equipment the athlete actually has. `null` = unrestricted.
 function allowedTokens(p: UserProfile): Set<EquipmentToken> | null {
+  let base: Set<EquipmentToken> | null;
   if (p.equipment === "mixed") {
     const items = p.equipmentMix ?? [];
     // No items specified — we can't safely constrain, so don't.
-    if (!items.length) return null;
-    const set = new Set<EquipmentToken>();
-    for (const item of items) detectTokens(item).forEach((tok) => set.add(tok));
-    return set;
+    if (!items.length) {
+      base = null;
+    } else {
+      const set = new Set<EquipmentToken>();
+      for (const item of items) detectTokens(item).forEach((tok) => set.add(tok));
+      base = set;
+    }
+  } else {
+    const preset = PRESET_TOKENS[p.equipment];
+    base = preset == null ? null : new Set(preset);
   }
-  const preset = PRESET_TOKENS[p.equipment];
-  return preset == null ? null : new Set(preset);
+  return applyEquipmentPrefs(base, p.equipmentPrefs);
 }
 
 // Human-readable equipment labels the model may use in the `equipment` field.

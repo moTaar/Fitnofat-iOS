@@ -27,11 +27,18 @@ export type Cuisine =
   | "standard" | "french" | "italian" | "korean"
   | "mediterranean" | "mexican" | "japanese";
 
+// A fine-grained override on top of `equipment`/`equipmentMix` (see the
+// matching comment in the web client's types.ts) — undefined = no override.
+export type EquipmentPreference = "include" | "exclude";
+export type EquipmentPrefCategory = "bands" | "freeWeights" | "machines";
+export type EquipmentPreferences = Partial<Record<EquipmentPrefCategory, EquipmentPreference>>;
+
 export interface UserProfile {
   name: string;
   goal: Goal;
   equipment: Equipment;
   equipmentMix?: string[];
+  equipmentPrefs?: EquipmentPreferences;
   experience: Experience;
   category: WorkoutCategory;
   daysPerWeek: number;

@@ -16,6 +16,7 @@ export function rowToProfile(row: any): UserProfile & { onboarded: boolean } {
     goal: row.goal,
     equipment: row.equipment,
     equipmentMix: row.equipment_mix ?? undefined,
+    equipmentPrefs: row.equipment_prefs ?? undefined,
     experience: row.experience,
     category: row.category ?? "mixed",
     daysPerWeek: row.days_per_week,
@@ -40,6 +41,7 @@ export function profileToRow(userId: string, p: Partial<UserProfile> & { onboard
   if (p.goal !== undefined) row.goal = p.goal;
   if (p.equipment !== undefined) row.equipment = p.equipment;
   if (p.equipmentMix !== undefined) row.equipment_mix = p.equipmentMix;
+  if (p.equipmentPrefs !== undefined) row.equipment_prefs = p.equipmentPrefs;
   if (p.experience !== undefined) row.experience = p.experience;
   if (p.category !== undefined) row.category = p.category;
   if (p.daysPerWeek !== undefined) row.days_per_week = p.daysPerWeek;

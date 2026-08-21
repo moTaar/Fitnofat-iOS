@@ -38,11 +38,24 @@ export type Cuisine =
   | "standard" | "french" | "italian" | "korean"
   | "mediterranean" | "mexican" | "japanese";
 
+// ── Equipment preferences (Settings → Equipment Preferences) ─────────────────
+// A fine-grained override on TOP OF `equipment`/`equipmentMix` above, for a
+// small set of items the athlete may want to explicitly allow or ban — e.g.
+// "I picked Bodyweight, but I do also have resistance bands" (include), or
+// "I picked Full gym, but never program leg-press machines for me" (exclude).
+// Undefined/absent = no override, `equipment`/`equipmentMix` decide alone.
+//   "include" → the AI MAY use this equipment if it's a good fit (not forced).
+//   "exclude" → the AI must NEVER use this equipment, no matter what.
+export type EquipmentPreference = "include" | "exclude";
+export type EquipmentPrefCategory = "bands" | "freeWeights" | "machines";
+export type EquipmentPreferences = Partial<Record<EquipmentPrefCategory, EquipmentPreference>>;
+
 export interface UserProfile {
   name: string;
   goal: Goal;
   equipment: Equipment;
   equipmentMix?: string[]; // specific items when equipment === "mixed"
+  equipmentPrefs?: EquipmentPreferences;
   experience: Experience;
   category: WorkoutCategory;
   daysPerWeek: number;

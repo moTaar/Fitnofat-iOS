@@ -82,6 +82,59 @@ export function SegmentedControl<T extends string | number>({
   );
 }
 
+// Three-way "traffic light" toggle: exclude (red) / neutral (default, no
+// preference) / include (green). Used for Settings → Equipment Preferences,
+// where undefined/neutral must always be the safe, behavior-preserving default.
+export type TriState = "exclude" | "neutral" | "include";
+
+const TRI_ORDER: TriState[] = ["exclude", "neutral", "include"];
+const TRI_LABEL: Record<TriState, string> = {
+  exclude: "Never",
+  neutral: "No pref",
+  include: "Maybe",
+};
+const TRI_ACTIVE_CLASS: Record<TriState, string> = {
+  exclude: "border-destructive bg-destructive/15 text-destructive",
+  neutral: "border-muted-foreground/40 bg-secondary text-foreground",
+  include: "border-success bg-success/15 text-success",
+};
+
+export function TriToggle({
+  value,
+  onChange,
+}: {
+  value: TriState;
+  onChange: (v: TriState) => void;
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-1.5" role="radiogroup">
+      {TRI_ORDER.map((state) => {
+        const active = state === value;
+        return (
+          <button
+            key={state}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => {
+              haptic();
+              onChange(state);
+            }}
+            className={cn(
+              "rounded-lg border px-2 py-1.5 text-xs font-semibold tap",
+              active
+                ? TRI_ACTIVE_CLASS[state]
+                : "border-border bg-card text-muted-foreground hover:border-muted-foreground/40"
+            )}
+          >
+            {TRI_LABEL[state]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Spinner({ className }: { className?: string }) {
   return (
     <div

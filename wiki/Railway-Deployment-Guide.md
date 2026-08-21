@@ -79,6 +79,7 @@ App Store submission, not something you host.
    add_profile_cuisine.sql
    add_subscriptions.sql
    add_workout_calories.sql
+   add_equipment_prefs.sql
    ```
 5. Go to **Project Settings → API**. You'll need three values repeatedly in
    the steps below — copy them somewhere handy:
