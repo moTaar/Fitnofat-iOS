@@ -100,13 +100,19 @@ App Store submission, not something you host.
 2. Authorize Railway to access your GitHub account if prompted, then pick
    your ForgeFit repo.
 3. Railway will try to auto-detect and deploy one service from the repo
-   root — that's fine, you'll reconfigure it in the next step, or you can
-   delete it and add services manually with **+ New → GitHub Repo** (same
-   repo, four times, one per folder).
+   root — **it will fail to build**, because the repo root has its own
+   `package.json` with an npm `workspaces` field (`server` + `web`), and
+   Railway's builder can't tell which app to run from there. That's
+   expected — don't debug it, just give it a Root Directory in the next
+   step (or delete it and add services manually with **+ New → GitHub
+   Repo**, same repo, four times, one per folder).
 
 You want to end up with **4 services** in this one project, each pointed at
 a different subfolder of the same repo. The subfolder is set via **Root
-Directory** in each service's **Settings** tab.
+Directory** in each service's **Settings → Source** tab — set this on every
+service *before* its first deploy, otherwise the build reads the repo root
+instead of the app folder and fails with a `No start command detected`
+error (see Troubleshooting).
 
 ---
 
@@ -354,6 +360,7 @@ everywhere they're referenced (step 9) and redeploy.
 | AI program generation silently falls back to the local generator | `GEMINI_API_KEY` isn't set on `server/` — this is a soft failure by design, not a crash |
 | Stripe checkout works but subscription never activates | Webhook URL/secret mismatch — re-check step 10, and check `accounts/` logs for signature errors |
 | Changing a `VITE_*` var didn't seem to do anything | You edited the variable but didn't trigger a redeploy — Vite bakes these in at build time only |
+| Build fails with `Found workspace with 2 packages` / `No start command detected` (Railpack) | **Root Directory** isn't set on this service, so the builder is reading the repo root's `package.json` (`workspaces: ["server","web"]`) instead of the app folder. Service → Settings → Source → Root Directory → set it to `server`/`accounts`/`web`/`admin`, and set Build/Start Command explicitly rather than relying on autodetection — see steps 5–8 |
 
 ---
 
