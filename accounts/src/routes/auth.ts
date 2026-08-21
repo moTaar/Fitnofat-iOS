@@ -3,6 +3,7 @@ import { z } from "zod";
 import { supabaseAdmin, supabaseAuth } from "../supabase";
 import { asyncHandler } from "../middleware";
 import { ensureStripeCustomer } from "../stripe";
+import { config } from "../config";
 
 export const authRouter = Router();
 
@@ -105,5 +106,59 @@ authRouter.post(
   "/logout",
   asyncHandler(async (_req, res) => {
     res.status(204).end();
+  })
+);
+
+// POST /auth/forgot-password — sends a Supabase recovery email pointing back
+// at the web app's /reset-password page. Always responds { ok: true }
+// regardless of whether the email is registered, so this endpoint can't be
+// used to enumerate accounts.
+const forgotPasswordSchema = z.object({ email: z.string().email() });
+
+authRouter.post(
+  "/forgot-password",
+  asyncHandler(async (req, res) => {
+    const { email } = forgotPasswordSchema.parse(req.body);
+    try {
+      await supabaseAuth.auth.resetPasswordForEmail(email, {
+        redirectTo: `${config.appUrl}/reset-password`,
+      });
+    } catch (err) {
+      // Best-effort — never let a Supabase/SMTP hiccup leak into the response
+      // (that would also leak whether the address is registered).
+      console.warn("[auth] forgot-password error:", err);
+    }
+    res.json({ ok: true });
+  })
+);
+
+// POST /auth/reset-password — completes the recovery flow. `accessToken` is
+// the one-time token Supabase put in the reset-email link (the client reads
+// it out of the URL fragment); we verify it identifies a real user, then set
+// the new password with the service-role client. No existing session/login
+// is required — the recovery token itself is the proof of email ownership.
+const resetPasswordSchema = z.object({
+  accessToken: z.string().min(1),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+});
+
+authRouter.post(
+  "/reset-password",
+  asyncHandler(async (req, res) => {
+    const { accessToken, password } = resetPasswordSchema.parse(req.body);
+
+    const { data, error } = await supabaseAuth.auth.getUser(accessToken);
+    if (error || !data.user) {
+      res.status(401).json({ error: "This reset link is invalid or has expired" });
+      return;
+    }
+
+    const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(
+      data.user.id,
+      { password }
+    );
+    if (updateErr) throw new Error(updateErr.message);
+
+    res.json({ ok: true });
   })
 );

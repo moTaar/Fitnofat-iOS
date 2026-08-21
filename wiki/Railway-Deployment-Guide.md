@@ -91,6 +91,14 @@ App Store submission, not something you host.
    turn **off** "Confirm email" for a smoother signup flow — ForgeFit's API
    auto-confirms users on signup either way, but this keeps Supabase's own
    settings consistent with that.
+7. **Required for "Forgot password" to work**: under **Authentication → URL
+   Configuration → Redirect URLs**, add your `web/` domain's reset page,
+   e.g. `https://<your-web-domain>/reset-password` (and
+   `http://localhost:5173/reset-password` if you also test locally).
+   Supabase refuses to send a recovery link to any URL not on this allowlist.
+   You won't have the real Railway domain yet at this point in the guide —
+   come back and add it once step 7 gives you the `web/` domain (this is the
+   same "wire it up after the fact" pattern as `CORS_ORIGIN` in step 9).
 
 ---
 
@@ -284,10 +292,15 @@ placeholder variables:
 2. **`accounts/` service → Variables**:
    - `CORS_ORIGIN` = same as above (add the `admin/` domain too, since admin
      also calls this service — comma-separated)
-   - `APP_URL` = your `web/` domain (Stripe checkout/portal redirects here)
-3. Saving a variable triggers an automatic redeploy of that service — no
+   - `APP_URL` = your `web/` domain (Stripe checkout/portal redirects here,
+     **and** it's where "forgot password" reset links point)
+3. **Supabase → Authentication → URL Configuration → Redirect Urls**: add
+   `https://<your-web-domain>/reset-password` now that you have the real
+   domain (see step 3.7) — without this, Supabase silently refuses to send
+   password-reset emails.
+4. Saving a variable triggers an automatic redeploy of that service — no
    manual restart needed.
-4. Re-check `web/`'s `VITE_API_URL` / `VITE_ACCOUNTS_URL` and `admin/`'s
+5. Re-check `web/`'s `VITE_API_URL` / `VITE_ACCOUNTS_URL` and `admin/`'s
    `VITE_ACCOUNTS_URL` actually point at the final domains from steps 5–6
    (not the placeholders you might have started with). If you change them,
    manually trigger a redeploy of `web`/`admin` (**Deployments → ⋮ →
@@ -361,6 +374,8 @@ everywhere they're referenced (step 9) and redeploy.
 | Stripe checkout works but subscription never activates | Webhook URL/secret mismatch — re-check step 10, and check `accounts/` logs for signature errors |
 | Changing a `VITE_*` var didn't seem to do anything | You edited the variable but didn't trigger a redeploy — Vite bakes these in at build time only |
 | Build fails with `Found workspace with 2 packages` / `No start command detected` (Railpack) | **Root Directory** isn't set on this service, so the builder is reading the repo root's `package.json` (`workspaces: ["server","web"]`) instead of the app folder. Service → Settings → Source → Root Directory → set it to `server`/`accounts`/`web`/`admin`, and set Build/Start Command explicitly rather than relying on autodetection — see steps 5–8 |
+| Deploy crashes with `npm error Missing script: "start"`, and the build itself seemed to succeed | Same root cause as above, different symptom: the **root** `package.json` happens to have a valid `build` script (`npm run build --workspaces`) so the build phase doesn't error, but it has no `start` script at all, so the deploy phase fails. This means Root Directory is unset here too — Railway is still running everything from the repo root. Fix identically: set Root Directory, then manually **Redeploy** (a settings change alone doesn't always trigger a rebuild) |
+| All four `/health`/domain URLs return `{"status":"error","code":404,"message":"Application not found"}` with header `x-railway-fallback: true` | This is Railway's edge proxy, not your app — it means no successful deployment is currently live behind that domain. Check each service's Deployments tab for the actual build/crash log rather than trusting the domain response |
 
 ---
 

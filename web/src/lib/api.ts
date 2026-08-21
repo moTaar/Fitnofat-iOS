@@ -184,6 +184,18 @@ export const api = {
   logout() {
     persist(null);
   },
+  forgotPassword: (email: string) =>
+    accountsRequest<{ ok: true }>(
+      "/auth/forgot-password",
+      { method: "POST", body: JSON.stringify({ email }) },
+      false
+    ),
+  resetPassword: (accessToken: string, password: string) =>
+    accountsRequest<{ ok: true }>(
+      "/auth/reset-password",
+      { method: "POST", body: JSON.stringify({ accessToken, password }) },
+      false
+    ),
 
   // account management — accounts microservice
   getAccount: () =>

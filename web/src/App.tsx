@@ -5,6 +5,7 @@ import { useTheme, useOnlineStatus, useOnVisible } from "./lib/hooks";
 import { auth } from "./lib/api";
 import { Layout } from "./components/Layout";
 import { Login } from "./pages/Login";
+import { ResetPassword } from "./pages/ResetPassword";
 import { Onboarding } from "./pages/Onboarding";
 import { Dashboard } from "./pages/Dashboard";
 import { Routines } from "./pages/Routines";
@@ -174,6 +175,9 @@ export default function App() {
     <>
       <Routes>
         <Route path="/login" element={authed ? <Navigate to="/" replace /> : <Login />} />
+        {/* Always reachable (not gated on `authed`) — the recovery link may be
+            opened in a tab where the user still has an old session. */}
+        <Route path="/reset-password" element={<ResetPassword />} />
 
         <Route
           path="/onboarding"
