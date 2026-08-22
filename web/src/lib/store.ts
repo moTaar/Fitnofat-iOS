@@ -10,6 +10,7 @@ import { SEED_EXERCISES } from "./exercises";
 import { sessionVolume, uid } from "./utils";
 import { estimateSessionCalories, needsAiMet, resolveKind } from "./calories";
 import { api, auth, AuthExpiredError, type Session } from "./api";
+import { toast } from "./toast";
 
 // Cached METs keyed by exercise id/slug, for reusing known values in calorie
 // estimates (so repeated exercises never re-hit the AI).
@@ -846,11 +847,21 @@ export const useStore = create<AppState>()(
       setEquipmentPref: (category, value) => {
         const p = get().profile;
         if (!p) return;
+        const prevPrefs = p.equipmentPrefs;
         const equipmentPrefs = { ...p.equipmentPrefs };
         if (value === undefined) delete equipmentPrefs[category];
         else equipmentPrefs[category] = value;
         set({ profile: { ...p, equipmentPrefs } });
-        void api.updateProfile({ equipmentPrefs }).catch(() => {});
+        api.updateProfile({ equipmentPrefs }).catch((err) => {
+          // The save failed server-side (e.g. the equipment_prefs DB column
+          // hasn't been migrated yet) — undo the optimistic flip instead of
+          // silently pretending it persisted, and say so.
+          const cur = get().profile;
+          if (cur) set({ profile: { ...cur, equipmentPrefs: prevPrefs } });
+          toast.error(
+            err instanceof Error ? `Couldn't save: ${err.message}` : "Couldn't save that change"
+          );
+        });
       },
     }),
     {
