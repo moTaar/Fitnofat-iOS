@@ -305,6 +305,7 @@ export const useStore = create<AppState>()(
                   category: data.profile.category ?? "mixed",
                   equipment: data.profile.equipment,
                   equipmentMix: data.profile.equipmentMix,
+                  equipmentPrefs: data.profile.equipmentPrefs,
                   experience: data.profile.experience,
                   daysPerWeek: data.profile.daysPerWeek,
                   sessionMinutes: data.profile.sessionMinutes,

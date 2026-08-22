@@ -144,7 +144,7 @@ error (see Troubleshooting).
    | `SUPABASE_ANON_KEY` | from step 3.5 |
    | `SUPABASE_SERVICE_ROLE_KEY` | from step 3.5 |
    | `GEMINI_API_KEY` | your Gemini key (leave blank to skip AI) |
-   | `GEMINI_MODEL` | `gemini-2.0-flash` (optional, this is the default) |
+   | `GEMINI_MODEL` | `gemini-3.6-flash` (optional, this is the default — check [ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models) for the current model name if generation starts failing with a 404) |
    | `CORS_ORIGIN` | *placeholder for now, e.g. `http://localhost:5173`* |
 
    > Don't set `PORT` — Railway injects it automatically and the app already
@@ -388,7 +388,7 @@ SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 GEMINI_API_KEY=            # optional
-GEMINI_MODEL=gemini-2.0-flash   # optional
+GEMINI_MODEL=gemini-3.6-flash   # optional
 CORS_ORIGIN=https://<web-domain>
 ```
 
