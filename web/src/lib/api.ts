@@ -76,17 +76,23 @@ export const auth = {
 // leaving callers awaiting it forever. Bound every request so it always
 // rejects instead of hanging.
 const REQUEST_TIMEOUT_MS = 15_000;
+// AI-backed endpoints can chain multiple sequential Gemini calls server-side
+// (e.g. program refresh = evolve program + regenerate nutrition), which
+// routinely takes longer than a normal CRUD round trip — give them more room
+// before the client gives up on them.
+const AI_REQUEST_TIMEOUT_MS = 60_000;
 
 async function rawRequest(
   base: string,
   path: string,
   init: RequestInit,
-  withAuth: boolean
+  withAuth: boolean,
+  timeoutMs: number = REQUEST_TIMEOUT_MS
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
   if (withAuth && session) headers.set("Authorization", `Bearer ${session.accessToken}`);
-  return fetch(`${base}${path}`, { ...init, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  return fetch(`${base}${path}`, { ...init, headers, signal: AbortSignal.timeout(timeoutMs) });
 }
 
 async function refreshSession(): Promise<boolean> {
@@ -110,15 +116,16 @@ async function request<T>(
   path: string,
   init: RequestInit = {},
   withAuth = true,
-  base: string = API_BASE
+  base: string = API_BASE,
+  timeoutMs?: number
 ): Promise<T> {
-  let res = await rawRequest(base, path, init, withAuth);
+  let res = await rawRequest(base, path, init, withAuth, timeoutMs);
 
   if (res.status === 401 && withAuth && session) {
     // Try a one-time refresh, then retry the original request.
     const refreshed = await refreshSession();
     if (!refreshed) throw new AuthExpiredError();
-    res = await rawRequest(base, path, init, withAuth);
+    res = await rawRequest(base, path, init, withAuth, timeoutMs);
   }
 
   if (!res.ok) {
@@ -233,12 +240,18 @@ export const api = {
     }),
 
   generateProgram: (profile: UserProfile) =>
-    request<ProgramResult>("/api/program/generate", {
-      method: "POST",
-      body: JSON.stringify(profile),
-    }),
+    request<ProgramResult>(
+      "/api/program/generate",
+      { method: "POST", body: JSON.stringify(profile) },
+      true, API_BASE, AI_REQUEST_TIMEOUT_MS
+    ),
 
-  refreshProgram: () => request<ProgramResult>("/api/program/refresh", { method: "POST" }),
+  refreshProgram: () =>
+    request<ProgramResult>(
+      "/api/program/refresh",
+      { method: "POST" },
+      true, API_BASE, AI_REQUEST_TIMEOUT_MS
+    ),
 
   createRoutine: (routine: Omit<Routine, "id" | "createdAt" | "source">) =>
     request<Routine>("/api/routines", { method: "POST", body: JSON.stringify(routine) }),
@@ -255,34 +268,45 @@ export const api = {
   // Lazily generate (and cache) an AI how-to guide for an exercise that isn't
   // in the client seed library. Returns the exercise with its `guide` populated.
   exerciseGuide: (e: { name: string; muscleGroup?: string; equipment?: string; force?: boolean }) =>
-    request<Exercise>("/api/exercises/guide", { method: "POST", body: JSON.stringify(e) }),
+    request<Exercise>(
+      "/api/exercises/guide",
+      { method: "POST", body: JSON.stringify(e) },
+      true, API_BASE, AI_REQUEST_TIMEOUT_MS
+    ),
 
   aiAssistExercise: (name: string) =>
-    request<Exercise>("/api/exercises/ai-assist", { method: "POST", body: JSON.stringify({ name }) }),
+    request<Exercise>(
+      "/api/exercises/ai-assist",
+      { method: "POST", body: JSON.stringify({ name }) },
+      true, API_BASE, AI_REQUEST_TIMEOUT_MS
+    ),
 
   // Resolve (and cache server-side) a MET for an exercise the client's built-in
   // Compendium table can't classify, so calories become accurate. Cheap + cached.
   exerciseMet: (e: { name: string; muscleGroup?: string; equipment?: string; kind?: string }) =>
-    request<{ slug: string; met: number; source: string }>("/api/exercises/met", {
-      method: "POST",
-      body: JSON.stringify(e),
-    }),
+    request<{ slug: string; met: number; source: string }>(
+      "/api/exercises/met",
+      { method: "POST", body: JSON.stringify(e) },
+      true, API_BASE, AI_REQUEST_TIMEOUT_MS
+    ),
 
   // Generate/evolve the nutrition plan. Optional profile fields (metabolic data
   // or the chosen `cuisine`) patch the profile server-side before planning.
   generateNutrition: (patch?: Partial<UserProfile>) =>
     request<{ nutritionPlan: NutritionPlan; profile: UserProfile & { onboarded: boolean } }>(
       "/api/nutrition/generate",
-      { method: "POST", body: JSON.stringify(patch ?? {}) }
+      { method: "POST", body: JSON.stringify(patch ?? {}) },
+      true, API_BASE, AI_REQUEST_TIMEOUT_MS
     ),
 
   // AI-verified nutritional lookup ("L'apport nutritif"). Returns null when no
   // food could be identified for the query.
   lookupFood: (query: string) =>
-    request<{ result: FoodLookupResult | null }>("/api/nutrition/lookup", {
-      method: "POST",
-      body: JSON.stringify({ query }),
-    }),
+    request<{ result: FoodLookupResult | null }>(
+      "/api/nutrition/lookup",
+      { method: "POST", body: JSON.stringify({ query }) },
+      true, API_BASE, AI_REQUEST_TIMEOUT_MS
+    ),
 
   saveWorkouts: (workouts: unknown) =>
     request<WorkoutSession[]>("/api/workouts", { method: "POST", body: JSON.stringify(workouts) }),
@@ -293,7 +317,8 @@ export const api = {
   aiChat: (messages: { role: "user" | "model"; content: string }[]) =>
     request<{ type: "question" | "done"; text: string; suggestions?: string[]; profile?: import("./types").UserProfile }>(
       "/api/ai/chat",
-      { method: "POST", body: JSON.stringify({ messages }) }
+      { method: "POST", body: JSON.stringify({ messages }) },
+      true, API_BASE, AI_REQUEST_TIMEOUT_MS
     ),
 
   aiCoach: (
@@ -307,5 +332,9 @@ export const api = {
       | { type: "message"; text: string; suggestions?: string[] }
       | { type: "update"; text: string; program: Program; routines: Routine[] }
       | { type: "log"; text: string; workout: WorkoutSession }
-    >("/api/ai/coach", { method: "POST", body: JSON.stringify({ messages }) }),
+    >(
+      "/api/ai/coach",
+      { method: "POST", body: JSON.stringify({ messages }) },
+      true, API_BASE, AI_REQUEST_TIMEOUT_MS
+    ),
 };
