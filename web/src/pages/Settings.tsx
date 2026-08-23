@@ -214,7 +214,7 @@ export function SettingsPage() {
             onChange={setEquipmentPref}
           />
           <EquipmentPrefRow
-            label="Dumbbells & free weights"
+            label="Free weights (dumbbells, barbells, kettlebells)"
             category="freeWeights"
             prefs={profile?.equipmentPrefs}
             onChange={setEquipmentPref}

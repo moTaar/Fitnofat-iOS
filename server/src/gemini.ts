@@ -161,11 +161,11 @@ function detectTokens(text: string): EquipmentToken[] {
 
 // Restricted tokens each Settings → Equipment Preferences category maps to.
 // Kept in sync with the categories offered in the UI (bands / free weights /
-// machines) — "freeWeights" covers both dumbbells and barbells since either
-// reasonably reads as "dumbbells and weight[s]".
+// machines) — "freeWeights" is deliberately broad: ANY hand-held weightlifting
+// implement (dumbbells, barbells/EZ-bars, kettlebells), not just dumbbells.
 const PREF_CATEGORY_TOKENS: Record<EquipmentPrefCategory, EquipmentToken[]> = {
   bands: ["resistance_band"],
-  freeWeights: ["dumbbell", "barbell"],
+  freeWeights: ["dumbbell", "barbell", "kettlebell"],
   machines: ["machine", "cable"],
 };
 
