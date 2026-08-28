@@ -129,6 +129,9 @@ interface AppState {
   // Save an edited/cloned/manual session as a NEW history entry (fresh id/date),
   // recomputing volume + calories, then sync.
   saveManualSession: (draft: ManualSessionDraft) => Promise<void>;
+  // Edit an existing history entry in place (keeps its id/clientId so the server
+  // upsert updates the same row), recomputing volume + calories, then sync.
+  updateManualSession: (id: string, draft: ManualSessionDraft) => Promise<void>;
   // Remove a session from history (optimistic) and delete it server-side.
   deleteWorkout: (id: string) => Promise<void>;
   // For exercises whose MET the local table can't classify, fetch a precise MET
@@ -746,6 +749,39 @@ export const useStore = create<AppState>()(
         set({ history: [session, ...s.history].sort((a, b) => b.startedAt - a.startedAt) });
         await get().syncPending();
         void get().backfillSessionCalories(clientId);
+      },
+
+      updateManualSession: async (id, draft) => {
+        const s = get();
+        const existing = s.history.find((w) => w.id === id || w.clientId === id);
+        if (!existing) return;
+        const bodyweightKg = s.profile?.bodyweightKg ?? undefined;
+        const metMap = metMapFrom(s.exercises);
+        const exercises: LoggedExercise[] = draft.exercises.map((ex) => ({
+          ...ex,
+          kind: ex.kind ?? resolveKind(ex),
+          calories: estimateSessionCalories([ex], bodyweightKg, metMap),
+        }));
+        const updated: WorkoutSession = {
+          ...existing,
+          routineName: draft.routineName || "Logged Workout",
+          startedAt: draft.startedAt,
+          endedAt: draft.startedAt + draft.durationSec * 1000,
+          durationSec: draft.durationSec,
+          exercises,
+          totalVolume: sessionVolume(exercises),
+          calories: estimateSessionCalories(exercises, bodyweightKg, metMap),
+          notes: draft.notes ?? existing.notes,
+          // Re-queue for sync; the server upsert keys on (user_id, client_id).
+          synced: false,
+        };
+        set({
+          history: s.history
+            .map((w) => (w === existing ? updated : w))
+            .sort((a, b) => b.startedAt - a.startedAt),
+        });
+        await get().syncPending();
+        void get().backfillSessionCalories(existing.clientId ?? existing.id);
       },
 
       deleteWorkout: async (id) => {

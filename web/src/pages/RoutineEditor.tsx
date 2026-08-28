@@ -191,7 +191,7 @@ export function RoutineEditor() {
         <div className="rounded-xl bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
       )}
 
-      <div className="sticky bottom-24 flex gap-2">
+      <div className="sticky bottom-[calc(var(--dock-height,4rem)_+_1rem)] flex gap-2">
         <Button variant="outline" className="flex-1" onClick={() => navigate(-1)} disabled={saving}>
           Cancel
         </Button>

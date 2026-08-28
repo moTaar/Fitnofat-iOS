@@ -8,7 +8,7 @@ export function Toaster() {
   const dismiss = useToastStore((s) => s.dismiss);
 
   return (
-    <div className="fixed bottom-24 left-0 right-0 z-[100] flex flex-col items-center gap-2 px-4 pointer-events-none">
+    <div className="fixed bottom-[calc(var(--dock-height,4rem)_+_1rem)] left-0 right-0 z-[100] flex flex-col items-center gap-2 px-4 pointer-events-none">
       {toasts.map((t) => (
         <ToastItem key={t.id} {...t} onDismiss={() => dismiss(t.id)} />
       ))}

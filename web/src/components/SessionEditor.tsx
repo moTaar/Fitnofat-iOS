@@ -88,17 +88,24 @@ export function SessionEditor({
   open,
   onClose,
   initial,
+  mode = "create",
   onSaved,
 }: {
   open: boolean;
   onClose: () => void;
   initial: WorkoutSession | null; // null → blank manual log
+  // "create" → save as a NEW entry (blank log or a clone of `initial`).
+  // "edit"   → update `initial` in place.
+  mode?: "create" | "edit";
   onSaved?: () => void;
 }) {
   const units = useStore((s) => s.profile?.units ?? "kg");
   const bodyweightKg = useStore((s) => s.profile?.bodyweightKg);
   const libraryExercises = useStore((s) => s.exercises);
   const saveManualSession = useStore((s) => s.saveManualSession);
+  const updateManualSession = useStore((s) => s.updateManualSession);
+
+  const isEdit = mode === "edit" && !!initial;
 
   const [name, setName] = useState("");
   const [startedAt, setStartedAt] = useState<number>(Date.now());
@@ -109,10 +116,11 @@ export function SessionEditor({
   const [seededFor, setSeededFor] = useState<string | null>(null);
 
   // Seed local state when the modal opens (or the source session changes).
-  const seedKey = open ? initial?.id ?? "blank" : "closed";
+  const seedKey = open ? `${mode}:${initial?.id ?? "blank"}` : "closed";
   if (open && seededFor !== seedKey) {
-    setName(initial?.routineName ? `${initial.routineName} (copy)` : "Manual Workout");
-    setStartedAt(Date.now());
+    setName(initial?.routineName || "Manual Workout");
+    // Editing keeps the original date; a clone / blank log starts "now".
+    setStartedAt(isEdit && initial ? initial.startedAt : Date.now());
     setDurationMin(initial ? Math.max(1, Math.round(initial.durationSec / 60)) : 30);
     setExercises((initial?.exercises ?? []).map(toDraft));
     setSeededFor(seedKey);
@@ -182,12 +190,17 @@ export function SessionEditor({
   const save = async () => {
     setSaving(true);
     try {
-      await saveManualSession({
+      const draft = {
         routineName: name.trim() || "Logged Workout",
         startedAt,
         durationSec: Math.max(0, Math.round(durationMin * 60)),
         exercises: logged.filter((ex) => ex.sets.length > 0),
-      });
+      };
+      if (isEdit && initial) {
+        await updateManualSession(initial.id, draft);
+      } else {
+        await saveManualSession(draft);
+      }
       onSaved?.();
       close();
     } finally {
@@ -196,7 +209,7 @@ export function SessionEditor({
   };
 
   return (
-    <Modal open={open} onClose={close} title={initial ? "Clone & edit" : "Log a workout"}>
+    <Modal open={open} onClose={close} title={isEdit ? "Edit session" : initial ? "Duplicate session" : "Log a workout"}>
       <div className="space-y-4">
         {/* Session meta */}
         <div className="space-y-2">
@@ -353,7 +366,7 @@ export function SessionEditor({
           onClick={save}
         >
           <Save className="h-4 w-4" />
-          {initial ? "Save as new entry" : "Save workout"}
+          {isEdit ? "Save changes" : initial ? "Save as new entry" : "Save workout"}
         </Button>
       </div>
 

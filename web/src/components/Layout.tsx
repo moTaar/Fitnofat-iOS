@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useRef } from "react";
 import { Home, Dumbbell, Apple, BarChart3, Settings, WifiOff, Play } from "lucide-react";
 import { cn, formatDuration } from "@/lib/utils";
 import { useNow, useOnlineStatus } from "@/lib/hooks";
@@ -16,15 +17,17 @@ const NAV = [
 ];
 
 /**
- * Sticky mini-banner visible on every Layout page while a workout is live.
- * Hides itself when the rest-timer occupies the same slot (they're mutually exclusive).
+ * "Return to workout" strip shown while a session is live. Rendered inside the
+ * bottom dock, directly above the nav — never a free-floating overlay — so page
+ * content can't scroll over it and neighbouring UI can't cover it.
+ * Hidden while the rest timer occupies the same slot (they're mutually exclusive).
  */
 function ActiveWorkoutBanner() {
   const navigate = useNavigate();
   const active = useStore((s) => s.active);
   const now = useNow(!!active, 1000);
 
-  // Hide if rest timer is running — RestTimerBar occupies the same position at higher z-index.
+  // Hide if rest timer is running — RestTimerBar takes the slot directly above the nav.
   const restRunning = !!active?.restTimer.active && !!active.restTimer.endsAt;
 
   if (!active || restRunning) return null;
@@ -32,7 +35,7 @@ function ActiveWorkoutBanner() {
   const elapsed = Math.floor((now - active.startedAt) / 1000);
 
   return (
-    <div className="fixed inset-x-0 bottom-[4.25rem] z-30 mx-auto max-w-md px-3">
+    <div className="px-3 pb-2">
       <button
         onClick={() => navigate("/workout")}
         aria-label="Return to active workout"
@@ -66,6 +69,28 @@ export function Layout() {
   const pendingSync = useStore((s) => s.history.some((h) => !h.synced));
   const location = useLocation();
   const inWorkout = location.pathname.startsWith("/workout");
+  const dockRef = useRef<HTMLDivElement>(null);
+
+  // The bottom dock (rest timer / active-workout banner / nav) is fixed, so it
+  // takes up no layout space. Publish its live height as `--dock-height` and
+  // reserve exactly that much room under the page content — this keeps the last
+  // row clear whether or not the banner or rest timer is currently showing, and
+  // it accounts for the safe-area inset baked into the nav's height. Floating
+  // siblings (CoachBubble, InstallPrompt, toasts) sit above the dock by reading
+  // the same variable, so there are no hand-tuned offsets to keep in sync.
+  useEffect(() => {
+    const el = dockRef.current;
+    if (!el) return;
+    const sync = () =>
+      document.documentElement.style.setProperty("--dock-height", `${el.offsetHeight}px`);
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      document.documentElement.style.removeProperty("--dock-height");
+    };
+  }, []);
 
   return (
     <div className="mx-auto flex min-h-[100dvh] w-full max-w-md flex-col">
@@ -76,44 +101,49 @@ export function Layout() {
         </div>
       )}
 
-      <main className="flex-1 px-4 pb-28 pt-3">
+      <main
+        className="flex-1 px-4 pt-3"
+        style={{ paddingBottom: "calc(var(--dock-height, 4rem) + 1rem)" }}
+      >
         <Outlet />
       </main>
 
-      {/* RestTimerBar and ActiveWorkoutBanner are mutually exclusive — they share the same
-          fixed slot above the nav. RestTimerBar wins (z-40) when rest is active. */}
-      <RestTimerBar />
-      <ActiveWorkoutBanner />
+      {/* Single fixed dock. Rest timer and active-workout banner stack directly
+          above the nav, so page content can't scroll over them and neither can
+          be covered by the other or by any floating sibling. */}
+      <div ref={dockRef} className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-md">
+        <RestTimerBar />
+        <ActiveWorkoutBanner />
+        <nav className="border-t border-border bg-card/95 backdrop-blur safe-bottom">
+          <div className="grid grid-cols-5">
+            {NAV.map(({ to, label, icon: Icon, end }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={end}
+                className={({ isActive }) =>
+                  cn(
+                    "flex flex-col items-center gap-0.5 py-2 text-[10px] font-medium tap",
+                    isActive ? "text-primary" : "text-muted-foreground"
+                  )
+                }
+              >
+                {({ isActive }) => (
+                  <>
+                    <Icon className={cn("h-5 w-5", isActive && "fill-primary/10")} />
+                    {label}
+                  </>
+                )}
+              </NavLink>
+            ))}
+          </div>
+        </nav>
+      </div>
 
       {/* Floating AI Coach launcher — hidden on the restart/onboarding chat page. */}
       {location.pathname !== "/ai-coach" && <CoachBubble />}
 
       {!inWorkout && <InstallPrompt />}
-
-      <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md border-t border-border bg-card/95 backdrop-blur safe-bottom">
-        <div className="grid grid-cols-5">
-          {NAV.map(({ to, label, icon: Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              className={({ isActive }) =>
-                cn(
-                  "flex flex-col items-center gap-0.5 py-2 text-[10px] font-medium tap",
-                  isActive ? "text-primary" : "text-muted-foreground"
-                )
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <Icon className={cn("h-5 w-5", isActive && "fill-primary/10")} />
-                  {label}
-                </>
-              )}
-            </NavLink>
-          ))}
-        </div>
-      </nav>
     </div>
   );
 }

@@ -55,7 +55,7 @@ export function RestTimerBar() {
   };
 
   return (
-    <div className="fixed inset-x-0 bottom-[4.25rem] z-40 mx-auto max-w-md px-4">
+    <div className="px-4 pb-2">
       <div className="rounded-2xl border border-primary/30 bg-card/95 p-3 shadow-2xl backdrop-blur animate-slide-up">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 text-primary">

@@ -70,7 +70,7 @@ export function InstallPrompt() {
   if (!show) return null;
 
   return (
-    <div className="fixed inset-x-0 bottom-[4.75rem] z-40 mx-auto max-w-md px-4 animate-slide-up">
+    <div className="fixed inset-x-0 bottom-[calc(var(--dock-height,4rem)_+_0.75rem)] z-40 mx-auto max-w-md px-4 animate-slide-up">
       <div className="rounded-2xl border border-border bg-card/95 p-4 shadow-2xl backdrop-blur">
         {!iosHelp ? (
           <div className="flex items-start gap-3">

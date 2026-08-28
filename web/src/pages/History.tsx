@@ -4,7 +4,7 @@ import {
 } from "recharts";
 import {
   Calendar, Clock, TrendingUp, Dumbbell, Flame, ChevronRight, Plus, HeartPulse,
-  Timer, Copy, RotateCw, Trash2, Trophy, Activity,
+  Timer, Copy, Pencil, RotateCw, Trash2, Trophy, Activity,
 } from "lucide-react";
 import { format } from "date-fns";
 import { useNavigate } from "react-router-dom";
@@ -45,10 +45,12 @@ export function History() {
   const units = useStore((s) => s.profile?.units ?? "kg");
   const [tab, setTab] = useState<"sessions" | "progress">("sessions");
   const [detail, setDetail] = useState<WorkoutSession | null>(null);
-  const [editor, setEditor] = useState<{ open: boolean; initial: WorkoutSession | null }>({
-    open: false,
-    initial: null,
-  });
+  const [editor, setEditor] = useState<{
+    open: boolean;
+    initial: WorkoutSession | null;
+    mode: "create" | "edit";
+  }>({ open: false, initial: null, mode: "create" });
+  const closeEditor = () => setEditor({ open: false, initial: null, mode: "create" });
 
   if (history.length === 0) {
     return (
@@ -59,7 +61,7 @@ export function History() {
           title="No workouts logged yet"
           description="Finish a workout, tell the AI coach what you did, or log one manually — it’ll show up here with calories and progress charts."
           action={
-            <Button onClick={() => setEditor({ open: true, initial: null })}>
+            <Button onClick={() => setEditor({ open: true, initial: null, mode: "create" })}>
               <Plus className="h-4 w-4" />
               Log a workout
             </Button>
@@ -68,7 +70,8 @@ export function History() {
         <SessionEditor
           open={editor.open}
           initial={editor.initial}
-          onClose={() => setEditor({ open: false, initial: null })}
+          mode={editor.mode}
+          onClose={closeEditor}
         />
       </div>
     );
@@ -78,7 +81,7 @@ export function History() {
     <div className="space-y-4">
       <div className="flex items-center justify-between pt-2">
         <h1 className="text-2xl font-extrabold tracking-tight">History</h1>
-        <Button size="sm" variant="outline" onClick={() => setEditor({ open: true, initial: null })}>
+        <Button size="sm" variant="outline" onClick={() => setEditor({ open: true, initial: null, mode: "create" })}>
           <Plus className="h-4 w-4" />
           Log
         </Button>
@@ -108,16 +111,21 @@ export function History() {
         session={detail}
         units={units}
         onClose={() => setDetail(null)}
+        onEdit={(s) => {
+          setDetail(null);
+          setEditor({ open: true, initial: s, mode: "edit" });
+        }}
         onClone={(s) => {
           setDetail(null);
-          setEditor({ open: true, initial: s });
+          setEditor({ open: true, initial: s, mode: "create" });
         }}
       />
 
       <SessionEditor
         open={editor.open}
         initial={editor.initial}
-        onClose={() => setEditor({ open: false, initial: null })}
+        mode={editor.mode}
+        onClose={closeEditor}
       />
     </div>
   );
@@ -188,11 +196,13 @@ function SessionDetail({
   session,
   units,
   onClose,
+  onEdit,
   onClone,
 }: {
   session: WorkoutSession | null;
   units: "kg" | "lb";
   onClose: () => void;
+  onEdit: (s: WorkoutSession) => void;
   onClone: (s: WorkoutSession) => void;
 }) {
   const navigate = useNavigate();
@@ -265,11 +275,15 @@ function SessionDetail({
           <RotateCw className="h-4 w-4" />
           Repeat
         </Button>
-        <Button variant="outline" onClick={() => onClone(session)}>
-          <Copy className="h-4 w-4" />
-          Clone & edit
+        <Button variant="outline" onClick={() => onEdit(session)}>
+          <Pencil className="h-4 w-4" />
+          Edit
         </Button>
       </div>
+      <Button variant="ghost" className="mt-2 w-full" onClick={() => onClone(session)}>
+        <Copy className="h-4 w-4" />
+        Duplicate session
+      </Button>
       <button
         onClick={() => setConfirmDelete(true)}
         className="mt-2 flex w-full items-center justify-center gap-1.5 py-2 text-sm text-destructive tap"

@@ -1,21 +1,14 @@
 import { useState } from "react";
 import { Sparkles, X } from "lucide-react";
-import { useStore } from "@/lib/store";
 import { AiCoach } from "@/pages/AiCoach";
 
 /**
  * Floating AI Coach launcher — a circular button tucked half-off the right
- * edge, just above the bottom nav. Tapping it expands the coach chat as a
+ * edge, just above the bottom dock. Tapping it expands the coach chat as a
  * bottom-sheet overlay. Replaces the old "Coach" nav tab.
  */
 export function CoachBubble() {
   const [open, setOpen] = useState(false);
-  const active = useStore((s) => s.active);
-
-  // Raise the bubble above the ActiveWorkoutBanner when a workout is live so
-  // they don't overlap (banner sits at bottom-[4.25rem], full width).
-  const restRunning = !!active?.restTimer.active && !!active.restTimer.endsAt;
-  const bannerVisible = !!active && !restRunning;
 
   return (
     <>
@@ -23,9 +16,9 @@ export function CoachBubble() {
         <button
           onClick={() => setOpen(true)}
           aria-label="Open AI Coach"
-          className={`fixed -right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-primary to-orange-600 text-white shadow-xl shadow-primary/30 tap animate-slide-up ${
-            bannerVisible ? "bottom-36" : "bottom-24"
-          }`}
+          // Rides just above the bottom dock, whatever its current height
+          // (nav only / + rest timer / + active-workout banner).
+          className="fixed -right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-primary to-orange-600 text-white shadow-xl shadow-primary/30 tap animate-slide-up bottom-[calc(var(--dock-height,4rem)_+_0.75rem)]"
         >
           {/* mr-5 offsets the icon left so it centers within the visible half */}
           <Sparkles className="h-6 w-6 mr-5" />
