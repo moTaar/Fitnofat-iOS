@@ -141,6 +141,12 @@ function SessionsTab({
   units: "kg" | "lb";
   onOpen: (s: WorkoutSession) => void;
 }) {
+  // Cold start only loads a recent window of sessions (see the server's
+  // /bootstrap). Anything older is fetched on demand from here.
+  const hasMore = useStore((s) => s.historyHasMore);
+  const loading = useStore((s) => s.historyLoading);
+  const loadOlder = useStore((s) => s.loadOlderHistory);
+
   return (
     <div className="space-y-2">
       {history.map((s) => (
@@ -168,6 +174,16 @@ function SessionsTab({
           </Card>
         </button>
       ))}
+
+      {hasMore && (
+        <button
+          onClick={() => void loadOlder()}
+          disabled={loading}
+          className="w-full rounded-2xl border border-dashed border-border py-3 text-sm font-medium text-muted-foreground tap hover:border-primary/40 hover:text-foreground disabled:opacity-60"
+        >
+          {loading ? "Loading…" : "Load older sessions"}
+        </button>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import { format } from "date-fns";
 import type {
   ActiveWorkout, Cuisine, EquipmentPrefCategory, EquipmentPreference, Exercise,
@@ -45,6 +45,10 @@ interface AppState {
   hydrated: boolean;
   bootstrapped: boolean;
   bootstrapping: boolean; // in-flight guard so overlapping bootstrap() calls don't race
+  // /bootstrap returns only a recent window of sessions; these track whether
+  // older ones exist on the server and whether a page request is in flight.
+  historyHasMore: boolean;
+  historyLoading: boolean;
   user: Session["user"] | null;
   profile: UserProfile | null;
   onboarded: boolean;
@@ -64,6 +68,7 @@ interface AppState {
   signup: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => void;
   bootstrap: () => Promise<void>;
+  loadOlderHistory: () => Promise<void>;
   // Escape hatch for the launch splash: proceed with whatever's cached instead
   // of waiting on a bootstrap request that's taking too long or is stuck.
   skipBootstrap: () => void;
@@ -197,12 +202,95 @@ function workoutToApi(w: WorkoutSession) {
   };
 }
 
+/**
+ * localStorage-backed store for zustand's `persist`, with two behaviours the
+ * default `createJSONStorage` doesn't give us:
+ *
+ *  1. **Quota recovery.** localStorage caps at ~5MB. A user with a long training
+ *     history eventually exceeds it, and the default storage swallows the
+ *     QuotaExceededError — every subsequent write silently fails, so the app
+ *     keeps running on stale cached state and offline mode quietly rots. Here a
+ *     failed write retries with progressively less history until it fits.
+ *  2. **Unsynced work is never dropped.** Trimming keeps every session that
+ *     hasn't reached the server, regardless of age — those exist nowhere else.
+ */
+const HISTORY_TRIM_STEPS = [200, 100, 50, 20, 0];
+
+function isQuotaError(err: unknown): boolean {
+  if (!(err instanceof DOMException)) return false;
+  return (
+    err.name === "QuotaExceededError" ||
+    err.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+    err.code === 22
+  );
+}
+
+const resilientStorage = {
+  getItem: (name: string): string | null => {
+    try {
+      return localStorage.getItem(name);
+    } catch {
+      // Private mode / storage disabled — run purely in memory.
+      return null;
+    }
+  },
+  removeItem: (name: string) => {
+    try {
+      localStorage.removeItem(name);
+    } catch {
+      /* nothing we can do */
+    }
+  },
+  setItem: (name: string, value: string) => {
+    try {
+      localStorage.setItem(name, value);
+      return;
+    } catch (err) {
+      if (!isQuotaError(err)) return;
+    }
+
+    // Over quota: shed history oldest-first, always keeping unsynced sessions.
+    let parsed: { state?: { history?: WorkoutSession[] } } | null = null;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return;
+    }
+    const all = parsed?.state?.history;
+    if (!parsed?.state || !Array.isArray(all)) return;
+
+    const unsynced = all.filter((w) => !w.synced);
+    const synced = all.filter((w) => w.synced).sort((a, b) => b.startedAt - a.startedAt);
+
+    for (const keep of HISTORY_TRIM_STEPS) {
+      parsed.state.history = [...unsynced, ...synced.slice(0, keep)].sort(
+        (a, b) => b.startedAt - a.startedAt
+      );
+      try {
+        localStorage.setItem(name, JSON.stringify(parsed));
+        if (keep === HISTORY_TRIM_STEPS[0]) return;
+        console.warn(
+          `[store] localStorage over quota — cached history trimmed to ${parsed.state.history.length} sessions. ` +
+            "Older sessions remain on the server and reload on demand."
+        );
+        return;
+      } catch (err) {
+        if (!isQuotaError(err)) return;
+      }
+    }
+    // Even an empty history didn't fit — give up rather than loop forever.
+    console.error("[store] localStorage write failed even after trimming history.");
+  },
+};
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
       hydrated: false,
       bootstrapped: false,
       bootstrapping: false,
+      historyHasMore: false,
+      historyLoading: false,
       user: auth.getSession()?.user ?? null,
       profile: null,
       onboarded: false,
@@ -330,7 +418,16 @@ export const useStore = create<AppState>()(
             routines: data.routines,
             exercises: [...SEED_EXERCISES, ...customs],
             history: [...pendingLocal, ...data.workouts],
+            historyHasMore: data.history?.hasMore ?? false,
           });
+
+          // If the user hasn't trained inside the bootstrap window, the recent
+          // slice comes back empty even though they have history. Pull one page
+          // immediately so the dashboard and analytics aren't blank for someone
+          // returning after a long layoff.
+          if (data.workouts.length === 0 && data.history?.hasMore) {
+            void get().loadOlderHistory();
+          }
 
           // Best-effort flush of anything queued offline.
           if (pendingLocal.length) void get().syncPending();
@@ -342,6 +439,38 @@ export const useStore = create<AppState>()(
           set({ bootstrapped: true });
         } finally {
           set({ bootstrapping: false });
+        }
+      },
+
+      /**
+       * Pulls the next page of sessions older than everything we currently hold.
+       * The History page calls this when the user scrolls past the initial
+       * window, so a long-time user's full archive stays reachable without
+       * paying for it on every cold start.
+       */
+      loadOlderHistory: async () => {
+        const s = get();
+        if (s.historyLoading || !s.historyHasMore || !auth.isAuthenticated()) return;
+        set({ historyLoading: true });
+        try {
+          const oldest = s.history.reduce(
+            (min, w) => (w.startedAt < min ? w.startedAt : min),
+            Number.POSITIVE_INFINITY
+          );
+          const before = Number.isFinite(oldest) ? oldest : undefined;
+          const page = await api.workoutHistory(before);
+          set((cur) => {
+            const seen = new Set(cur.history.map((w) => w.id));
+            const added = page.workouts.filter((w) => !seen.has(w.id));
+            return {
+              history: [...cur.history, ...added].sort((a, b) => b.startedAt - a.startedAt),
+              historyHasMore: page.hasMore,
+              historyLoading: false,
+            };
+          });
+        } catch {
+          // Offline or transient — leave hasMore set so the user can retry.
+          set({ historyLoading: false });
         }
       },
 
@@ -903,6 +1032,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: "forgefit-store-v2",
+      storage: createJSONStorage(() => resilientStorage),
       partialize: (s) => ({
         profile: s.profile,
         onboarded: s.onboarded,

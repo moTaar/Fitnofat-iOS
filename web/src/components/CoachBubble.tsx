@@ -1,6 +1,11 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Sparkles, X } from "lucide-react";
-import { AiCoach } from "@/pages/AiCoach";
+import { Spinner } from "./ui/misc";
+
+// The bubble renders on every screen, so a static import would pull the whole
+// coach (and its chat/image-upload machinery) into the entry bundle even for
+// users who never open it. Load it when the sheet is first opened instead.
+const AiCoach = lazy(() => import("@/pages/AiCoach").then((m) => ({ default: m.AiCoach })));
 
 /**
  * Floating AI Coach launcher — a circular button tucked half-off the right
@@ -40,7 +45,15 @@ export function CoachBubble() {
             >
               <X className="h-4 w-4" />
             </button>
-            <AiCoach embedded onClose={() => setOpen(false)} />
+            <Suspense
+              fallback={
+                <div className="flex flex-1 items-center justify-center">
+                  <Spinner className="text-primary" />
+                </div>
+              }
+            >
+              <AiCoach embedded onClose={() => setOpen(false)} />
+            </Suspense>
           </div>
         </div>
       )}

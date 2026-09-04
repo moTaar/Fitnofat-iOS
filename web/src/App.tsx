@@ -1,27 +1,35 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useStore } from "./lib/store";
 import { useTheme, useOnlineStatus, useOnVisible } from "./lib/hooks";
 import { auth } from "./lib/api";
 import { Layout } from "./components/Layout";
 import { Login } from "./pages/Login";
 import { ResetPassword } from "./pages/ResetPassword";
-import { Onboarding } from "./pages/Onboarding";
 import { Dashboard } from "./pages/Dashboard";
-import { Routines } from "./pages/Routines";
-import { RoutineEditor } from "./pages/RoutineEditor";
 import { ActiveWorkout } from "./pages/ActiveWorkout";
-import { LibraryPage } from "./pages/Library";
-import { AiCoach } from "./pages/AiCoach";
-import { Nutrition } from "./pages/Nutrition";
-import { History } from "./pages/History";
-import { SettingsPage } from "./pages/Settings";
-import { Billing } from "./pages/Billing";
 import { Dumbbell } from "lucide-react";
 import { Spinner } from "./components/ui/misc";
 import { Toaster } from "./components/ui/toast";
 import { Modal } from "./components/ui/modal";
 import { Button } from "./components/ui/button";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+
+// Everything below is code-split. Dashboard and ActiveWorkout stay eager
+// because they are the in-gym critical path — they must render immediately on
+// a cold, offline launch. The rest are secondary screens whose chunks the
+// service worker precaches anyway, so splitting costs nothing offline while
+// keeping heavy dependencies (Recharts, the exercise guide tables, the rep
+// counter's pose logic) out of the initial download.
+const Onboarding = lazy(() => import("./pages/Onboarding").then((m) => ({ default: m.Onboarding })));
+const Routines = lazy(() => import("./pages/Routines").then((m) => ({ default: m.Routines })));
+const RoutineEditor = lazy(() => import("./pages/RoutineEditor").then((m) => ({ default: m.RoutineEditor })));
+const LibraryPage = lazy(() => import("./pages/Library").then((m) => ({ default: m.LibraryPage })));
+const AiCoach = lazy(() => import("./pages/AiCoach").then((m) => ({ default: m.AiCoach })));
+const Nutrition = lazy(() => import("./pages/Nutrition").then((m) => ({ default: m.Nutrition })));
+const History = lazy(() => import("./pages/History").then((m) => ({ default: m.History })));
+const SettingsPage = lazy(() => import("./pages/Settings").then((m) => ({ default: m.SettingsPage })));
+const Billing = lazy(() => import("./pages/Billing").then((m) => ({ default: m.Billing })));
 
 const STALE_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 hours
 
@@ -51,6 +59,15 @@ function Splash({ onSkip }: { onSkip?: () => void }) {
           </Button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Shown while a lazily-loaded route chunk is fetched. */
+function RouteFallback() {
+  return (
+    <div className="flex min-h-[50dvh] items-center justify-center">
+      <Spinner className="text-primary" />
     </div>
   );
 }
@@ -172,60 +189,62 @@ export default function App() {
   if (authed && !bootstrapped) return <Splash onSkip={skipBootstrap} />;
 
   return (
-    <>
-      <Routes>
-        <Route path="/login" element={authed ? <Navigate to="/" replace /> : <Login />} />
-        {/* Always reachable (not gated on `authed`) — the recovery link may be
-            opened in a tab where the user still has an old session. */}
-        <Route path="/reset-password" element={<ResetPassword />} />
+    <ErrorBoundary>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/login" element={authed ? <Navigate to="/" replace /> : <Login />} />
+          {/* Always reachable (not gated on `authed`) — the recovery link may be
+              opened in a tab where the user still has an old session. */}
+          <Route path="/reset-password" element={<ResetPassword />} />
 
-        <Route
-          path="/onboarding"
-          element={
-            <RequireAuth>
-              <Onboarding />
-            </RequireAuth>
-          }
-        />
+          <Route
+            path="/onboarding"
+            element={
+              <RequireAuth>
+                <Onboarding />
+              </RequireAuth>
+            }
+          />
 
-        <Route
-          path="/workout"
-          element={
-            <RequireAuth>
-              <RequireOnboarding>
-                <ActiveWorkout />
-              </RequireOnboarding>
-            </RequireAuth>
-          }
-        />
+          <Route
+            path="/workout"
+            element={
+              <RequireAuth>
+                <RequireOnboarding>
+                  <ActiveWorkout />
+                </RequireOnboarding>
+              </RequireAuth>
+            }
+          />
 
-        <Route
-          element={
-            <RequireAuth>
-              <RequireOnboarding>
-                <Layout />
-              </RequireOnboarding>
-            </RequireAuth>
-          }
-        >
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/routines" element={<Routines />} />
-          <Route path="/routines/:id" element={<RoutineEditor />} />
-          <Route path="/routines/new" element={<RoutineEditor />} />
-          <Route path="/library" element={<LibraryPage />} />
-          <Route path="/ai-coach" element={<AiCoach />} />
-          <Route path="/nutrition" element={<Nutrition />} />
-          <Route path="/history" element={<History />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/billing" element={<Billing />} />
-        </Route>
+          <Route
+            element={
+              <RequireAuth>
+                <RequireOnboarding>
+                  <Layout />
+                </RequireOnboarding>
+              </RequireAuth>
+            }
+          >
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/routines" element={<Routines />} />
+            <Route path="/routines/:id" element={<RoutineEditor />} />
+            <Route path="/routines/new" element={<RoutineEditor />} />
+            <Route path="/library" element={<LibraryPage />} />
+            <Route path="/ai-coach" element={<AiCoach />} />
+            <Route path="/nutrition" element={<Nutrition />} />
+            <Route path="/history" element={<History />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/billing" element={<Billing />} />
+          </Route>
 
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+            <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
 
       <Toaster />
       {/* Checks once on cold launch whether a stale (>4 h) workout needs attention. */}
       <StaleWorkoutGuard />
-    </>
+    </ErrorBoundary>
   );
 }

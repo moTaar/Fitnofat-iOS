@@ -1,11 +1,23 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import compression from "compression";
 import { config } from "./config";
-import { errorHandler } from "./middleware";
+import { errorHandler, requireAdmin } from "./middleware";
+import { apiLimiter } from "./ratelimit";
 import { dataRouter } from "./routes/data";
 import { chatOnboarding } from "./gemini";
 
 const app = express();
+
+// Render (and any other proxy) terminates TLS upstream, so req.ip is the proxy
+// unless Express is told to read X-Forwarded-For. Rate limiting keys off req.ip,
+// so without this every request looks like it came from the same client.
+// `1` = trust exactly one hop; a bare `true` would let a client spoof its own IP.
+app.set("trust proxy", 1);
+
+app.use(helmet());
+app.use(compression());
 
 app.use(
   cors({
@@ -16,32 +28,46 @@ app.use(
     credentials: true,
   })
 );
-// 25mb: coach-chat messages can carry base64 photo attachments (up to 4 images
-// per message, client-side downscaled to ≤1280px JPEG before upload).
-app.use(express.json({ limit: "25mb" }));
+
+// Body limits are per-route, not global. Only the coach chat carries images
+// (up to 4 per message, client-side downscaled to ≤1280px JPEG); every other
+// endpoint takes small JSON and has no business accepting megabytes.
+const largeJson = express.json({ limit: "25mb" });
+app.use("/api/ai/coach", largeJson);
+app.use(express.json({ limit: "512kb" }));
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, ai: config.geminiApiKey ? "gemini" : "local-fallback", corsOrigins: config.corsOrigins });
+  res.json({ ok: true, ai: config.geminiApiKey ? "gemini" : "local-fallback" });
 });
 
-// Public Gemini connectivity test — visit in browser to see the real error.
-app.get("/ai-test", async (_req, res) => {
-  try {
-    const reply = await chatOnboarding([]);
-    res.json({ ok: true, reply });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+// Gemini connectivity check. Gated on ADMIN_API_KEY: it makes a real (billable)
+// model call, so leaving it open is a free way for anyone to burn the quota.
+app.get(
+  "/internal/ai-test",
+  requireAdmin,
+  async (_req, res) => {
+    try {
+      const reply = await chatOnboarding([]);
+      res.json({ ok: true, reply });
+    } catch (err) {
+      res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
   }
-});
+);
 
 // NOTE: Auth (signup/login/refresh) now lives in the separate accounts service.
 // Tokens remain Supabase JWTs, so requireAuth keeps verifying them locally here.
-app.use("/api", dataRouter);
+app.use("/api", apiLimiter, dataRouter);
 
 app.use(errorHandler);
 
-app.listen(config.port, () => {
-  console.log(`ForgeFit API listening on :${config.port}`);
-  console.log(`  CORS origins: ${config.corsOrigins.join(", ")}`);
-  console.log(`  AI engine: ${config.geminiApiKey ? "Gemini" : "local fallback"}`);
-});
+if (require.main === module) {
+  app.listen(config.port, () => {
+    console.log(`ForgeFit API listening on :${config.port}`);
+    console.log(`  CORS origins: ${config.corsOrigins.join(", ")}`);
+    console.log(`  AI engine: ${config.geminiApiKey ? "Gemini" : "local fallback"}`);
+    console.log(`  JWT verification: ${config.supabaseJwtSecret ? "local (HS256) + JWKS" : "JWKS + network fallback"}`);
+  });
+}
+
+export { app };

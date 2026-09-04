@@ -3,6 +3,9 @@ import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { asyncHandler, requireAuth, AuthedRequest } from "../middleware";
 import { requireEntitlement } from "../entitlements";
+import { aiLimiter, aiQuota, readUsage } from "../ratelimit";
+import { readShared, writeShared } from "../aicache";
+import { config } from "../config";
 import { generateProgram, refreshProgram, chatOnboarding, chatCoach, generateExerciseGuide, identifyExercise, estimateMet, type ChatMessage, type LoggedWorkoutDraft } from "../gemini";
 import { generateNutritionPlan, lookupFood, type RoutineLite } from "../nutrition";
 import { buildRefreshSummary, SessionLite } from "../analytics";
@@ -331,25 +334,85 @@ dataRouter.get(
   "/bootstrap",
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
-    const [profile, routines, exercisesRes, workoutsRes] = await Promise.all([
+    // Only a recent window of history ships on cold start. A user with years of
+    // sessions would otherwise pay for all of them on every launch — and the
+    // client mirrors this payload into localStorage, which has a hard ~5MB cap.
+    // Older sessions load on demand via GET /workouts (see below).
+    const since = new Date(Date.now() - config.bootstrapHistoryDays * 86_400_000).toISOString();
+    const [profile, routines, exercisesRes, workoutsRes, totalRes] = await Promise.all([
       loadProfile(userId),
       loadRoutines(userId),
       supabaseAdmin.from("exercises").select("*").eq("user_id", userId),
-      supabaseAdmin.from("workouts").select("*").eq("user_id", userId).order("started_at", { ascending: false }),
+      supabaseAdmin
+        .from("workouts")
+        .select("*")
+        .eq("user_id", userId)
+        .gte("started_at", since)
+        .order("started_at", { ascending: false }),
+      supabaseAdmin
+        .from("workouts")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId),
     ]);
     const aiRoutineIds = routines.filter((r) => r.source === "ai").map((r) => r.id);
     const [program, nutritionPlan] = await Promise.all([
       loadLatestProgram(userId, aiRoutineIds),
       loadLatestNutritionPlan(userId),
     ]);
+    const workouts = (workoutsRes.data ?? []).map(rowToWorkout);
     res.json({
       profile,
       program,
       nutritionPlan,
       routines,
       exercises: (exercisesRes.data ?? []).map(rowToExercise),
-      workouts: (workoutsRes.data ?? []).map(rowToWorkout),
+      workouts,
+      history: {
+        windowDays: config.bootstrapHistoryDays,
+        returned: workouts.length,
+        total: totalRes.count ?? workouts.length,
+        // Tells the client whether the History page needs to offer "load older".
+        hasMore: (totalRes.count ?? 0) > workouts.length,
+      },
     });
+  })
+);
+
+// ── GET /workouts : paged history, for anything outside the bootstrap window ──
+dataRouter.get(
+  "/workouts",
+  asyncHandler(async (req, res) => {
+    const userId = uid(req as AuthedRequest);
+    const q = z
+      .object({
+        before: z.coerce.number().int().positive().optional(), // epoch ms, exclusive
+        limit: z.coerce.number().int().min(1).max(200).optional(),
+      })
+      .parse(req.query);
+    const limit = q.limit ?? 100;
+
+    let query = supabaseAdmin
+      .from("workouts")
+      .select("*")
+      .eq("user_id", userId)
+      .order("started_at", { ascending: false })
+      .limit(limit + 1);
+    if (q.before) query = query.lt("started_at", new Date(q.before).toISOString());
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    const rows = data ?? [];
+    const page = rows.slice(0, limit).map(rowToWorkout);
+    res.json({ workouts: page, hasMore: rows.length > limit });
+  })
+);
+
+// ── GET /ai/usage : today's AI allowance, so the UI can show what's left ──────
+dataRouter.get(
+  "/ai/usage",
+  asyncHandler(async (req, res) => {
+    const userId = uid(req as AuthedRequest);
+    res.json({ used: await readUsage(userId), limits: config.aiDailyQuota });
   })
 );
 
@@ -369,6 +432,8 @@ dataRouter.put(
 // ── POST /program/generate : onboarding → AI program ─────────────────────────
 dataRouter.post(
   "/program/generate",
+  aiLimiter,
+  aiQuota("program_generate"),
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
     const profile = profileSchema.parse(req.body) as UserProfile;
@@ -383,6 +448,7 @@ dataRouter.post(
 // ── POST /program/refresh : adaptive evolution ───────────────────────────────
 dataRouter.post(
   "/program/refresh",
+  aiLimiter,
   requireEntitlement("program_refresh"),
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
@@ -421,6 +487,7 @@ dataRouter.post(
 // ── POST /nutrition/generate : build/evolve the diet plan on demand ───────────
 dataRouter.post(
   "/nutrition/generate",
+  aiLimiter,
   requireEntitlement("ai_nutrition"),
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
@@ -450,6 +517,8 @@ dataRouter.post(
 // ── POST /nutrition/lookup : AI-verified nutritional lookup ("L'apport nutritif") ──
 dataRouter.post(
   "/nutrition/lookup",
+  aiLimiter,
+  aiQuota("nutrition_lookup"),
   asyncHandler(async (req, res) => {
     const { query } = z.object({ query: z.string().min(1).max(200) }).parse(req.body);
     const result = await lookupFood(query);
@@ -539,6 +608,7 @@ dataRouter.post(
 // ── AI exercise assist (name → muscle group + equipment + guide in one shot) ──
 dataRouter.post(
   "/exercises/ai-assist",
+  aiLimiter,
   requireEntitlement("ai_exercise"),
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
@@ -557,7 +627,21 @@ dataRouter.post(
       return;
     }
 
-    const { muscleGroup, equipment, guide } = await identifyExercise(name);
+    // Shared cache next: this movement may already have been identified for a
+    // different user. Classification and guides describe the exercise, not the
+    // athlete, so there is nothing user-specific to regenerate.
+    const shared = await readShared(slug);
+    let muscleGroup: string;
+    let equipment: string;
+    let guide: Awaited<ReturnType<typeof identifyExercise>>["guide"];
+    if (shared?.guide && shared.muscleGroup && shared.equipment) {
+      muscleGroup = shared.muscleGroup;
+      equipment = shared.equipment;
+      guide = shared.guide;
+    } else {
+      ({ muscleGroup, equipment, guide } = await identifyExercise(name));
+      await writeShared({ slug, name, muscleGroup, equipment, guide });
+    }
 
     const { data, error } = await supabaseAdmin
       .from("exercises")
@@ -583,6 +667,7 @@ dataRouter.post(
 // ── AI exercise how-to guide (lazy: generated + cached on first view) ─────────
 dataRouter.post(
   "/exercises/guide",
+  aiLimiter,
   requireEntitlement("ai_exercise"),
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
@@ -609,7 +694,20 @@ dataRouter.post(
       return;
     }
 
-    const guide = await generateExerciseGuide(body.name, body.muscleGroup, body.equipment);
+    // Shared cache before paying for a generation — unless the caller forced one.
+    const sharedGuide = body.force ? null : await readShared(slug);
+    const guide = sharedGuide?.guide
+      ? sharedGuide.guide
+      : await generateExerciseGuide(body.name, body.muscleGroup, body.equipment);
+    if (!sharedGuide?.guide) {
+      await writeShared({
+        slug,
+        name: body.name,
+        muscleGroup: body.muscleGroup ?? null,
+        equipment: body.equipment ?? null,
+        guide,
+      });
+    }
 
     // Persist (upsert) so the exercise joins the library with its guide cached.
     const { data, error } = await supabaseAdmin
@@ -638,6 +736,7 @@ dataRouter.post(
 // classify. We cache the resolved MET so it's reused for free thereafter.
 dataRouter.post(
   "/exercises/met",
+  aiLimiter,
   requireEntitlement("ai_exercise"),
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
@@ -662,10 +761,29 @@ dataRouter.post(
       return;
     }
 
-    // Deterministic table first (free), then AI for genuinely unknown movements.
+    // Deterministic table first (free), then the shared cross-user cache, then
+    // AI for genuinely unknown movements.
     let met = metFromName(body.name) ?? 0;
     let source = met > 0 ? "table" : "ai";
-    if (met <= 0) met = await estimateMet(body.name, body.equipment, body.kind);
+    if (met <= 0) {
+      const sharedMet = await readShared(slug);
+      if (sharedMet?.met != null && sharedMet.met > 0) {
+        met = sharedMet.met;
+        source = "shared-cache";
+      }
+    }
+    if (met <= 0) {
+      met = await estimateMet(body.name, body.equipment, body.kind);
+      if (met > 0) {
+        await writeShared({
+          slug,
+          name: body.name,
+          muscleGroup: body.muscleGroup ?? null,
+          equipment: body.equipment ?? null,
+          met,
+        });
+      }
+    }
     if (met <= 0) {
       res.json({ slug, met: 0, source: "unresolved" });
       return;
@@ -747,6 +865,8 @@ const chatMessageSchema = z.object({
 
 dataRouter.post(
   "/ai/chat",
+  aiLimiter,
+  aiQuota("onboarding_chat"),
   asyncHandler(async (req, res) => {
     const { messages } = z.object({ messages: z.array(chatMessageSchema) }).parse(req.body);
     const reply = await chatOnboarding(messages as ChatMessage[]);
@@ -757,6 +877,7 @@ dataRouter.post(
 // ── AI ongoing coaching (for onboarded users — answers + routine adjustments) ──
 dataRouter.post(
   "/ai/coach",
+  aiLimiter,
   requireEntitlement("ai_coach"),
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);

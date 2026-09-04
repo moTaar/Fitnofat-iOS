@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch makes the in-flight run obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each of the four packages is installed and built from its own
+        # directory — the same way Render builds them (render.yaml sets a
+        # rootDir per service), so CI exercises the real deploy path rather
+        # than a workspace-hoisted tree that only exists locally.
+        package: [server, web, accounts, admin]
+
+    name: ${{ matrix.package }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+
+      - run: npm ci
+
+      # `--if-present` so a package without one of these scripts is skipped
+      # rather than failing the job.
+      - name: Typecheck
+        run: npm run typecheck --if-present
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Test
+        run: npm test --if-present
+
+      - name: Build
+        run: npm run build
+        env:
+          # The Vite builds inline these at compile time; they only need to be
+          # present and syntactically valid, not reachable.
+          VITE_API_URL: https://example.invalid
+          VITE_ACCOUNTS_URL: https://example.invalid

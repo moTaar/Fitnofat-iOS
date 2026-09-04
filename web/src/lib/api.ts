@@ -41,6 +41,23 @@ export class UpgradeRequiredError extends ApiError {
     this.feature = feature;
   }
 }
+// Thrown on 429: either a short burst limit or the daily AI allowance. The
+// server distinguishes the two via `code` — `upgrade_required` means a free
+// user is out of allowance (offer Pro), `quota_exceeded`/`rate_limited` mean
+// wait it out.
+export class RateLimitedError extends ApiError {
+  code?: string;
+  retryAfterSec?: number;
+  constructor(message: string, code?: string, retryAfterSec?: number) {
+    super(message, 429);
+    this.code = code;
+    this.retryAfterSec = retryAfterSec;
+  }
+  /** True when the fix is upgrading rather than waiting. */
+  get isUpgradePath() {
+    return this.code === "upgrade_required";
+  }
+}
 
 let session: Session | null = loadSession();
 const listeners = new Set<(s: Session | null) => void>();
@@ -131,15 +148,21 @@ async function request<T>(
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
     let feature: string | undefined;
+    let code: string | undefined;
     try {
       const body = await res.json();
       if (body?.error) message = body.error;
       if (body?.feature) feature = body.feature;
+      if (body?.code) code = body.code;
     } catch {
       /* ignore */
     }
     if (res.status === 401) throw new AuthExpiredError();
     if (res.status === 402) throw new UpgradeRequiredError(message, feature);
+    if (res.status === 429) {
+      const retry = Number(res.headers.get("retry-after"));
+      throw new RateLimitedError(message, code, Number.isFinite(retry) ? retry : undefined);
+    }
     throw new ApiError(message, res.status);
   }
 
@@ -159,7 +182,19 @@ export interface BootstrapData {
   nutritionPlan: NutritionPlan | null;
   routines: Routine[];
   exercises: Exercise[];
+  /** Recent sessions only — see `history` for the window the server applied. */
   workouts: WorkoutSession[];
+  history?: {
+    windowDays: number;
+    returned: number;
+    total: number;
+    hasMore: boolean;
+  };
+}
+
+export interface WorkoutPage {
+  workouts: WorkoutSession[];
+  hasMore: boolean;
 }
 
 interface ProgramResult {
@@ -232,6 +267,13 @@ export const api = {
 
   // data
   bootstrap: () => request<BootstrapData>("/api/bootstrap"),
+
+  /** Older history, past the window /bootstrap returns. `before` is epoch ms. */
+  workoutHistory: (before?: number, limit = 100) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (before) qs.set("before", String(before));
+    return request<WorkoutPage>(`/api/workouts?${qs}`);
+  },
 
   updateProfile: (profile: Partial<UserProfile>) =>
     request<UserProfile & { onboarded: boolean }>("/api/profile", {

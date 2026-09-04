@@ -15,6 +15,11 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      # Switches the error handler to generic 500 messages (upstream errors can
+      # carry key fragments and row contents) — keep this set in every
+      # internet-facing environment.
+      - key: NODE_ENV
+        value: production
       - key: PORT
         value: "8080"
       # Set to the deployed static site URL once known, e.g.
@@ -27,10 +32,20 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      # Optional but recommended: Supabase → Settings → API → JWT Secret.
+      # Lets the API verify access tokens in-process instead of making a network
+      # call to Supabase on every single request. Projects using the newer
+      # asymmetric signing keys can leave this unset — those verify via JWKS.
+      - key: SUPABASE_JWT_SECRET
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.6-flash
+      # Gates /internal/ai-test, which makes a real (billable) model call.
+      # Use the same value as the accounts service's ADMIN_API_KEY.
+      - key: ADMIN_API_KEY
+        sync: false
 
   # ── Accounts microservice (auth + accounts + Stripe billing) ─────────────
   - type: web
@@ -44,6 +59,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      - key: NODE_ENV
+        value: production
       - key: PORT
         value: "8090"
       # The static site URL (for CORS) and where Stripe redirects back to.
@@ -57,6 +74,9 @@ services:
       - key: SUPABASE_ANON_KEY
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # See the note on the API service — same value, same purpose.
+      - key: SUPABASE_JWT_SECRET
         sync: false
       # Stripe — Dashboard → Developers. Webhook endpoint: <this URL>/webhooks/stripe
       - key: STRIPE_SECRET_KEY

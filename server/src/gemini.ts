@@ -12,6 +12,50 @@ import type {
 const ENDPOINT = (model: string, key: string) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
+// Failure modes the callers can recover from by falling back to the local
+// deterministic generator instead of surfacing a 500. Thrown as plain Error
+// messages so the existing `err.message === ...` checks keep working.
+export const RECOVERABLE = new Set(["NO_API_KEY", "GEMINI_TIMEOUT", "GEMINI_BAD_JSON"]);
+
+/** True when the failure is one we have a local answer for. */
+export function isRecoverable(err: unknown): boolean {
+  return err instanceof Error && RECOVERABLE.has(err.message);
+}
+
+/**
+ * `fetch` with a hard deadline. Gemini occasionally accepts a connection and
+ * then never responds; without this a single stuck call pins a worker until the
+ * platform reaps it, which on a small instance is an outage.
+ */
+async function geminiFetch(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = config.geminiTimeoutMs
+): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    const name = (err as Error)?.name;
+    if (name === "TimeoutError" || name === "AbortError") throw new Error("GEMINI_TIMEOUT");
+    // DNS/TLS/socket failures are transient upstream problems, not our bug.
+    throw new Error("GEMINI_TIMEOUT");
+  }
+}
+
+/**
+ * Parse model output that is supposed to be JSON. The API is asked for JSON via
+ * responseMimeType/responseSchema, but that is a strong hint rather than a
+ * guarantee — an unguarded JSON.parse here turns a bad generation into a 500.
+ */
+function parseJson<T>(text: string, what: string): T {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    console.error(`[gemini] non-JSON ${what} response:`, text.slice(0, 300));
+    throw new Error("GEMINI_BAD_JSON");
+  }
+}
+
 // When the athlete's equipment is restricted we pin the `equipment` field to an
 // enum so the model can only label exercises with gear they actually own.
 function buildResponseSchema(equipmentEnum?: string[] | null) {
@@ -400,7 +444,7 @@ async function callGemini(
   const key = config.geminiApiKey.trim();
   if (!key) throw new Error("NO_API_KEY");
 
-  const res = await fetch(ENDPOINT(config.geminiModel, key), {
+  const res = await geminiFetch(ENDPOINT(config.geminiModel, key), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -422,7 +466,7 @@ async function callGemini(
   const data: any = await res.json();
   const text: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error("Gemini returned an empty response.");
-  return normalize(JSON.parse(text) as AIProgramResponse);
+  return normalize(parseJson<AIProgramResponse>(text, "program"));
 }
 
 // A focused "repair this program" prompt for the fast structured model. Lets us
@@ -480,7 +524,7 @@ export async function generateProgram(p: UserProfile): Promise<AIProgramResponse
     const ai = await callGemini(generatePrompt(p, allowed), allowedEquipmentLabels(allowed));
     return await ensureEquipmentCompliant(p, ai);
   } catch (err) {
-    if (err instanceof Error && err.message === "NO_API_KEY") return localProgram(p);
+    if (isRecoverable(err)) return localProgram(p);
     throw err;
   }
 }
@@ -494,7 +538,7 @@ export async function refreshProgram(
     const ai = await callGemini(refreshPrompt(p, analytics, allowed), allowedEquipmentLabels(allowed));
     return await ensureEquipmentCompliant(p, ai);
   } catch (err) {
-    if (err instanceof Error && err.message === "NO_API_KEY") {
+    if (isRecoverable(err)) {
       const base = localProgram(p);
       base.summary =
         "Offline progression applied: added ~2.5% load and a rep to compound lifts. Set GEMINI_API_KEY on the server for adaptive AI coaching.";
@@ -511,6 +555,19 @@ export async function refreshProgram(
     throw err;
   }
 }
+
+// Test seam. The equipment constraint model is the part of this file most
+// likely to regress silently — a bad token match programs gear the athlete
+// doesn't own, and nothing downstream catches it. Exported so the unit tests
+// can exercise it directly without going near the network.
+export const __equipment = {
+  detectTokens,
+  allowedTokens,
+  applyEquipmentPrefs,
+  exerciseViolations,
+  findEquipmentViolations,
+  enforceEquipment,
+};
 
 // ── Conversational onboarding chat ───────────────────────────────────────────
 
@@ -688,7 +745,7 @@ export async function chatOnboarding(messages: ChatMessage[]): Promise<ChatReply
       ? messages.map((m) => ({ role: m.role, parts: [{ text: m.content }] }))
       : [{ role: "user", parts: [{ text: "Hi, I'd like to set up my training program." }] }];
 
-  const res = await fetch(ENDPOINT(config.geminiModel, key), {
+  const res = await geminiFetch(ENDPOINT(config.geminiModel, key), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -915,7 +972,7 @@ export async function chatCoach(
 
   const contents = messages.map((m) => ({ role: m.role, parts: messageParts(m) }));
 
-  const res = await fetch(ENDPOINT(config.coachModel, key), {
+  const res = await geminiFetch(ENDPOINT(config.coachModel, key), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -924,7 +981,7 @@ export async function chatCoach(
       tools: [{ google_search: {} }],
       generationConfig: { temperature: 0.7 },
     }),
-  });
+  }, config.geminiCoachTimeoutMs);
 
   if (!res.ok) {
     const body = await res.text();
@@ -1084,7 +1141,7 @@ ${equipment ? `Equipment: ${equipment}` : ""}
 Write the how-to guide for performing "${name}" with correct form.`;
 
   try {
-    const res = await fetch(ENDPOINT(config.geminiModel, key), {
+    const res = await geminiFetch(ENDPOINT(config.geminiModel, key), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1104,7 +1161,7 @@ Write the how-to guide for performing "${name}" with correct form.`;
     const data: any = await res.json();
     const text: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new Error("Gemini returned an empty guide response.");
-    return normalizeGuide(JSON.parse(text) as ExerciseGuide, muscleGroup);
+    return normalizeGuide(parseJson<ExerciseGuide>(text, "guide"), muscleGroup);
   } catch (err) {
     if (err instanceof Error && err.message === "QUOTA_EXCEEDED") throw err;
     return fallbackGuide(muscleGroup);
@@ -1213,7 +1270,7 @@ export async function identifyExercise(name: string): Promise<{
   const prompt = `Identify this exercise and write a complete guide: "${name}"`;
 
   try {
-    const res = await fetch(ENDPOINT(config.geminiModel, key), {
+    const res = await geminiFetch(ENDPOINT(config.geminiModel, key), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1233,7 +1290,7 @@ export async function identifyExercise(name: string): Promise<{
     const data: any = await res.json();
     const text: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new Error("Gemini returned an empty identify response.");
-    const parsed = JSON.parse(text);
+    const parsed = parseJson<any>(text, "identify");
     const muscleGroup = (MUSCLE_GROUPS_ENUM as readonly string[]).includes(parsed.muscleGroup)
       ? (parsed.muscleGroup as MuscleGroup)
       : "Full Body";
@@ -1277,7 +1334,7 @@ export async function estimateMet(
     kind ? `\nType: ${kind}` : ""
   }\nReturn its moderate-intensity MET value.`;
   try {
-    const res = await fetch(ENDPOINT(config.geminiModel, key), {
+    const res = await geminiFetch(ENDPOINT(config.geminiModel, key), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1294,7 +1351,7 @@ export async function estimateMet(
     const data: any = await res.json();
     const text: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) return 0;
-    const met = Number(JSON.parse(text)?.met);
+    const met = Number(parseJson<any>(text, "met")?.met);
     // Guard against nonsense; the Compendium tops out around 18-23 METs.
     return met > 0.5 && met < 25 ? Math.round(met * 10) / 10 : 0;
   } catch {

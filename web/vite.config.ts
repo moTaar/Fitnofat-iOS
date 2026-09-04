@@ -22,6 +22,23 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Split the heavy, rarely-changing dependencies into their own chunks.
+        // Recharts in particular is only needed by History and the Dashboard
+        // graphs, and dragging it into the entry bundle delayed first paint on
+        // the gym-floor screens that never render a chart.
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          "vendor-charts": ["recharts"],
+        },
+      },
+    },
+    // The entry chunk should stay small now that routes are split; warn early
+    // if something drags a heavy dependency back into it.
+    chunkSizeWarningLimit: 400,
+  },
   plugins: [
     react(),
     VitePWA({
