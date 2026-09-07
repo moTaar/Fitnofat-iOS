@@ -120,7 +120,7 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
       setMessages([
         {
           role: "model",
-          content: `Hey${name}! I'm your ForgeFit coach. Ask me anything about training, tell me how you'd like to tweak your routines, or just tell me what you did today (e.g. "1 hour biking and 5 tibetans" or "40 km outdoor ride") and I'll log it for you. You can also attach a photo 📷 — a screenshot from another fitness app, a cardio machine's display, or a machine you don't know the name of — and I'll read it and log or explain it.`,
+          content: `Hey${name}! I'm your Fitnofat coach. Ask me anything about training, tell me how you'd like to tweak your routines, or just tell me what you did today (e.g. "1 hour biking and 5 tibetans" or "40 km outdoor ride") and I'll log it for you. You can also attach a photo 📷 — a screenshot from another fitness app, a cardio machine's display, or a machine you don't know the name of — and I'll read it and log or explain it.`,
           suggestions: COACH_SUGGESTIONS,
         },
       ]);

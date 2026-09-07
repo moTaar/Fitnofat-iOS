@@ -59,7 +59,7 @@ app.use(errorHandler);
 
 if (require.main === module) {
   app.listen(config.port, () => {
-    console.log(`ForgeFit Accounts service listening on :${config.port}`);
+    console.log(`Fitnofat Accounts service listening on :${config.port}`);
     console.log(`  CORS origins: ${config.corsOrigins.join(", ")}`);
     console.log(`  Stripe: ${config.stripeSecretKey ? "configured" : "MISSING key"}`);
   });

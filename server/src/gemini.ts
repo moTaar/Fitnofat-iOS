@@ -602,7 +602,7 @@ export interface ChatReply {
 
 // Plain-text system prompt. Model signals completion with [DONE], and attaches
 // tappable suggestion chips via [SUGGESTIONS: a | b | c] on the last line.
-const CHAT_SYSTEM = `You are ForgeFit's friendly AI personal-training coach doing a short onboarding interview.
+const CHAT_SYSTEM = `You are Fitnofat's friendly AI personal-training coach doing a short onboarding interview.
 Ask ONE concise, friendly question at a time to learn:
 1. Primary fitness goal (strength / muscle / weight loss / endurance / general fitness)
 2. Preferred workout style / category (calisthenics / weightlifting / cardio / yoga-pilates / mixed / other)
@@ -896,7 +896,7 @@ function coachSystem(p: UserProfile, routines: unknown, trainingContext?: string
     ? `Custom mix: ${p.equipmentMix.join(", ")}`
     : EQUIPMENT_TEXT[p.equipment] ?? p.equipment;
   const distanceUnit = p.units === "lb" ? "miles" : "kilometers";
-  return `You are ForgeFit's ongoing AI personal coach for an athlete who has ALREADY completed onboarding.
+  return `You are Fitnofat's ongoing AI personal coach for an athlete who has ALREADY completed onboarding.
 You already know everything about them — NEVER re-ask onboarding questions (goal, equipment, days, etc.).
 
 Today's date: ${new Date().toDateString()}

@@ -101,7 +101,7 @@ export function SettingsPage() {
             <Crown className="h-5 w-5" />
           </div>
           <div className="flex-1">
-            <p className="font-medium">{isPro ? "ForgeFit Pro" : "Free plan"}</p>
+            <p className="font-medium">{isPro ? "Fitnofat Pro" : "Free plan"}</p>
             <p className="text-xs text-muted-foreground">
               {isPro ? "Manage your subscription & billing" : "Upgrade to unlock AI features"}
             </p>
@@ -292,7 +292,7 @@ export function SettingsPage() {
         </button>
       </SettingGroup>
 
-      <p className="pb-4 text-center text-xs text-muted-foreground">ForgeFit · v{__APP_VERSION__} · PWA</p>
+      <p className="pb-4 text-center text-xs text-muted-foreground">Fitnofat · v{__APP_VERSION__} · PWA</p>
 
       <Modal open={confirmLogout} onClose={() => setConfirmLogout(false)} title="Log out?">
         <p className="text-sm text-muted-foreground">

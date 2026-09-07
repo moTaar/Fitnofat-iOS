@@ -1,4 +1,4 @@
-# ForgeFit — AI Workout, Nutrition & Coaching Tracker (PWA)
+# Fitnofat — AI Workout, Nutrition & Coaching Tracker (PWA)
 
 A minimalist, dark-mode-first, mobile-optimized training app with AI-driven
 program personalization, adaptive progression, an AI coach, macro-matched
@@ -202,7 +202,7 @@ Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 1. Push this repo to GitHub.
 2. Render → **New → Blueprint** → select the repo (`render.yaml` is detected).
 3. Fill the secrets marked `sync: false` on each service.
-4. Set `VITE_API_URL` and `VITE_ACCOUNTS_URL` on **forgefit-web**.
+4. Set `VITE_API_URL` and `VITE_ACCOUNTS_URL` on **fitnofat-web**.
 5. Deploy. Update `CORS_ORIGIN` once the web URL is final, then redeploy.
 6. Point the Stripe webhook at `<accounts URL>/webhooks/stripe`.
 

@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "ForgeFit",
+    name: "Fitnofat",
     platforms: [
         .iOS(.v17),
     ],
@@ -11,7 +11,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "ForgeFit",
+            name: "Fitnofat",
             dependencies: [
                 .product(name: "AudioKit", package: "AudioKit"),
             ],
@@ -21,8 +21,8 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "ForgeFitTests",
-            dependencies: ["ForgeFit"]
+            name: "FitnofatTests",
+            dependencies: ["Fitnofat"]
         ),
     ]
 )

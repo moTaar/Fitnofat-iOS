@@ -3,7 +3,7 @@ import SwiftUI
 // MARK: - App Entry Point
 
 @main
-struct ForgeFitApp: App {
+struct FitnofatApp: App {
     @StateObject private var appStore = AppStore.shared
     @StateObject private var authService = AuthService.shared
 

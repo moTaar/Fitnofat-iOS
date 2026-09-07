@@ -1,4 +1,4 @@
-// Typed client for the ForgeFit backend. Owns the auth session (access +
+// Typed client for the Fitnofat backend. Owns the auth session (access +
 // refresh tokens), persists it to localStorage, and transparently refreshes
 // an expired access token once on a 401.
 

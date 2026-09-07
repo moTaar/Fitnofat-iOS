@@ -1,4 +1,4 @@
--- ForgeFit database schema for Supabase (PostgreSQL)
+-- Fitnofat database schema for Supabase (PostgreSQL)
 -- Run this in the Supabase SQL editor (or via the CLI) once per project.
 --
 -- The backend connects with the SERVICE ROLE key and scopes every query by

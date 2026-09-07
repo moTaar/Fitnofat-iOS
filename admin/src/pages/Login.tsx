@@ -39,7 +39,7 @@ export default function Login({ onLogin }: Props) {
             <Shield className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-lg font-bold leading-none">ForgeFit Admin</h1>
+            <h1 className="text-lg font-bold leading-none">Fitnofat Admin</h1>
             <p className="text-xs text-zinc-500 mt-0.5">Internal management console</p>
           </div>
         </div>
@@ -53,7 +53,7 @@ export default function Login({ onLogin }: Props) {
               type="url"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://forgefit-accounts.onrender.com"
+              placeholder="https://fitnofat-accounts.onrender.com"
               required
               className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2.5 text-sm
                          placeholder:text-zinc-600 focus:outline-none focus:border-primary transition-colors"

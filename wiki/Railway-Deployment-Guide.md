@@ -1,17 +1,17 @@
-# Deploying ForgeFit to Railway (with Supabase)
+# Deploying Fitnofat to Railway (with Supabase)
 
-This guide walks through hosting the **entire ForgeFit app** on
+This guide walks through hosting the **entire Fitnofat app** on
 [Railway](https://railway.app), with [Supabase](https://supabase.com) as the
 Postgres database + auth provider. Follow the steps in order — later steps
 depend on URLs created in earlier ones.
 
-> ForgeFit was originally set up for Render (see `render.yaml`). This guide
+> Fitnofat was originally set up for Render (see `render.yaml`). This guide
 > is the Railway equivalent — same four services, same Supabase backend, just
 > configured through Railway's dashboard instead of a blueprint file.
 
 ## 1. What you're deploying
 
-ForgeFit is a **monorepo with four deployable pieces**, all pointing at one
+Fitnofat is a **monorepo with four deployable pieces**, all pointing at one
 shared Supabase project:
 
 | Folder | What it is | Type |
@@ -89,7 +89,7 @@ App Store submission, not something you host.
      bypasses Row Level Security; it only ever goes into the two backend
      services, never into `web/` or `admin/`)
 6. (Optional, recommended) Under **Authentication → Providers → Email**,
-   turn **off** "Confirm email" for a smoother signup flow — ForgeFit's API
+   turn **off** "Confirm email" for a smoother signup flow — Fitnofat's API
    auto-confirms users on signup either way, but this keeps Supabase's own
    settings consistent with that.
 7. **Required for "Forgot password" to work**: under **Authentication → URL
@@ -107,7 +107,7 @@ App Store submission, not something you host.
 
 1. Go to [railway.app/new](https://railway.app/new) → **Deploy from GitHub repo**.
 2. Authorize Railway to access your GitHub account if prompted, then pick
-   your ForgeFit repo.
+   your Fitnofat repo.
 3. Railway will try to auto-detect and deploy one service from the repo
    root — **it will fail to build**, because the repo root has its own
    `package.json` with an npm `workspaces` field (`server` + `web`), and
@@ -133,7 +133,7 @@ error (see Troubleshooting).
 3. **Build Command**: `npm install && npm run build`
 4. **Start Command**: `npm start`
 5. **Networking → Generate Domain** — this gives you a public URL like
-   `forgefit-api-production.up.railway.app`. Note it down; you'll need it in
+   `fitnofat-api-production.up.railway.app`. Note it down; you'll need it in
    step 8.
 6. **Settings → Healthcheck Path**: `/health`
 7. Go to the **Variables** tab and add:
@@ -168,7 +168,7 @@ Same pattern as the API, in a second service.
 3. **Build Command**: `npm install && npm run build`
 4. **Start Command**: `npm start`
 5. **Networking → Generate Domain** — note this URL down too (e.g.
-   `forgefit-accounts-production.up.railway.app`).
+   `fitnofat-accounts-production.up.railway.app`).
 6. **Settings → Healthcheck Path**: `/health`
 7. **Variables**:
 
@@ -211,12 +211,12 @@ deploy time, and no custom Railway start command needed.
    - `serve` automatically listens on `$PORT` when no `-l` flag is given —
      Railway injects `PORT`, so this needs no further setup.
 5. **Networking → Generate Domain** — this is the real app URL your users
-   will visit, e.g. `forgefit-web-production.up.railway.app`.
+   will visit, e.g. `fitnofat-web-production.up.railway.app`.
 6. **Variables**:
 
    | Variable | Value |
    | --- | --- |
-   | `VITE_API_URL` | the `server/` domain from step 5 (e.g. `https://forgefit-api-production.up.railway.app`) |
+   | `VITE_API_URL` | the `server/` domain from step 5 (e.g. `https://fitnofat-api-production.up.railway.app`) |
    | `VITE_ACCOUNTS_URL` | the `accounts/` domain from step 6 |
 
    > These are **build-time** variables (Vite bakes them into the JS bundle),
@@ -277,19 +277,19 @@ The admin panel calls the accounts service's `/admin/*` routes, gated by the
 ---
 
 ## 9. Wire the URLs together (do this after all 4 domains exist)
-VITE_API_URL="https://forgefit-api-production-b74d.up.railway.app"
-VITE_ACCOUNTS_URL="https://forgefit-accounts-production.up.railway.app"
-admin= https://forgefit-admin-production.up.railway.app
-web=https://forgefit-web-production.up.railway.app
-origin= https://forgefit-api-production-b74d.up.railway.app,https://forgefit-accounts-production.up.railway.app,https://forgefit-admin-production.up.railway.app,https://forgefit-web-production.up.railway.app
+VITE_API_URL="https://fitnofat-api-production-b74d.up.railway.app"
+VITE_ACCOUNTS_URL="https://fitnofat-accounts-production.up.railway.app"
+admin= https://fitnofat-admin-production.up.railway.app
+web=https://fitnofat-web-production.up.railway.app
+origin= https://fitnofat-api-production-b74d.up.railway.app,https://fitnofat-accounts-production.up.railway.app,https://fitnofat-admin-production.up.railway.app,https://fitnofat-web-production.up.railway.app
 Now that every service has a real Railway domain, go back and fix the
 placeholder variables:
 
 1. **`server/` service → Variables**:
    - `CORS_ORIGIN` = your `web/` domain, e.g.
-     `https://forgefit-web-production.up.railway.app`
+     `https://fitnofat-web-production.up.railway.app`
      (comma-separate multiple origins if you also test locally, e.g.
-     `https://forgefit-web-production.up.railway.app,http://localhost:5173`)
+     `https://fitnofat-web-production.up.railway.app,http://localhost:5173`)
 2. **`accounts/` service → Variables**:
    - `CORS_ORIGIN` = same as above (add the `admin/` domain too, since admin
      also calls this service — comma-separated)

@@ -59,7 +59,7 @@ struct OnboardingView: View {
             Image(systemName: "wave.2.hand")
                 .font(.system(size: 80))
                 .foregroundColor(.blue)
-            Text("Welcome to ForgeFit")
+            Text("Welcome to Fitnofat")
                 .font(.title)
                 .bold()
             Text("Let's set up your profile so we can create a personalized training plan for you.")

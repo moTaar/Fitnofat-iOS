@@ -1,11 +1,11 @@
-# Render Blueprint — deploys the ForgeFit API (web service) and the PWA (static site).
+# Render Blueprint — deploys the Fitnofat API (web service) and the PWA (static site).
 # In the Render dashboard: New → Blueprint, point it at this repo.
 # Fill in the Supabase + Gemini values (marked sync:false) per environment.
 
 services:
   # ── Backend API ─────────────────────────────────────────────────────────
   - type: web
-    name: forgefit-api
+    name: fitnofat-api
     runtime: node
     rootDir: server
     plan: free
@@ -23,7 +23,7 @@ services:
       - key: PORT
         value: "8080"
       # Set to the deployed static site URL once known, e.g.
-      # https://forgefit-web.onrender.com
+      # https://fitnofat-web.onrender.com
       - key: CORS_ORIGIN
         sync: false
       - key: SUPABASE_URL
@@ -49,7 +49,7 @@ services:
 
   # ── Accounts microservice (auth + accounts + Stripe billing) ─────────────
   - type: web
-    name: forgefit-accounts
+    name: fitnofat-accounts
     runtime: node
     rootDir: accounts
     plan: free
@@ -90,13 +90,13 @@ services:
 
   # ── Admin panel (static) ─────────────────────────────────────────────────
   - type: web
-    name: forgefit-admin
+    name: fitnofat-admin
     runtime: static
     rootDir: admin
     buildCommand: npm install && npm run build
     staticPublishPath: dist
     envVars:
-      # URL of the accounts microservice, e.g. https://forgefit-accounts.onrender.com
+      # URL of the accounts microservice, e.g. https://fitnofat-accounts.onrender.com
       - key: VITE_ACCOUNTS_URL
         sync: false
     routes:
@@ -106,16 +106,16 @@ services:
 
   # ── Frontend PWA (static) ────────────────────────────────────────────────
   - type: web
-    name: forgefit-web
+    name: fitnofat-web
     runtime: static
     rootDir: web
     buildCommand: npm install && npm run build
     staticPublishPath: dist
     envVars:
-      # Set to the deployed API URL, e.g. https://forgefit-api.onrender.com
+      # Set to the deployed API URL, e.g. https://fitnofat-api.onrender.com
       - key: VITE_API_URL
         sync: false
-      # Set to the deployed accounts service URL, e.g. https://forgefit-accounts.onrender.com
+      # Set to the deployed accounts service URL, e.g. https://fitnofat-accounts.onrender.com
       - key: VITE_ACCOUNTS_URL
         sync: false
     routes:

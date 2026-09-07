@@ -75,7 +75,7 @@ export function Dashboard() {
         "next-workout",
         5000,
         "Time to train 💪",
-        nextRoutine ? `Your ${nextRoutine.name} is ready in ForgeFit.` : "Your next workout is ready."
+        nextRoutine ? `Your ${nextRoutine.name} is ready in Fitnofat.` : "Your next workout is ready."
       );
     } else {
       setSetting("remindersEnabled", false);

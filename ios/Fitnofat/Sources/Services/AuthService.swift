@@ -22,7 +22,7 @@ final class AuthService {
 
     // Session persistence
     private let sessionKey = "forgefit_session"
-    private let keychainService = "com.forgefit.auth"
+    private let keychainService = "com.fitnofat.auth"
 
     // Callbacks for session changes
     private var listeners: [(Session?) -> Void] = []

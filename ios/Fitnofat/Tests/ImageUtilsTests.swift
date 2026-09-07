@@ -1,5 +1,5 @@
 import XCTest
-@testable import ForgeFit
+@testable import Fitnofat
 
 final class ImageUtilsTests: XCTestCase {
 

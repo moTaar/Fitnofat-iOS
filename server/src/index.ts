@@ -63,7 +63,7 @@ app.use(errorHandler);
 
 if (require.main === module) {
   app.listen(config.port, () => {
-    console.log(`ForgeFit API listening on :${config.port}`);
+    console.log(`Fitnofat API listening on :${config.port}`);
     console.log(`  CORS origins: ${config.corsOrigins.join(", ")}`);
     console.log(`  AI engine: ${config.geminiApiKey ? "Gemini" : "local fallback"}`);
     console.log(`  JWT verification: ${config.supabaseJwtSecret ? "local (HS256) + JWKS" : "JWKS + network fallback"}`);

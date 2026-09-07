@@ -1,4 +1,4 @@
-# ForgeFit — working notes
+# Fitnofat — working notes
 
 AI-driven workout / nutrition / coaching PWA. See `README.md` for the full
 architecture, API surface and environment reference; this file covers the things

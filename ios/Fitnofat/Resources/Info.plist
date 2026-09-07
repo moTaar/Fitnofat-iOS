@@ -5,15 +5,15 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>ForgeFit</string>
+    <string>Fitnofat</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
-    <string>com.forgefit.app</string>
+    <string>com.fitnofat.app</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>ForgeFit</string>
+    <string>Fitnofat</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -42,11 +42,11 @@
         <string>accelerometer</string>
     </array>
     <key>NSMotionUsageDescription</key>
-    <string>ForgeFit uses the motion sensors to automatically count your reps during strength training exercises.</string>
+    <string>Fitnofat uses the motion sensors to automatically count your reps during strength training exercises.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>ForgeFit uses photos to let you share workout machine setups and exercise form with your AI coach.</string>
+    <string>Fitnofat uses photos to let you share workout machine setups and exercise form with your AI coach.</string>
     <key>NSCameraUsageDescription</key>
-    <string>ForgeFit uses the camera to take photos of exercise setups for your AI coach.</string>
+    <string>Fitnofat uses the camera to take photos of exercise setups for your AI coach.</string>
     <key>UIViewControllerBasedStatusBarAppearance</key>
     <true/>
 </dict>

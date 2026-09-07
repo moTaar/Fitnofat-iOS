@@ -54,7 +54,7 @@ export function Login() {
         <div className="rounded-3xl bg-gradient-to-br from-primary to-orange-600 p-4 text-white shadow-lg shadow-primary/30">
           <Dumbbell className="h-9 w-9" />
         </div>
-        <h1 className="mt-5 text-3xl font-extrabold tracking-tight">ForgeFit</h1>
+        <h1 className="mt-5 text-3xl font-extrabold tracking-tight">Fitnofat</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           {mode === "login" && "Welcome back — let’s train."}
           {mode === "signup" && "Create your account to get started."}
@@ -145,7 +145,7 @@ export function Login() {
           )
         ) : (
           <>
-            {mode === "login" ? "New to ForgeFit?" : "Already have an account?"}{" "}
+            {mode === "login" ? "New to Fitnofat?" : "Already have an account?"}{" "}
             <button
               onClick={() => switchMode(mode === "login" ? "signup" : "login")}
               className="font-semibold text-primary tap"

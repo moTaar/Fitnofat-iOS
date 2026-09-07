@@ -313,7 +313,7 @@ export default function Dashboard({ onLogout }: Props) {
       {/* Header */}
       <header className="border-b border-zinc-800 px-6 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <span className="font-bold text-sm">ForgeFit</span>
+          <span className="font-bold text-sm">Fitnofat</span>
           <span className="text-zinc-600 text-sm">/</span>
           <span className="text-zinc-400 text-sm">Admin</span>
         </div>

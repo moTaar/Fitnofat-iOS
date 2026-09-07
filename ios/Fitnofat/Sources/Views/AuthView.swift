@@ -19,7 +19,7 @@ struct AuthView: View {
                         Image(systemName: "dumbbell.fill")
                             .font(.system(size: 60))
                             .foregroundColor(.blue)
-                        Text("ForgeFit")
+                        Text("Fitnofat")
                             .font(.largeTitle)
                             .bold()
                         Text("Your AI-powered fitness companion")

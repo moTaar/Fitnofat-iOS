@@ -78,7 +78,7 @@ export function InstallPrompt() {
               <Download className="h-5 w-5" />
             </div>
             <div className="flex-1">
-              <p className="font-semibold leading-tight">Install ForgeFit</p>
+              <p className="font-semibold leading-tight">Install Fitnofat</p>
               <p className="mt-0.5 text-sm text-muted-foreground">
                 Add to your home screen for instant, offline access on the gym floor.
               </p>

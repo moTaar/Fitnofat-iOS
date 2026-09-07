@@ -479,7 +479,7 @@ export function RepCounter({
             </div>
             <h2 className="text-center text-lg font-bold">Count reps automatically</h2>
             <p className="mx-auto mt-2 max-w-xs text-center text-sm text-muted-foreground">
-              Allow motion access and ForgeFit will count your reps from your phone's
+              Allow motion access and Fitnofat will count your reps from your phone's
               accelerometer — pocket it or strap it to an armband. You can always tap to
               correct the count.
             </p>

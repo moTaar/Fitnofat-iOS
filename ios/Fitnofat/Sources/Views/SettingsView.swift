@@ -37,7 +37,7 @@ struct SettingsView: View {
                         Image(systemName: billingStore.isEntitled(to: .aiCoach) ? "crown.fill" : "circle")
                             .foregroundColor(billingStore.isEntitled(to: .aiCoach) ? .yellow : .secondary)
                         VStack(alignment: .leading) {
-                            Text("ForgeFit Pro")
+                            Text("Fitnofat Pro")
                                 .font(.headline)
                             Text(billingStore.isEntitled(to: .aiCoach) ? "Active" : "Not Subscribed")
                                 .font(.caption)

@@ -181,7 +181,7 @@ export function Onboarding() {
           <div className="rounded-xl bg-primary p-2 text-primary-foreground">
             <Dumbbell className="h-5 w-5" />
           </div>
-          <span className="text-lg font-extrabold tracking-tight">ForgeFit</span>
+          <span className="text-lg font-extrabold tracking-tight">Fitnofat</span>
           <button
             onClick={() => setChatMode(false)}
             className="ml-auto text-sm text-muted-foreground underline underline-offset-2"
@@ -252,7 +252,7 @@ export function Onboarding() {
         <div className="rounded-xl bg-primary p-2 text-primary-foreground">
           <Dumbbell className="h-5 w-5" />
         </div>
-        <span className="text-lg font-extrabold tracking-tight">ForgeFit</span>
+        <span className="text-lg font-extrabold tracking-tight">Fitnofat</span>
         {step > 0 && (
           <span className="ml-auto text-sm text-muted-foreground">
             Step {step} of {TOTAL_STEPS - 1}

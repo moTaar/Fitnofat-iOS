@@ -76,7 +76,7 @@ export function Billing() {
             {isPro ? <Crown className="h-5 w-5" /> : <Sparkles className="h-5 w-5" />}
           </div>
           <div className="flex-1">
-            <p className="font-semibold">{isPro ? "ForgeFit Pro" : "Free plan"}</p>
+            <p className="font-semibold">{isPro ? "Fitnofat Pro" : "Free plan"}</p>
             <p className="text-sm text-muted-foreground">
               {isPro
                 ? subscription?.status === "past_due"

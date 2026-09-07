@@ -45,8 +45,8 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.svg", "robots.txt", "apple-touch-icon.png"],
       manifest: {
-        name: "ForgeFit — Workout Tracker",
-        short_name: "ForgeFit",
+        name: "Fitnofat — Workout Tracker",
+        short_name: "Fitnofat",
         description:
           "AI-personalized workout and exercise tracker with progression analytics. Works offline on the gym floor.",
         theme_color: "#0a0a0b",
