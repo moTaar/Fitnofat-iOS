@@ -121,6 +121,12 @@ session is revoked server-side. Refreshing still goes through Supabase.
   language, and proposes routine updates, grounded in the user's real recent history.
 - **Nutrition planning** re-scales with the training program — a program refresh
   regenerates the diet plan against the new metabolic demand.
+- **AI nutritionist + medical helper** (`POST /api/health/chat`) is the coach chat's
+  second desk. It answers against the user's own medical record, and can add to
+  that record from the conversation: `[ISSUE]` starts tracking something that needs
+  fixing, `[RECORD]` files a fact into the medical history. `POST /api/health/review`
+  compiles the whole record into a ranked worklist for the **Medical dashboard**.
+  See [Medical & health](#medical--health) for the safety and consent rules.
 - **Offline resilience** — the PWA caches the app shell (Workbox) and mirrors data
   to `localStorage`. The active workout (incl. rest-timer `endsAt`) survives a refresh.
   Workouts finished offline are queued with a `clientId` and **auto-synced** (idempotent
@@ -151,6 +157,10 @@ ever generated once across the whole user base.
 
 `GET /api/ai/usage` returns the caller's allowance and consumption for today.
 
+The medical routes are the one place all three layers stack: a burst limit, the
+`ai_medical` entitlement **and** a daily quota, because they run the priciest
+model over the largest context in the app.
+
 ## API surface
 ### Data API (`server/`, all under `/api`, auth required)
 | Method | Path | Purpose |
@@ -165,6 +175,12 @@ ever generated once across the whole user base.
 | POST | `/exercises` `/exercises/ai-assist` `/exercises/guide` `/exercises/met` | library + AI assist |
 | POST | `/ai/chat` `/ai/coach` | onboarding chat / ongoing coaching |
 | POST/DELETE | `/workouts[/:id]` | save (bulk, idempotent) / delete history |
+| GET | `/health/overview` | health profile + tracked issues + medical history |
+| PUT/POST | `/health/profile` `/health/consent` | medical background / AI opt-in |
+| POST/PATCH/DELETE | `/health/issues[/:id]` | the "things to work on" tracker |
+| POST | `/health/issues/:id/events` | check-in or measurement on an issue |
+| POST/DELETE | `/health/records[/:id]` | medical history entries |
+| POST | `/health/review` `/health/chat` | AI health review / medical + nutrition chat |
 
 `/bootstrap` returns only the last `BOOTSTRAP_HISTORY_DAYS` (default 120) of
 sessions plus a `history` block describing the window; the client loads older
@@ -179,6 +195,42 @@ inside the browser's quota for long-time users.
 | * | `/billing/*` | Stripe checkout + portal |
 | POST | `/webhooks/stripe` | Stripe webhook (raw body, signature-verified) |
 | * | `/admin/*` | admin panel API, gated on `ADMIN_API_KEY` |
+
+## Medical & health
+The Medical tab and the coach chat's **Health** desk share one record, stored in
+the same database as everything else (`health_profile`, `health_issues`,
+`health_issue_events`, `health_records`). Four rules shape the design:
+
+**Consent gates the model, not the data.** The CRUD routes always work — it is the
+user's record, in the user's database. The two AI routes (`/health/review`,
+`/health/chat`) return 403 `medical_consent_required` until the user opts in,
+because those are the only paths that send health data to a model provider.
+Consent is a timestamp on `health_profile` and can be revoked from the Medical tab.
+
+**The model is medical-tuned when one is available.** `MEDICAL_AI_PROVIDER=auto`
+routes to Vertex AI (the Med-PaLM lineage: `medlm-medium`/`medlm-large` and
+successors) when a service account is configured, and falls back to Gemini
+otherwise — including per-request, if Vertex fails or the turn carries a photo
+that the text-only `:predict` contract can't take. Every reply reports the model
+that actually answered, so a fallback is never silent. Vertex needs OAuth rather
+than an API key; `server/src/vertex.ts` mints tokens from the service-account key
+directly, with no Google SDK.
+
+**Emergencies are screened for in code, not left to the model.** `detectRedFlags`
+runs over both the user's message and the model's reply; a hit prepends emergency
+guidance and marks the turn urgent regardless of what the model said — and still
+fires when the model call fails outright. The system prompt additionally forbids
+diagnosing, prescribing, and any dosing of prescription medication.
+
+**The AI never owns the tracker.** A review updates an issue's wording, plan and
+severity by reusing its `key`; `status` and `progress` stay user-owned, ticked
+steps stay ticked, metric readings survive a rewrite, and issues the user resolved
+or dismissed are never reopened. "This looks resolved" comes back as a suggestion
+the user confirms with one tap. The rules live in `reconcileIssues`
+(`server/src/medical.ts`) and are covered by `server/src/medical.test.ts`.
+
+Health data is also the one thing the web client does **not** mirror to
+`localStorage` — it is fetched per session and dropped on logout.
 
 ## Environment reference
 Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
@@ -196,7 +248,14 @@ Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 | `QUOTA_PROGRAM_FREE` / `_PRO` | server | `3` / `30` | daily program generations |
 | `QUOTA_ONBOARD_FREE` / `_PRO` | server | `60` / `300` | daily onboarding chat turns |
 | `QUOTA_LOOKUP_FREE` / `_PRO` | server | `25` / `250` | daily food lookups |
+| `QUOTA_MEDICAL_FREE` / `_PRO` | server | `0` / `60` | daily medical AI calls (Pro-only feature) |
 | `BOOTSTRAP_HISTORY_DAYS` | server | `120` | history window returned on cold start |
+| `MEDICAL_AI_PROVIDER` | server | `auto` | `auto` / `vertex` / `gemini` — who answers medical questions |
+| `MEDICAL_AI_MODEL` | server | `medlm-medium` | Vertex publisher model for the medical desk |
+| `MEDICAL_AI_GEMINI_MODEL` | server | coach model | model used when the medical desk runs on Gemini |
+| `MEDICAL_AI_TIMEOUT_MS` | server | `90000` | hard deadline on medical model calls |
+| `VERTEX_PROJECT_ID` / `VERTEX_LOCATION` | server | — / `us-central1` | Vertex AI project and region |
+| `VERTEX_SERVICE_ACCOUNT_JSON` | server | — | service-account key JSON (raw or base64) for Vertex OAuth |
 
 ## Deploy to Render
 1. Push this repo to GitHub.

@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useRef } from "react";
-import { Home, Dumbbell, Apple, BarChart3, Settings, WifiOff, Play } from "lucide-react";
+import { Home, Dumbbell, Apple, HeartPulse, BarChart3, Settings, WifiOff, Play } from "lucide-react";
 import { cn, formatDuration } from "@/lib/utils";
 import { useNow, useOnlineStatus } from "@/lib/hooks";
 import { useStore } from "@/lib/store";
@@ -12,6 +12,7 @@ const NAV = [
   { to: "/", label: "Home", icon: Home, end: true },
   { to: "/routines", label: "Routines", icon: Dumbbell, end: false },
   { to: "/nutrition", label: "Nutrition", icon: Apple, end: false },
+  { to: "/health", label: "Medical", icon: HeartPulse, end: false },
   { to: "/history", label: "History", icon: BarChart3, end: false },
   { to: "/settings", label: "Settings", icon: Settings, end: false },
 ];
@@ -115,7 +116,7 @@ export function Layout() {
         <RestTimerBar />
         <ActiveWorkoutBanner />
         <nav className="border-t border-border bg-card/95 backdrop-blur safe-bottom">
-          <div className="grid grid-cols-5">
+          <div className="grid grid-cols-6">
             {NAV.map(({ to, label, icon: Icon, end }) => (
               <NavLink
                 key={to}

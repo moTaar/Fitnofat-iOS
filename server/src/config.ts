@@ -14,6 +14,10 @@ function num(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+// The coach model doubles as the medical fallback when Vertex isn't configured,
+// so it's resolved once here rather than duplicated in the object below.
+const COACH_MODEL = process.env.GEMINI_COACH_MODEL ?? "gemini-2.5-pro";
+
 export const config = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   isProd: process.env.NODE_ENV === "production",
@@ -35,12 +39,39 @@ export const config = {
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
   geminiModel: process.env.GEMINI_MODEL ?? "gemini-3.6-flash",
   // Stronger model with thinking + search grounding for routine-adjustment coaching.
-  coachModel: process.env.GEMINI_COACH_MODEL ?? "gemini-2.5-pro",
+  coachModel: COACH_MODEL,
   // Upstream call budget. Gemini occasionally hangs; without a bound, a stuck
   // request pins a worker until the platform kills it.
   geminiTimeoutMs: num("GEMINI_TIMEOUT_MS", 45_000),
   // The coach model thinks + grounds with search, so it legitimately runs longer.
   geminiCoachTimeoutMs: num("GEMINI_COACH_TIMEOUT_MS", 90_000),
+
+  // ── Medical / health AI (nutritionist + medical helper) ────────────────────
+  // Which backend answers medical questions:
+  //   "vertex" — Google Cloud Vertex AI, where the Med-PaLM lineage is served
+  //              (MedLM / medical-tuned publisher models). Needs a service
+  //              account, not an API key.
+  //   "gemini" — the same generativelanguage endpoint the rest of the app uses.
+  //   "auto"   — Vertex when it's fully configured, Gemini otherwise (default).
+  // Vertex is never a hard requirement: a medical request degrades to Gemini
+  // rather than failing, because a health question going unanswered is worse
+  // than one answered by the general model (the reply says which model ran).
+  medicalProvider: (process.env.MEDICAL_AI_PROVIDER ?? "auto") as "auto" | "vertex" | "gemini",
+  // Vertex publisher model id. Med-PaLM 2 ships as `medlm-medium`/`medlm-large`;
+  // medical-tuned successors and plain `gemini-*` ids work here too — the caller
+  // picks the request shape from the id (see server/src/medical.ts).
+  medicalModel: process.env.MEDICAL_AI_MODEL ?? "medlm-medium",
+  // Model used when the request runs on the Gemini provider.
+  medicalGeminiModel: process.env.MEDICAL_AI_GEMINI_MODEL ?? COACH_MODEL,
+  // Medical answers are longer and reasoned; give them the coach's budget.
+  medicalTimeoutMs: num("MEDICAL_AI_TIMEOUT_MS", 90_000),
+
+  // Vertex AI credentials. `VERTEX_SERVICE_ACCOUNT_JSON` takes the key JSON
+  // inline (raw or base64); `GOOGLE_APPLICATION_CREDENTIALS` points at a file.
+  vertexProjectId: process.env.VERTEX_PROJECT_ID ?? "",
+  vertexLocation: process.env.VERTEX_LOCATION ?? "us-central1",
+  vertexServiceAccountJson: process.env.VERTEX_SERVICE_ACCOUNT_JSON ?? "",
+  googleCredentialsPath: process.env.GOOGLE_APPLICATION_CREDENTIALS ?? "",
 
   // Shared secret gating /internal diagnostics. Same value as the accounts
   // service's ADMIN_API_KEY. Unset ⇒ the routes report 503 rather than running.
@@ -60,6 +91,9 @@ export const config = {
     program_generate: { free: num("QUOTA_PROGRAM_FREE", 3), pro: num("QUOTA_PROGRAM_PRO", 30) },
     onboarding_chat: { free: num("QUOTA_ONBOARD_FREE", 60), pro: num("QUOTA_ONBOARD_PRO", 300) },
     nutrition_lookup: { free: num("QUOTA_LOOKUP_FREE", 25), pro: num("QUOTA_LOOKUP_PRO", 250) },
+    // Medical AI is Pro-gated (see entitlements), so the free allowance is 0 —
+    // the quota exists to bound a Pro account's spend on the priciest model.
+    medical_ai: { free: num("QUOTA_MEDICAL_FREE", 0), pro: num("QUOTA_MEDICAL_PRO", 60) },
   },
   // How many days of workout history /bootstrap returns. Older sessions are
   // fetched on demand by the History page instead of on every cold start.

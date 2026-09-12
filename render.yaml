@@ -46,6 +46,22 @@ services:
       # Use the same value as the accounts service's ADMIN_API_KEY.
       - key: ADMIN_API_KEY
         sync: false
+      # ── Medical AI (AI nutritionist + medical helper) ──────────────────
+      # "auto" uses Vertex AI when the credentials below are filled in and
+      # falls back to Gemini otherwise, so the feature works either way.
+      - key: MEDICAL_AI_PROVIDER
+        value: auto
+      - key: MEDICAL_AI_MODEL
+        value: medlm-medium
+      # Vertex needs a service account (OAuth), not an API key — grant it the
+      # "Vertex AI User" role and paste the key JSON (raw or base64). Leave
+      # blank to run the medical desk on Gemini.
+      - key: VERTEX_PROJECT_ID
+        sync: false
+      - key: VERTEX_LOCATION
+        value: us-central1
+      - key: VERTEX_SERVICE_ACCOUNT_JSON
+        sync: false
 
   # ── Accounts microservice (auth + accounts + Stripe billing) ─────────────
   - type: web

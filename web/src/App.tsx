@@ -27,6 +27,9 @@ const RoutineEditor = lazy(() => import("./pages/RoutineEditor").then((m) => ({ 
 const LibraryPage = lazy(() => import("./pages/Library").then((m) => ({ default: m.LibraryPage })));
 const AiCoach = lazy(() => import("./pages/AiCoach").then((m) => ({ default: m.AiCoach })));
 const Nutrition = lazy(() => import("./pages/Nutrition").then((m) => ({ default: m.Nutrition })));
+const HealthDashboard = lazy(() =>
+  import("./pages/HealthDashboard").then((m) => ({ default: m.HealthDashboard }))
+);
 const History = lazy(() => import("./pages/History").then((m) => ({ default: m.History })));
 const SettingsPage = lazy(() => import("./pages/Settings").then((m) => ({ default: m.SettingsPage })));
 const Billing = lazy(() => import("./pages/Billing").then((m) => ({ default: m.Billing })));
@@ -233,6 +236,7 @@ export default function App() {
             <Route path="/library" element={<LibraryPage />} />
             <Route path="/ai-coach" element={<AiCoach />} />
             <Route path="/nutrition" element={<Nutrition />} />
+            <Route path="/health" element={<HealthDashboard />} />
             <Route path="/history" element={<History />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/billing" element={<Billing />} />

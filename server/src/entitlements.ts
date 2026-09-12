@@ -8,12 +8,13 @@ import { supabaseAdmin } from "./supabase";
 import { AuthedRequest, HttpError } from "./middleware";
 
 export type Plan = "free" | "pro";
-export type Feature = "ai_coach" | "ai_nutrition" | "program_refresh" | "ai_exercise";
+export type Feature =
+  | "ai_coach" | "ai_nutrition" | "program_refresh" | "ai_exercise" | "ai_medical";
 
 // Which plan unlocks which feature. Mirrors accounts/src/entitlements.ts.
 const PLAN_FEATURES: Record<Plan, Feature[]> = {
   free: [],
-  pro: ["ai_coach", "ai_nutrition", "program_refresh", "ai_exercise"],
+  pro: ["ai_coach", "ai_nutrition", "program_refresh", "ai_exercise", "ai_medical"],
 };
 
 // A subscription entitles its plan's features while in one of these states.

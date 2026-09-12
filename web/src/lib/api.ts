@@ -3,7 +3,8 @@
 // an expired access token once on a 401.
 
 import type {
-  Exercise, FoodLookupResult, NutritionPlan, Plan, PlanInfo, Program, Routine,
+  Exercise, FoodLookupResult, HealthIssue, HealthIssueEvent, HealthProfile,
+  HealthRecord, MedicalAiStatus, NutritionPlan, Plan, PlanInfo, Program, Routine,
   Subscription, UserProfile, WorkoutSession,
 } from "./types";
 
@@ -23,9 +24,12 @@ export interface Session {
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** The server's machine-readable discriminator, when it sent one. */
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 export class AuthExpiredError extends ApiError {
@@ -163,7 +167,7 @@ async function request<T>(
       const retry = Number(res.headers.get("retry-after"));
       throw new RateLimitedError(message, code, Number.isFinite(retry) ? retry : undefined);
     }
-    throw new ApiError(message, res.status);
+    throw new ApiError(message, res.status, code);
   }
 
   if (res.status === 204) return undefined as T;
@@ -202,6 +206,30 @@ interface ProgramResult {
   routines: Routine[];
   nutritionPlan?: NutritionPlan | null;
 }
+
+// ── Health / medical ──────────────────────────────────────────────────────
+export interface HealthOverview {
+  health: HealthProfile;
+  issues: HealthIssue[];
+  records: HealthRecord[];
+  ai: MedicalAiStatus;
+}
+
+export interface HealthReviewResult {
+  summary: string;
+  model: string;
+  created: number;
+  updated: number;
+  /** Issues the AI thinks are done. Shown for confirmation, never auto-applied. */
+  resolvedSuggestions: string[];
+  issues: HealthIssue[];
+  disclaimer: string;
+}
+
+export type MedicalChatReply =
+  | { type: "message"; text: string; suggestions?: string[]; urgent: boolean; redFlags: string[]; model: string; disclaimer: string }
+  | { type: "issue"; text: string; issue: HealthIssue; urgent: boolean; redFlags: string[]; model: string; disclaimer: string }
+  | { type: "record"; text: string; record: HealthRecord; urgent: boolean; redFlags: string[]; model: string; disclaimer: string };
 
 export const api = {
   // auth — served by the accounts microservice
@@ -376,6 +404,84 @@ export const api = {
       | { type: "log"; text: string; workout: WorkoutSession }
     >(
       "/api/ai/coach",
+      { method: "POST", body: JSON.stringify({ messages }) },
+      true, API_BASE, AI_REQUEST_TIMEOUT_MS
+    ),
+
+  // ── health / medical ──────────────────────────────────────────────────────
+  healthOverview: () => request<HealthOverview>("/api/health/overview"),
+
+  updateHealthProfile: (patch: Partial<HealthProfile>) =>
+    request<HealthProfile>("/api/health/profile", {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+
+  /** Opt in/out of sending health data to the medical model. */
+  setHealthConsent: (granted: boolean) =>
+    request<HealthProfile>("/api/health/consent", {
+      method: "POST",
+      body: JSON.stringify({ granted }),
+    }),
+
+  createHealthIssue: (issue: {
+    title: string;
+    category?: HealthIssue["category"];
+    severity?: HealthIssue["severity"];
+    summary?: string;
+    actionPlan?: HealthIssue["actionPlan"];
+    metrics?: HealthIssue["metrics"];
+    targetDate?: string;
+  }) => request<HealthIssue>("/api/health/issues", { method: "POST", body: JSON.stringify(issue) }),
+
+  updateHealthIssue: (id: string, patch: Partial<HealthIssue>) =>
+    request<HealthIssue>(`/api/health/issues/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+
+  deleteHealthIssue: (id: string) =>
+    request<void>(`/api/health/issues/${id}`, { method: "DELETE" }),
+
+  /** A note or a measurement on an issue's timeline. */
+  addIssueEvent: (
+    id: string,
+    event: { kind?: HealthIssueEvent["kind"]; body?: string; metric?: string; value?: number; unit?: string }
+  ) =>
+    request<{ event: HealthIssueEvent; issue: HealthIssue }>(`/api/health/issues/${id}/events`, {
+      method: "POST",
+      body: JSON.stringify(event),
+    }),
+
+  createHealthRecord: (record: {
+    kind?: HealthRecord["kind"];
+    title: string;
+    detail?: string;
+    occurredAt?: number;
+    issueId?: string;
+    data?: Record<string, unknown>;
+  }) => request<HealthRecord>("/api/health/records", { method: "POST", body: JSON.stringify(record) }),
+
+  deleteHealthRecord: (id: string) =>
+    request<void>(`/api/health/records/${id}`, { method: "DELETE" }),
+
+  /** Re-runs the medical review and folds the result into the tracked issues. */
+  reviewHealth: () =>
+    request<HealthReviewResult>(
+      "/api/health/review",
+      { method: "POST" },
+      true, API_BASE, AI_REQUEST_TIMEOUT_MS
+    ),
+
+  medicalChat: (
+    messages: {
+      role: "user" | "model";
+      content: string;
+      images?: { mimeType: string; data: string }[];
+    }[]
+  ) =>
+    request<MedicalChatReply>(
+      "/api/health/chat",
       { method: "POST", body: JSON.stringify({ messages }) },
       true, API_BASE, AI_REQUEST_TIMEOUT_MS
     ),
