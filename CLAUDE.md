@@ -78,12 +78,19 @@ between the user's medical record and a model provider — never bypass it, and
 never move the check into the client.
 
 **The medical model is pluggable and the fallback is visible.** `server/src/medical.ts`
-routes to Vertex AI (Med-PaLM/MedLM) when configured and to Gemini otherwise,
-per request. Every reply carries the model that actually answered and the UI
-prints it — don't drop that field to tidy a payload, it's the only thing telling
-the user a medical-tuned model wasn't used. MedLM ids take the PaLM-era
-`:predict` shape (no system role, no JSON mode, no images); `gemini-*` ids on
-Vertex take `:generateContent`.
+routes to Vertex AI when configured and to the Gemini API otherwise, per request.
+Every reply carries the model that actually answered and the UI prints it — don't
+drop that field to tidy a payload, it's the only thing telling the user which
+model replied. `usesPredictShape()` picks the contract from the model id:
+`medlm-*`/`text-bison` take the PaLM-era `:predict` shape (no system role, no
+JSON mode, no images), `gemini-*` take `:generateContent`. Keep both paths —
+MedLM itself was retired in Sept 2025, but the `:predict` branch is what lets a
+medical-tuned publisher model be swapped in by env var alone.
+
+**Vertex AI is now called "Gemini Enterprise Agent Platform"** (renamed April
+2026). Only the branding moved: `aiplatform.googleapis.com`, model ids, IAM role
+ids and auth are unchanged, so `server/src/vertex.ts` needs no follow-up. It does
+mean the console API Library has no "Vertex AI API" entry to search for.
 
 **Red flags are screened in code, not delegated to the prompt.** `detectRedFlags`
 runs on the user's message *and* the model's reply, and still fires when the model

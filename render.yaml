@@ -51,11 +51,16 @@ services:
       # falls back to Gemini otherwise, so the feature works either way.
       - key: MEDICAL_AI_PROVIDER
         value: auto
+      # Leave unset to use GEMINI_COACH_MODEL; set it to a medical-tuned
+      # publisher model if your GCP project serves one (MedLM, the Med-PaLM 2
+      # product, was retired by Google on 2025-09-29).
       - key: MEDICAL_AI_MODEL
-        value: medlm-medium
-      # Vertex needs a service account (OAuth), not an API key — grant it the
-      # "Vertex AI User" role and paste the key JSON (raw or base64). Leave
-      # blank to run the medical desk on Gemini.
+        sync: false
+      # Vertex needs a service account (OAuth), not an API key — grant it
+      # roles/aiplatform.user and paste the key JSON (raw or base64). Enable the
+      # API at console.cloud.google.com/apis/library/aiplatform.googleapis.com
+      # (it is listed as "Gemini Enterprise Agent Platform" since April 2026).
+      # Leave blank to run the medical desk on the Gemini API instead.
       - key: VERTEX_PROJECT_ID
         sync: false
       - key: VERTEX_LOCATION

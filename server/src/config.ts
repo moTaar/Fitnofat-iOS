@@ -48,8 +48,10 @@ export const config = {
 
   // ── Medical / health AI (nutritionist + medical helper) ────────────────────
   // Which backend answers medical questions:
-  //   "vertex" — Google Cloud Vertex AI, where the Med-PaLM lineage is served
-  //              (MedLM / medical-tuned publisher models). Needs a service
+  //   "vertex" — Google Cloud Vertex AI (the service behind what Google now
+  //              brands "Gemini Enterprise Agent Platform" — the product was
+  //              renamed in April 2026 but `aiplatform.googleapis.com`, its
+  //              model ids and its auth are unchanged). Needs a service
   //              account, not an API key.
   //   "gemini" — the same generativelanguage endpoint the rest of the app uses.
   //   "auto"   — Vertex when it's fully configured, Gemini otherwise (default).
@@ -57,10 +59,16 @@ export const config = {
   // rather than failing, because a health question going unanswered is worse
   // than one answered by the general model (the reply says which model ran).
   medicalProvider: (process.env.MEDICAL_AI_PROVIDER ?? "auto") as "auto" | "vertex" | "gemini",
-  // Vertex publisher model id. Med-PaLM 2 ships as `medlm-medium`/`medlm-large`;
-  // medical-tuned successors and plain `gemini-*` ids work here too — the caller
-  // picks the request shape from the id (see server/src/medical.ts).
-  medicalModel: process.env.MEDICAL_AI_MODEL ?? "medlm-medium",
+  // Vertex publisher model id. The caller picks the request shape from the id
+  // (see server/src/medical.ts), so both families work:
+  //   `gemini-*`  → the modern `:generateContent` contract. This is the default
+  //                 because Google retired MedLM (the productized Med-PaLM 2,
+  //                 `medlm-medium`/`medlm-large`) on 2025-09-29 — those ids no
+  //                 longer resolve for anyone.
+  //   `medlm-*`   → the PaLM-era `:predict` contract, kept for any project that
+  //                 still has a medical-tuned model served under it.
+  // Point this at a medical-tuned publisher model if your project has one.
+  medicalModel: process.env.MEDICAL_AI_MODEL ?? COACH_MODEL,
   // Model used when the request runs on the Gemini provider.
   medicalGeminiModel: process.env.MEDICAL_AI_GEMINI_MODEL ?? COACH_MODEL,
   // Medical answers are longer and reasoned; give them the coach's budget.

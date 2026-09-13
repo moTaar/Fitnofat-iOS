@@ -207,14 +207,29 @@ user's record, in the user's database. The two AI routes (`/health/review`,
 because those are the only paths that send health data to a model provider.
 Consent is a timestamp on `health_profile` and can be revoked from the Medical tab.
 
-**The model is medical-tuned when one is available.** `MEDICAL_AI_PROVIDER=auto`
-routes to Vertex AI (the Med-PaLM lineage: `medlm-medium`/`medlm-large` and
-successors) when a service account is configured, and falls back to Gemini
-otherwise — including per-request, if Vertex fails or the turn carries a photo
-that the text-only `:predict` contract can't take. Every reply reports the model
-that actually answered, so a fallback is never silent. Vertex needs OAuth rather
-than an API key; `server/src/vertex.ts` mints tokens from the service-account key
-directly, with no Google SDK.
+**The model is pluggable and the fallback is visible.** `MEDICAL_AI_PROVIDER=auto`
+routes to Vertex AI when a service account is configured and falls back to the
+Gemini API otherwise — including per request, if Vertex fails or the turn carries
+a photo the text-only `:predict` contract can't take. Every reply reports the
+model that actually answered, so a fallback is never silent.
+
+Running on Vertex is worth the setup even for a Gemini model: the request stays
+inside your own Google Cloud project, under your IAM and data-residency rules,
+instead of going to a shared API-key endpoint. Point `MEDICAL_AI_MODEL` at a
+medical-tuned publisher model if your project serves one — `usesPredictShape()`
+picks the request contract from the model id, so no code changes. Note that
+MedLM, the productized Med-PaLM 2 (`medlm-medium`/`medlm-large`), was
+[retired by Google on 2025-09-29](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/release-notes),
+which is why the default is a general Gemini model.
+
+Vertex needs OAuth rather than an API key; `server/src/vertex.ts` mints tokens
+from the service-account key directly, with no Google SDK. Two setup gotchas:
+the service account needs `roles/aiplatform.user` (**not** the Vertex AI Service
+Agent role, which is for Google's own service agents), and since Vertex AI was
+[renamed to Gemini Enterprise Agent Platform in April 2026](https://cloud.google.com/products/gemini-enterprise-agent-platform)
+searching the console API Library for "vertex" finds nothing — the service name
+is unchanged, so enable it directly at
+`console.cloud.google.com/apis/library/aiplatform.googleapis.com`.
 
 **Emergencies are screened for in code, not left to the model.** `detectRedFlags`
 runs over both the user's message and the model's reply; a hit prepends emergency
@@ -251,7 +266,7 @@ Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 | `QUOTA_MEDICAL_FREE` / `_PRO` | server | `0` / `60` | daily medical AI calls (Pro-only feature) |
 | `BOOTSTRAP_HISTORY_DAYS` | server | `120` | history window returned on cold start |
 | `MEDICAL_AI_PROVIDER` | server | `auto` | `auto` / `vertex` / `gemini` — who answers medical questions |
-| `MEDICAL_AI_MODEL` | server | `medlm-medium` | Vertex publisher model for the medical desk |
+| `MEDICAL_AI_MODEL` | server | coach model | Vertex publisher model for the medical desk |
 | `MEDICAL_AI_GEMINI_MODEL` | server | coach model | model used when the medical desk runs on Gemini |
 | `MEDICAL_AI_TIMEOUT_MS` | server | `90000` | hard deadline on medical model calls |
 | `VERTEX_PROJECT_ID` / `VERTEX_LOCATION` | server | — / `us-central1` | Vertex AI project and region |

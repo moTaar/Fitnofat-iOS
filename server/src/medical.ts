@@ -3,11 +3,16 @@
 // This is the only module in the app that reasons over personal health data, so
 // it is deliberately conservative:
 //
-//   • **Provider.** Medical questions are routed to a medical-tuned model on
-//     Vertex AI (the Med-PaLM lineage: `medlm-medium`/`medlm-large` and their
-//     successors) when one is configured, and fall back to the general Gemini
-//     model otherwise. Every reply reports which model actually answered, so a
-//     fallback is never silent. See `config.medicalProvider`.
+//   • **Provider.** Medical questions run on Vertex AI when it is configured,
+//     and fall back to the Gemini API otherwise. Vertex is worth the extra
+//     setup even for a Gemini model — the request stays inside the operator's
+//     own Google Cloud project, under its IAM and data-residency rules, rather
+//     than going to a shared API-key endpoint. If the project serves a
+//     medical-tuned publisher model, point `MEDICAL_AI_MODEL` at it; the
+//     Med-PaLM lineage that used to fill that slot (MedLM) was retired by
+//     Google on 2025-09-29, so the default is a general Gemini model. Every
+//     reply reports which model actually answered, so a fallback is never
+//     silent. See `config.medicalProvider`.
 //   • **Consent.** Callers must check `health_profile.ai_consent_at` before
 //     calling in — see routes/health.ts. Without it, no health data is sent
 //     anywhere.
@@ -67,9 +72,10 @@ export function modelLabel(provider: MedicalProvider): string {
 }
 
 /**
- * Vertex publisher models come in two request shapes. The Med-PaLM/MedLM family
- * (and the older text-bison line) use the PaLM-era `:predict` contract; Gemini
- * models on Vertex use `:generateContent`. The model id tells us which.
+ * Vertex publisher models come in two request shapes. Gemini models use
+ * `:generateContent`; the PaLM-era families (MedLM/Med-PaLM, text-bison) use
+ * `:predict`, which has no system role, no JSON mode and no image parts. The
+ * model id is what tells us which, so switching models needs no code change.
  */
 function usesPredictShape(model: string): boolean {
   return !/^gemini/i.test(model);
