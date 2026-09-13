@@ -70,6 +70,18 @@ messages can carry key fragments and row contents. Throw `HttpError` for anythin
 the client should read verbatim; everything else becomes a generic 500 when
 `NODE_ENV=production`.
 
+**The service worker is in `prompt` mode, not `autoUpdate`.** A new build
+installs and then *waits*; `UpdatePrompt` offers "A new version is ready" and the
+swap happens on a full reload when the user accepts. Do not switch this back to
+`autoUpdate` — with code-split chunks plus `cleanupOutdatedCaches`, an
+auto-activating worker deletes the hashed chunks the open tab still references,
+so the next lazy-route navigation fails to load.
+
+**The update banner defers to an active workout.** `useUpdateBannerVisible()` is
+the single source of truth for whether it's on screen; `InstallPrompt` and the
+dock-less full-height pages (login, reset, onboarding) both read it so they can
+yield the slot or reserve space. Any new bottom-anchored banner should too.
+
 **Keep the eager route bundle small.** `web/src/App.tsx` lazy-loads every page
 except Dashboard and ActiveWorkout, which are the in-gym critical path. A static
 import of a heavy page from an always-mounted component silently undoes this —

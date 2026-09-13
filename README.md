@@ -128,6 +128,12 @@ session is revoked server-side. Refreshing still goes through Supabase.
   quota, old *synced* history is shed first — unsynced sessions are never dropped.
 - **Installable** — manifest (`standalone`/`portrait`), maskable icons, and a custom
   A2HS banner (Android `beforeinstallprompt` + guided iOS steps).
+- **Controlled updates** — the service worker runs in `prompt` mode: a new build
+  is downloaded and precached in the background, then *waits*. The app surfaces
+  "A new version is ready — Reload" and only swaps over on a full reload, when
+  the user accepts. Long-lived tabs re-check for a new build hourly and whenever
+  the app returns to the foreground. The prompt is held back while a workout is
+  in progress, and reappears once the session ends.
 
 ## Cost and abuse controls
 Gemini calls are the only per-request cost in the app, so every route that can

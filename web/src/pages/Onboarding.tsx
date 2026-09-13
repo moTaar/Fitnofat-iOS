@@ -11,6 +11,8 @@ import type { Equipment, Experience, Goal, UserProfile, WorkoutCategory } from "
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { SegmentedControl, Spinner, Progress } from "@/components/ui/misc";
+import { useUpdateBannerPadding } from "@/components/UpdatePrompt";
+import { cn } from "@/lib/utils";
 
 const GOALS: { label: string; value: Goal; sub: string }[] = [
   { label: "Strength", value: "strength", sub: "Lift heavier" },
@@ -60,6 +62,8 @@ const CATEGORIES: { label: string; value: WorkoutCategory; sub: string; emoji: s
 const TOTAL_STEPS = 6;
 
 export function Onboarding() {
+  // Reserve room for the update banner — this screen has no dock to do it.
+  const bannerPad = useUpdateBannerPadding();
   const navigate = useNavigate();
   const generateProgram = useStore((s) => s.generateProgram);
 
@@ -154,7 +158,7 @@ export function Onboarding() {
 
   if (generating) {
     return (
-      <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col items-center justify-center gap-6 px-8 text-center">
+      <div className={cn("mx-auto flex min-h-[100dvh] max-w-md flex-col items-center justify-center gap-6 px-8 text-center", bannerPad)}>
         <div className="relative">
           <div className="absolute inset-0 animate-ping rounded-full bg-primary/20" />
           <div className="relative rounded-full bg-primary/15 p-6 text-primary">
@@ -175,7 +179,7 @@ export function Onboarding() {
 
   if (chatMode) {
     return (
-      <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col px-4 py-4">
+      <div className={cn("mx-auto flex min-h-[100dvh] max-w-md flex-col px-4 py-4", bannerPad)}>
         {/* Header */}
         <div className="mb-3 flex items-center gap-3">
           <div className="rounded-xl bg-primary p-2 text-primary-foreground">
@@ -246,7 +250,7 @@ export function Onboarding() {
   }
 
   return (
-    <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col px-5 py-6">
+    <div className={cn("mx-auto flex min-h-[100dvh] max-w-md flex-col px-5 py-6", bannerPad)}>
       {/* Header */}
       <div className="mb-6 flex items-center gap-3">
         <div className="rounded-xl bg-primary p-2 text-primary-foreground">

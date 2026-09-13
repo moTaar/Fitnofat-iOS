@@ -14,6 +14,7 @@ import { Toaster } from "./components/ui/toast";
 import { Modal } from "./components/ui/modal";
 import { Button } from "./components/ui/button";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { UpdatePrompt } from "./components/UpdatePrompt";
 
 // Everything below is code-split. Dashboard and ActiveWorkout stay eager
 // because they are the in-gym critical path — they must render immediately on
@@ -243,6 +244,9 @@ export default function App() {
       </Suspense>
 
       <Toaster />
+      {/* Rendered outside <Routes> so the update banner reaches every screen,
+          including the ones that sit outside <Layout> (login, onboarding). */}
+      <UpdatePrompt />
       {/* Checks once on cold launch whether a stale (>4 h) workout needs attention. */}
       <StaleWorkoutGuard />
     </ErrorBoundary>
