@@ -208,10 +208,19 @@ because those are the only paths that send health data to a model provider.
 Consent is a timestamp on `health_profile` and can be revoked from the Medical tab.
 
 **The model is pluggable and the fallback is visible.** `MEDICAL_AI_PROVIDER=auto`
-routes to Vertex AI when a service account is configured and falls back to the
-Gemini API otherwise — including per request, if Vertex fails or the turn carries
-a photo the text-only `:predict` contract can't take. Every reply reports the
-model that actually answered, so a fallback is never silent.
+picks the first configured of **cloudrun → vertex → gemini**, and falls back down
+that chain per request when one fails (or when the turn carries a photo the
+text-only `:predict` contract can't take). Every reply reports the model that
+actually answered, so a fallback is never silent — `medgemma-4b-it (self-hosted)`
+in the chat footer means the medical model answered, `(Gemini)` means it didn't.
+
+**`cloudrun` is the option to reach for if you don't want a general model.**
+It points at any OpenAI-compatible server you host — vLLM, Ollama, TGI — so the
+weights and the inference both stay on infrastructure you control.
+[`docs/medgemma-cloud-run.md`](docs/medgemma-cloud-run.md) is a full runbook for
+MedGemma (Google's open-weights medical model) on Cloud Run with an L4 GPU:
+~$10–15/month because it scales to zero, authenticated with a Cloud Run ID token
+minted from the same service-account key Vertex uses.
 
 Running on Vertex is worth the setup even for a Gemini model: the request stays
 inside your own Google Cloud project, under your IAM and data-residency rules,
@@ -265,7 +274,10 @@ Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 | `QUOTA_LOOKUP_FREE` / `_PRO` | server | `25` / `250` | daily food lookups |
 | `QUOTA_MEDICAL_FREE` / `_PRO` | server | `0` / `60` | daily medical AI calls (Pro-only feature) |
 | `BOOTSTRAP_HISTORY_DAYS` | server | `120` | history window returned on cold start |
-| `MEDICAL_AI_PROVIDER` | server | `auto` | `auto` / `vertex` / `gemini` — who answers medical questions |
+| `MEDICAL_AI_PROVIDER` | server | `auto` | `auto` / `cloudrun` / `vertex` / `gemini` — who answers medical questions |
+| `MEDICAL_AI_BASE_URL` | server | — | self-hosted OpenAI-compatible endpoint, incl. `/v1` (turns on `cloudrun`) |
+| `MEDICAL_AI_SELF_HOSTED_MODEL` | server | `MEDICAL_AI_MODEL` | model name the self-hosted server expects |
+| `MEDICAL_AI_API_KEY` | server | — | static bearer for a self-hosted endpoint that isn't on Cloud Run |
 | `MEDICAL_AI_MODEL` | server | coach model | Vertex publisher model for the medical desk |
 | `MEDICAL_AI_GEMINI_MODEL` | server | coach model | model used when the medical desk runs on Gemini |
 | `MEDICAL_AI_TIMEOUT_MS` | server | `90000` | hard deadline on medical model calls |

@@ -78,7 +78,13 @@ between the user's medical record and a model provider — never bypass it, and
 never move the check into the client.
 
 **The medical model is pluggable and the fallback is visible.** `server/src/medical.ts`
-routes to Vertex AI when configured and to the Gemini API otherwise, per request.
+picks the first configured of cloudrun → vertex → gemini and falls back down that
+chain per request. `cloudrun` is any OpenAI-compatible server (vLLM/Ollama/TGI),
+authenticated with a Google ID token minted by `googleIdToken()` from the same
+service-account key Vertex uses — audience is the Cloud Run URL WITHOUT the `/v1`
+path, so don't "helpfully" pass the full base URL.
+[`docs/medgemma-cloud-run.md`](docs/medgemma-cloud-run.md) is the deployment
+runbook.
 Every reply carries the model that actually answered and the UI prints it — don't
 drop that field to tidy a payload, it's the only thing telling the user which
 model replied. `usesPredictShape()` picks the contract from the model id:

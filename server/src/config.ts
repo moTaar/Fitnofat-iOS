@@ -48,17 +48,38 @@ export const config = {
 
   // ── Medical / health AI (nutritionist + medical helper) ────────────────────
   // Which backend answers medical questions:
-  //   "vertex" — Google Cloud Vertex AI (the service behind what Google now
-  //              brands "Gemini Enterprise Agent Platform" — the product was
-  //              renamed in April 2026 but `aiplatform.googleapis.com`, its
-  //              model ids and its auth are unchanged). Needs a service
-  //              account, not an API key.
-  //   "gemini" — the same generativelanguage endpoint the rest of the app uses.
-  //   "auto"   — Vertex when it's fully configured, Gemini otherwise (default).
+  //   "cloudrun" — a model you host yourself behind an OpenAI-compatible API
+  //                (vLLM, Ollama, TGI…), typically MedGemma on Cloud Run with a
+  //                GPU. The weights and the request both stay on infrastructure
+  //                you control. See docs/medgemma-cloud-run.md.
+  //   "vertex"   — Google Cloud Vertex AI (the service behind what Google now
+  //                brands "Gemini Enterprise Agent Platform" — the product was
+  //                renamed in April 2026 but `aiplatform.googleapis.com`, its
+  //                model ids and its auth are unchanged). Needs a service
+  //                account, not an API key.
+  //   "gemini"   — the same generativelanguage endpoint the rest of the app uses.
+  //   "auto"     — the first of those that is configured, in that order
+  //                (default): a self-hosted medical model wins over Vertex,
+  //                which wins over the shared Gemini endpoint.
   // Vertex is never a hard requirement: a medical request degrades to Gemini
   // rather than failing, because a health question going unanswered is worse
   // than one answered by the general model (the reply says which model ran).
-  medicalProvider: (process.env.MEDICAL_AI_PROVIDER ?? "auto") as "auto" | "vertex" | "gemini",
+  medicalProvider: (process.env.MEDICAL_AI_PROVIDER ?? "auto") as
+    | "auto"
+    | "cloudrun"
+    | "vertex"
+    | "gemini",
+  // Base URL of a self-hosted OpenAI-compatible server, INCLUDING the version
+  // path — e.g. https://medgemma-xxxxx.europe-west1.run.app/v1. Setting this is
+  // what turns the "cloudrun" provider on.
+  medicalBaseUrl: (process.env.MEDICAL_AI_BASE_URL ?? "").replace(/\/+$/, ""),
+  // Model name the self-hosted server expects in the request body (vLLM echoes
+  // whatever `--served-model-name` was set to). Defaults to `medicalModel`.
+  medicalSelfHostedModel: process.env.MEDICAL_AI_SELF_HOSTED_MODEL ?? "",
+  // Optional static bearer token for a self-hosted endpoint that isn't on Cloud
+  // Run. Leave unset for Cloud Run: the service account mints an ID token, which
+  // is the better credential — short-lived and audience-scoped.
+  medicalApiKey: process.env.MEDICAL_AI_API_KEY ?? "",
   // Vertex publisher model id. The caller picks the request shape from the id
   // (see server/src/medical.ts), so both families work:
   //   `gemini-*`  → the modern `:generateContent` contract. This is the default

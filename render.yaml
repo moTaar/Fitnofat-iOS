@@ -47,17 +47,25 @@ services:
       - key: ADMIN_API_KEY
         sync: false
       # ── Medical AI (AI nutritionist + medical helper) ──────────────────
-      # "auto" uses Vertex AI when the credentials below are filled in and
-      # falls back to Gemini otherwise, so the feature works either way.
+      # "auto" picks the first configured of cloudrun → vertex → gemini, so the
+      # feature works whether or not the Google settings below are filled in.
       - key: MEDICAL_AI_PROVIDER
         value: auto
+      # Self-hosted medical model (MedGemma on Cloud Run with a GPU) — see
+      # docs/medgemma-cloud-run.md. The URL must include the /v1 path; auth
+      # reuses VERTEX_SERVICE_ACCOUNT_JSON below to mint a Cloud Run ID token.
+      - key: MEDICAL_AI_BASE_URL
+        sync: false
+      - key: MEDICAL_AI_SELF_HOSTED_MODEL
+        sync: false
       # Leave unset to use GEMINI_COACH_MODEL; set it to a medical-tuned
       # publisher model if your GCP project serves one (MedLM, the Med-PaLM 2
       # product, was retired by Google on 2025-09-29).
       - key: MEDICAL_AI_MODEL
         sync: false
-      # Vertex needs a service account (OAuth), not an API key — grant it
-      # roles/aiplatform.user and paste the key JSON (raw or base64). Enable the
+      # Google service account (OAuth), not an API key — grant it
+      # roles/aiplatform.user for Vertex and/or roles/run.invoker for the
+      # Cloud Run model, then paste the key JSON (raw or base64). Enable the
       # API at console.cloud.google.com/apis/library/aiplatform.googleapis.com
       # (it is listed as "Gemini Enterprise Agent Platform" since April 2026).
       # Leave blank to run the medical desk on the Gemini API instead.

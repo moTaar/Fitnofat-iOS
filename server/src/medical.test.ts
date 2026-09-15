@@ -5,8 +5,9 @@
 // a missed red flag or a reset checklist doesn't throw, it just does the wrong
 // thing — so it's pinned down here.
 
-import { describe, expect, it } from "vitest";
-import { __medical, EMERGENCY_NOTICE } from "./medical";
+import { afterEach, describe, expect, it } from "vitest";
+import { config } from "./config";
+import { __medical, activeProvider, EMERGENCY_NOTICE, modelLabel } from "./medical";
 import type { AIHealthReview, HealthIssue, HealthProfile, UserProfile } from "./types";
 
 const {
@@ -21,6 +22,7 @@ const {
   buildHealthContext,
   usesPredictShape,
   flattenTranscript,
+  toOpenAiMessages,
 } = __medical;
 
 const profile = (over: Partial<UserProfile> = {}): UserProfile =>
@@ -356,6 +358,82 @@ describe("prompt plumbing", () => {
     expect(text).toContain("[left-shoulder-pain]");
     expect(text).toContain("asthma");
     expect(text).toContain("Ventolin 100µg");
+  });
+});
+
+describe("provider selection", () => {
+  // `config` is read at call time, so the env-driven fields can be swapped per
+  // test. Snapshot and restore them rather than leaking into the next test.
+  const original = {
+    provider: config.medicalProvider,
+    baseUrl: config.medicalBaseUrl,
+    geminiKey: config.geminiApiKey,
+  };
+  afterEach(() => {
+    config.medicalProvider = original.provider;
+    config.medicalBaseUrl = original.baseUrl;
+    config.geminiApiKey = original.geminiKey;
+  });
+
+  it("prefers a self-hosted endpoint over the shared Gemini one on auto", () => {
+    config.medicalProvider = "auto";
+    config.medicalBaseUrl = "https://medgemma-abc.run.app/v1";
+    config.geminiApiKey = "key";
+    expect(activeProvider()).toBe("cloudrun");
+  });
+
+  it("falls to Gemini on auto when nothing is self-hosted", () => {
+    config.medicalProvider = "auto";
+    config.medicalBaseUrl = "";
+    config.geminiApiKey = "key";
+    expect(activeProvider()).toBe("gemini");
+  });
+
+  it("reports none rather than silently downgrading when cloudrun is forced but unset", () => {
+    config.medicalProvider = "cloudrun";
+    config.medicalBaseUrl = "";
+    config.geminiApiKey = "key";
+    expect(activeProvider()).toBe("none");
+  });
+
+  it("labels a self-hosted answer as such, so a fallback is visible", () => {
+    config.medicalBaseUrl = "https://medgemma-abc.run.app/v1";
+    expect(modelLabel("cloudrun")).toContain("self-hosted");
+    expect(modelLabel("gemini")).toContain("Gemini");
+    expect(modelLabel("none")).toBe("unavailable");
+  });
+});
+
+describe("toOpenAiMessages", () => {
+  it("puts the system prompt first and maps model turns to assistant", () => {
+    const out = toOpenAiMessages("SYSTEM", [
+      { role: "user", content: "hi" },
+      { role: "model", content: "hello" },
+    ]);
+    expect(out).toEqual([
+      { role: "system", content: "SYSTEM" },
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ]);
+  });
+
+  it("sends attachments as data-URI image parts", () => {
+    const out = toOpenAiMessages("S", [
+      { role: "user", content: "read this", images: [{ mimeType: "image/jpeg", data: "AAAA" }] },
+    ]);
+    expect(out[1].content).toEqual([
+      { type: "text", text: "read this" },
+      { type: "image_url", image_url: { url: "data:image/jpeg;base64,AAAA" } },
+    ]);
+  });
+
+  it("omits the empty text part when a photo is sent with no caption", () => {
+    const out = toOpenAiMessages("S", [
+      { role: "user", content: "   ", images: [{ mimeType: "image/png", data: "BBBB" }] },
+    ]);
+    expect(out[1].content).toEqual([
+      { type: "image_url", image_url: { url: "data:image/png;base64,BBBB" } },
+    ]);
   });
 });
 

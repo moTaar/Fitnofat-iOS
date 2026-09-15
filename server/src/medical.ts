@@ -27,7 +27,7 @@
 
 import { config } from "./config";
 import { slugify } from "./util";
-import { vertexAccessToken, vertexConfigured, vertexProjectId } from "./vertex";
+import { googleIdToken, vertexAccessToken, vertexConfigured, vertexProjectId } from "./vertex";
 import type { ChatImage, ChatMessage } from "./gemini";
 import type {
   ActionStep,
@@ -46,7 +46,7 @@ import type {
 
 // ── Provider plumbing ────────────────────────────────────────────────────────
 
-export type MedicalProvider = "vertex" | "gemini" | "none";
+export type MedicalProvider = "cloudrun" | "vertex" | "gemini" | "none";
 
 const GEMINI_ENDPOINT = (model: string, key: string) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
@@ -55,17 +55,32 @@ const VERTEX_ENDPOINT = (model: string, verb: "predict" | "generateContent") =>
   `https://${config.vertexLocation}-aiplatform.googleapis.com/v1/projects/${vertexProjectId()}` +
   `/locations/${config.vertexLocation}/publishers/google/models/${model}:${verb}`;
 
+/** True when a self-hosted OpenAI-compatible endpoint is configured. */
+function selfHostConfigured(): boolean {
+  return !!config.medicalBaseUrl;
+}
+
+/** The model name a self-hosted server expects in the request body. */
+function selfHostedModel(): string {
+  return config.medicalSelfHostedModel || config.medicalModel;
+}
+
 /** Which backend will answer right now, given config and what's reachable. */
 export function activeProvider(): MedicalProvider {
   const wanted = config.medicalProvider;
+  if (wanted === "cloudrun") return selfHostConfigured() ? "cloudrun" : "none";
   if (wanted === "vertex") return vertexConfigured() ? "vertex" : "none";
   if (wanted === "gemini") return config.geminiApiKey.trim() ? "gemini" : "none";
+  // "auto": most-specific backend first. A model you host yourself is the one
+  // you chose deliberately, so it outranks the general-purpose endpoints.
+  if (selfHostConfigured()) return "cloudrun";
   if (vertexConfigured()) return "vertex";
   return config.geminiApiKey.trim() ? "gemini" : "none";
 }
 
 /** Human-readable "who answered this", surfaced with every reply. */
 export function modelLabel(provider: MedicalProvider): string {
+  if (provider === "cloudrun") return `${selfHostedModel()} (self-hosted)`;
   if (provider === "vertex") return `${config.medicalModel} (Vertex AI)`;
   if (provider === "gemini") return `${config.medicalGeminiModel} (Gemini)`;
   return "unavailable";
@@ -219,6 +234,82 @@ async function askVertex(system: string, messages: ChatMessage[], opts: AskOptio
   return textFromCandidates(await res.json());
 }
 
+// ── Self-hosted (OpenAI-compatible) ──────────────────────────────────────────
+// vLLM, Ollama and TGI all speak the OpenAI chat-completions shape, so one
+// client covers every way of self-hosting MedGemma. See docs/medgemma-cloud-run.md.
+
+interface OpenAiMessage {
+  role: "system" | "user" | "assistant";
+  content: string | Array<Record<string, unknown>>;
+}
+
+/**
+ * Transcript → OpenAI chat messages. Images ride as data-URI `image_url` parts,
+ * which is how vLLM takes them for a multimodal model like MedGemma 4B; a
+ * text-only server simply never sees them, because this app only attaches
+ * images when the user does.
+ */
+export function toOpenAiMessages(system: string, messages: ChatMessage[]): OpenAiMessage[] {
+  const out: OpenAiMessage[] = [{ role: "system", content: system }];
+  for (const m of messages) {
+    const role = m.role === "model" ? "assistant" : "user";
+    if (!m.images?.length) {
+      out.push({ role, content: m.content });
+      continue;
+    }
+    const parts: Array<Record<string, unknown>> = [];
+    if (m.content.trim()) parts.push({ type: "text", text: m.content });
+    for (const img of m.images) {
+      parts.push({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.data}` } });
+    }
+    out.push({ role, content: parts });
+  }
+  return out;
+}
+
+async function askSelfHosted(
+  system: string,
+  messages: ChatMessage[],
+  opts: AskOptions
+): Promise<string> {
+  const base = config.medicalBaseUrl;
+  if (!base) throw new Error("MEDICAL_UNAVAILABLE");
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (config.medicalApiKey) {
+    headers.Authorization = `Bearer ${config.medicalApiKey}`;
+  } else {
+    // Cloud Run's own auth: a Google-signed ID token whose audience is the
+    // service's base URL (no path), so the service stays private to this
+    // service account rather than open to the internet.
+    const audience = base.replace(/\/v\d+$/, "");
+    headers.Authorization = `Bearer ${await googleIdToken(audience)}`;
+  }
+
+  const res = await medicalFetch(`${base}/chat/completions`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: selfHostedModel(),
+      messages: toOpenAiMessages(system, messages),
+      temperature: opts.temperature ?? 0.3,
+      max_tokens: 2048,
+      // vLLM honours OpenAI's JSON mode. The reply still goes through the
+      // fence-stripping parser, so a server that ignores this degrades rather
+      // than breaks.
+      ...(opts.jsonSchema ? { response_format: { type: "json_object" } } : {}),
+    }),
+  });
+
+  if (!res.ok) {
+    if (res.status === 429) throw new Error("QUOTA_EXCEEDED");
+    // The body can echo the prompt — which is patient data. Status only.
+    throw new Error(`MEDICAL_UPSTREAM_${res.status}`);
+  }
+  const data: any = await res.json();
+  return String(data?.choices?.[0]?.message?.content ?? "").trim();
+}
+
 async function askGemini(system: string, messages: ChatMessage[], opts: AskOptions): Promise<string> {
   const key = config.geminiApiKey.trim();
   if (!key) throw new Error("MEDICAL_UNAVAILABLE");
@@ -245,6 +336,22 @@ export async function askMedical(system: string, opts: AskOptions = {}): Promise
   if (provider === "none") throw new Error("MEDICAL_UNAVAILABLE");
 
   const messages = asMessages(opts);
+
+  if (provider === "cloudrun") {
+    try {
+      const text = await askSelfHosted(system, messages, opts);
+      if (text) return { text, provider, model: modelLabel(provider) };
+      throw new Error("MEDICAL_EMPTY");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      // A self-hosted box scaled to zero answers its first request slowly, not
+      // wrongly, so a timeout here is worth reporting rather than papering over
+      // with a different model — but never at the cost of the answer itself.
+      if (!vertexConfigured() && !config.geminiApiKey.trim()) throw err;
+      console.error("[medical] self-hosted call failed, falling back:", msg);
+      provider = vertexConfigured() ? "vertex" : "gemini";
+    }
+  }
 
   // Photos (a lab report, a rash, a medication label) can only go to a
   // multimodal endpoint. Route those to Gemini instead of dropping the images.
@@ -935,4 +1042,5 @@ export const __medical = {
   buildHealthContext,
   usesPredictShape,
   flattenTranscript,
+  toOpenAiMessages,
 };
