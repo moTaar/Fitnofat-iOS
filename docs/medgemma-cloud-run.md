@@ -58,6 +58,44 @@ export SA=fitnofat-sa@azwertyweb.iam.gserviceaccount.com
 
 ---
 
+## Which variant
+
+**`google/medgemma-1.5-4b-it`** — multimodal, 128K context, and the one this doc
+deploys.
+
+The family has four members. Only one of them is a sensible fit here:
+
+| Variant | Fits an L4 (24 GB)? | Reads images? | Verdict |
+|---|---|---|---|
+| **`medgemma-1.5-4b-it`** | Yes — ~8 GB bf16, plenty left for KV cache | Yes | **Use this** |
+| `medgemma-4b-it` | Yes | Yes | Superseded by 1.5 |
+| `medgemma-27b-text-it` | No — ~54 GB bf16 | **No** | Breaks photo attachments |
+| `medgemma-27b-it` | No — ~54 GB bf16 | Yes | Needs a bigger, pricier GPU |
+
+Three reasons the 1.5 4B is the right call for *this* app specifically, beyond
+being the newest:
+
+- **Lab-report extraction.** It turns a lab report into structured JSON at 91.0
+  macro-F1 — which is exactly the `[RECORD]` path in `server/src/medical.ts`,
+  where a photo of a blood panel becomes a `health_records` row.
+- **Longitudinal EHR reasoning** (89.6% on EHRQA). `POST /api/health/review`
+  reasons over the whole record across time — tracked issues, their check-in
+  history, past records — which is the task 1.5 was specifically improved on.
+- **Multimodal.** The health desk accepts photos. The 27B *text* variant would
+  silently break that, and it's the variant people reach for first because it's
+  the biggest number.
+
+Don't chase the 27B. At bf16 it needs ~54 GB, so an L4 can't hold it: you'd be
+into 4-bit quantization (~15 GB, tight, with quality loss) or an L40S/A100 at
+several times the hourly rate. For a personal health desk, a 4B that fits
+comfortably and cold-starts in under a minute beats a 27B that is quantized,
+slow to load, and expensive to keep available.
+
+Suffixes: `-it` is instruction-tuned (what you want for chat); `-pt` is the
+pretrained base and will not follow the system prompt.
+
+---
+
 ## Step 0 — Decide whether MedGemma is worth hosting (30 min, ~$0)
 
 Do this before you pay for anything. Open a
@@ -69,7 +107,7 @@ from huggingface_hub import login; login()          # accept the MedGemma licenc
 
 from transformers import pipeline
 import torch
-pipe = pipeline("image-text-to-text", model="google/medgemma-4b-it",
+pipe = pipeline("image-text-to-text", model="google/medgemma-1.5-4b-it",
                 torch_dtype=torch.bfloat16, device="cuda")
 
 msgs = [{"role": "user", "content": [{"type": "text", "text":
@@ -93,7 +131,7 @@ entirely.
 ## Step 1 — Get the weights
 
 1. Sign in to Hugging Face, open
-   [`google/medgemma-4b-it`](https://huggingface.co/google/medgemma-4b-it) and
+   [`google/medgemma-1.5-4b-it`](https://huggingface.co/google/medgemma-1.5-4b-it) and
    accept the Health AI Developer Foundations terms. Downloads 403 until you do.
 2. Create a **read** token at Settings → Access Tokens.
 3. Put it in Secret Manager rather than in the Dockerfile:
@@ -122,14 +160,14 @@ ENV HF_HOME=/model-cache
 # and never lands in the image.
 RUN --mount=type=secret,id=HF_TOKEN \
     HF_TOKEN=$(cat /run/secrets/HF_TOKEN) \
-    huggingface-cli download google/medgemma-4b-it
+    huggingface-cli download google/medgemma-1.5-4b-it
 
 ENV HF_HUB_OFFLINE=1
 
 # Cloud Run injects $PORT; shell form so it expands.
 ENTRYPOINT python3 -m vllm.entrypoints.openai.api_server \
-  --model google/medgemma-4b-it \
-  --served-model-name medgemma-4b-it \
+  --model google/medgemma-1.5-4b-it \
+  --served-model-name medgemma-1.5-4b-it \
   --host 0.0.0.0 --port ${PORT:-8080} \
   --max-model-len 8192 \
   --gpu-memory-utilization 0.90
@@ -146,7 +184,7 @@ gcloud artifacts repositories create fitnofat \
 
 gcloud auth configure-docker $REGION-docker.pkg.dev
 
-export IMAGE=$REGION-docker.pkg.dev/$PROJECT/fitnofat/medgemma:4b-it
+export IMAGE=$REGION-docker.pkg.dev/$PROJECT/fitnofat/medgemma:1.5-4b-it
 
 docker build --secret id=HF_TOKEN,env=HF_TOKEN -t $IMAGE medgemma/
 docker push $IMAGE
@@ -220,7 +258,7 @@ curl -s localhost:8080/v1/models | jq .
 
 curl -s localhost:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"medgemma-4b-it","messages":[
+  -d '{"model":"medgemma-1.5-4b-it","messages":[
         {"role":"user","content":"In one sentence: what does a ferritin of 18 ng/mL suggest in a menstruating endurance athlete?"}],
       "max_tokens":150}' | jq -r '.choices[0].message.content'
 ```
@@ -237,7 +275,7 @@ On the `fitnofat-api` service (Render → Environment):
 ```bash
 MEDICAL_AI_PROVIDER=cloudrun
 MEDICAL_AI_BASE_URL=https://medgemma-xxxxxxxx.europe-west1.run.app/v1   # note the /v1
-MEDICAL_AI_SELF_HOSTED_MODEL=medgemma-4b-it
+MEDICAL_AI_SELF_HOSTED_MODEL=medgemma-1.5-4b-it
 VERTEX_SERVICE_ACCOUNT_JSON=<the fitnofat-sa key JSON>                   # already set
 ```
 
@@ -247,7 +285,7 @@ service URL, no `/v1`). No extra credential, nothing new to rotate.
 
 Leave `GEMINI_API_KEY` set. If the Cloud Run service is down, the desk falls
 back rather than failing the request — and says so, because every reply carries
-the model that answered. `medgemma-4b-it (self-hosted)` in the chat footer means
+the model that answered. `medgemma-1.5-4b-it (self-hosted)` in the chat footer means
 you got what you paid for; `(Gemini)` means you didn't.
 
 To force the self-hosted model and never fall back, keep
@@ -265,7 +303,7 @@ curl -s https://<your-api>.onrender.com/health
 ## Step 7 — Verify end to end
 
 1. Open the app → **Medical** tab. The header should read
-   `medgemma-4b-it (self-hosted)`.
+   `medgemma-1.5-4b-it (self-hosted)`.
 2. Health desk in the coach chat → ask a nutrition question. First message after
    an idle period will be slow (cold start); the next ones fast.
 3. Tap **Review** on the Medical tab and confirm the worklist regenerates.

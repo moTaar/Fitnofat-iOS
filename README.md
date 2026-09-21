@@ -211,7 +211,7 @@ Consent is a timestamp on `health_profile` and can be revoked from the Medical t
 picks the first configured of **cloudrun → vertex → gemini**, and falls back down
 that chain per request when one fails (or when the turn carries a photo the
 text-only `:predict` contract can't take). Every reply reports the model that
-actually answered, so a fallback is never silent — `medgemma-4b-it (self-hosted)`
+actually answered, so a fallback is never silent — `medgemma-1.5-4b-it (self-hosted)`
 in the chat footer means the medical model answered, `(Gemini)` means it didn't.
 
 **`cloudrun` is the option to reach for if you don't want a general model.**
