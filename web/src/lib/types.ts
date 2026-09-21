@@ -162,6 +162,21 @@ export interface Exercise {
   // built-in Compendium table or, for unknowns, the AI — then reused for every
   // future calorie estimate of this exercise (no repeat AI cost).
   met?: number;
+  // YouTube id of the demo this user picked for this movement. The picker opens
+  // straight onto it next time; clearing it returns them to the ranked list.
+  videoId?: string;
+}
+
+// A candidate demonstration video for the "How to perform" picker.
+export interface ExerciseVideo {
+  videoId: string;
+  title: string;
+  channelTitle: string;
+  channelId: string;
+  thumbnail: string;
+  publishedAt?: string;
+  durationSec?: number;
+  viewCount?: number;
 }
 
 // How-to guidance for performing an exercise with correct form.

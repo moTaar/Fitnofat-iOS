@@ -108,6 +108,9 @@ interface AppState {
   addCustomExercise: (e: { name: string; muscleGroup: Exercise["muscleGroup"]; equipment: string }) => Promise<Exercise>;
   receiveExercise: (exercise: Exercise) => void;
   fetchExerciseGuide: (e: { name: string; muscleGroup?: Exercise["muscleGroup"]; equipment?: string; force?: boolean }) => Promise<Exercise>;
+  // Persist the demo video the user picked for an exercise (null clears it), so
+  // the sheet opens straight onto it next time and on their other devices.
+  setExerciseVideo: (e: { id: string; name: string; videoId: string | null; muscleGroup?: string; equipment?: string }) => Promise<void>;
   toggleExerciseHidden: (id: string) => void;
 
   // active workout
@@ -648,6 +651,21 @@ export const useStore = create<AppState>()(
         return exercise;
       },
 
+      setExerciseVideo: async ({ id, name, videoId, muscleGroup, equipment }) => {
+        // Optimistic: the picker should feel instant on gym wifi, and a failed
+        // write costs the user nothing worse than re-picking on another device.
+        set((s) => ({
+          exercises: s.exercises.some((x) => x.id === id)
+            ? s.exercises.map((x) => (x.id === id ? { ...x, videoId: videoId ?? undefined } : x))
+            : s.exercises,
+        }));
+        try {
+          await api.setExerciseVideo({ name, videoId, muscleGroup, equipment });
+        } catch {
+          /* keep the local pick — it's the user's choice either way */
+        }
+      },
+
       toggleExerciseHidden: (id) =>
         set((s) => ({
           hiddenExerciseIds: s.hiddenExerciseIds.includes(id)
@@ -1054,11 +1072,20 @@ export const useStore = create<AppState>()(
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<AppState>;
         const seedIds = new Set(SEED_EXERCISES.map((e) => e.id));
-        const customs = (p.exercises ?? []).filter((e) => !seedIds.has(e.id));
+        const persistedExercises = p.exercises ?? [];
+        const customs = persistedExercises.filter((e) => !seedIds.has(e.id));
+        // Seed entries are rebuilt from code so renames and fixes land, but the
+        // user's own data attached to them is not the seed's to discard — a
+        // picked demo video (and a resolved MET) has to survive the rebuild.
+        const bySlug = new Map(persistedExercises.map((e) => [e.id, e]));
+        const seeds = SEED_EXERCISES.map((e) => {
+          const saved = bySlug.get(e.id);
+          return saved ? { ...e, videoId: saved.videoId, met: saved.met ?? e.met } : e;
+        });
         return {
           ...current,
           ...p,
-          exercises: [...SEED_EXERCISES, ...customs],
+          exercises: [...seeds, ...customs],
           // Merge settings field-by-field so newly-added defaults (e.g. the
           // Smart Rep Counter prefs) survive for users with older saved state.
           settings: { ...current.settings, ...(p.settings ?? {}) },

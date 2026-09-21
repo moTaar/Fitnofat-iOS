@@ -3,8 +3,8 @@
 // an expired access token once on a 401.
 
 import type {
-  Exercise, FoodLookupResult, NutritionPlan, Plan, PlanInfo, Program, Routine,
-  Subscription, UserProfile, WorkoutSession,
+  Exercise, ExerciseVideo, FoodLookupResult, NutritionPlan, Plan, PlanInfo,
+  Program, Routine, Subscription, UserProfile, WorkoutSession,
 } from "./types";
 
 // Two backends: the data API (workouts/programs/nutrition) and the accounts
@@ -175,6 +175,11 @@ function accountsRequest<T>(path: string, init: RequestInit = {}, withAuth = tru
   return request<T>(path, init, withAuth, ACCOUNTS_BASE);
 }
 
+// Why a video list came back empty. The picker explains itself with this rather
+// than showing a generic error — the text guide beside it is still perfectly
+// good, so an absent video is a degraded section, not a failed one.
+export type VideoUnavailable = "not_configured" | "quota" | "error";
+
 // ── Bootstrap payload ─────────────────────────────────────────────────────
 export interface BootstrapData {
   profile: (UserProfile & { onboarded: boolean }) | null;
@@ -315,6 +320,24 @@ export const api = {
       { method: "POST", body: JSON.stringify(e) },
       true, API_BASE, AI_REQUEST_TIMEOUT_MS
     ),
+
+  // Ranked demonstration videos for the "How to perform" picker, plus whichever
+  // one this user previously chose. Cheap and cached server-side — see the quota
+  // note in server/src/youtube.ts for why this is a GET and not a Gemini route.
+  exerciseVideos: (name: string, force = false) =>
+    request<{ videos: ExerciseVideo[]; selectedId: string | null; unavailable?: VideoUnavailable }>(
+      `/api/exercises/videos?name=${encodeURIComponent(name)}${force ? "&force=true" : ""}`
+    ),
+
+  // Remember the chosen demo (null clears it). Also tallies towards the
+  // community default that orders this exercise's list for everyone else.
+  setExerciseVideo: (e: {
+    name: string;
+    videoId: string | null;
+    muscleGroup?: string;
+    equipment?: string;
+  }) =>
+    request<Exercise>("/api/exercises/video", { method: "POST", body: JSON.stringify(e) }),
 
   aiAssistExercise: (name: string) =>
     request<Exercise>(

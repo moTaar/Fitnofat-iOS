@@ -169,8 +169,18 @@ ever generated once across the whole user base.
 | POST | `/nutrition/generate` `/nutrition/lookup` | diet plan / food lookup |
 | POST/PUT/DELETE | `/routines[/:id]` | routine CRUD |
 | POST | `/exercises` `/exercises/ai-assist` `/exercises/guide` `/exercises/met` | library + AI assist |
+| GET | `/exercises/videos?name=&force=` | ranked YouTube demos for the how-to picker |
+| POST | `/exercises/video` | remember the chosen demo (tallies the community default) |
 | POST | `/ai/chat` `/ai/coach` | onboarding chat / ongoing coaching |
 | POST/DELETE | `/workouts[/:id]` | save (bulk, idempotent) / delete history |
+
+`/exercises/videos` is served from a global cache keyed on the exercise slug.
+A YouTube `search.list` costs 100 units of a default 10,000/day allocation — a
+**global** ~100 searches per day for the whole service — so the cache, the
+`YOUTUBE_DAILY_BUDGET` meter and in-flight deduplication are what make the
+feature affordable rather than merely fast. With a warm cache the steady-state
+cost is zero. Unset `YOUTUBE_API_KEY` disables the picker; the written how-to
+guide still renders on its own.
 
 `/bootstrap` returns only the last `BOOTSTRAP_HISTORY_DAYS` (default 120) of
 sessions plus a `history` block describing the window; the client loads older
@@ -203,6 +213,12 @@ Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 | `QUOTA_ONBOARD_FREE` / `_PRO` | server | `60` / `300` | daily onboarding chat turns |
 | `QUOTA_LOOKUP_FREE` / `_PRO` | server | `25` / `250` | daily food lookups |
 | `BOOTSTRAP_HISTORY_DAYS` | server | `120` | history window returned on cold start |
+| `YOUTUBE_API_KEY` | server | — | YouTube Data API v3 key; unset disables the demo-video picker |
+| `YOUTUBE_DAILY_BUDGET` | server | `90` | **global** searches per UTC day (Google's hard ceiling is ~100) |
+| `YOUTUBE_CHANNEL_ALLOWLIST` | server | — | channel IDs promoted to the top of every result set |
+| `YOUTUBE_REGION` / `YOUTUBE_RELEVANCE_LANGUAGE` | server | `US` / `en` | search locale |
+| `YOUTUBE_CACHE_DAYS` | server | `180` | how long cached demo results stay fresh |
+| `YOUTUBE_RATE_LIMIT_MAX` | server | `12` | video requests per window per user |
 
 ## Deploy to Render
 1. Push this repo to GitHub.

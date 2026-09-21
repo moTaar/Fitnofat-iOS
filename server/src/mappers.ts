@@ -130,6 +130,7 @@ export function rowToExercise(row: any) {
     isCustom: row.source !== "ai",
     guide: row.guide ?? undefined,
     met: row.met != null ? Number(row.met) : undefined,
+    videoId: row.video_id ?? undefined,
   };
 }
 

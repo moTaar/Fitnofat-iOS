@@ -46,6 +46,17 @@ services:
       # Use the same value as the accounts service's ADMIN_API_KEY.
       - key: ADMIN_API_KEY
         sync: false
+      # Optional: YouTube Data API v3 key, for the exercise demo-video picker.
+      # Unset ⇒ the picker reports "not configured" and the written how-to guide
+      # renders on its own. The quota is a GLOBAL ~100 searches/day shared by
+      # every user, so results are cached per movement — see server/src/youtube.ts.
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: YOUTUBE_DAILY_BUDGET
+        value: "90"
+      # Comma-separated channel IDs (UC…) promoted to the top of every result set.
+      - key: YOUTUBE_CHANNEL_ALLOWLIST
+        sync: false
 
   # ── Accounts microservice (auth + accounts + Stripe billing) ─────────────
   - type: web

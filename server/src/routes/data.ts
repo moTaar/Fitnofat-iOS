@@ -3,8 +3,9 @@ import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { asyncHandler, requireAuth, AuthedRequest } from "../middleware";
 import { requireEntitlement } from "../entitlements";
-import { aiLimiter, aiQuota, readUsage } from "../ratelimit";
-import { readShared, writeShared } from "../aicache";
+import { aiLimiter, aiQuota, readUsage, videoLimiter, claimYoutubeSearch } from "../ratelimit";
+import { readShared, writeShared, readSharedVideos, writeSharedVideos, recordVideoPick } from "../aicache";
+import { searchExerciseVideos, rankVideos, dedupeSearch, unavailableReason } from "../youtube";
 import { config } from "../config";
 import { generateProgram, refreshProgram, chatOnboarding, chatCoach, generateExerciseGuide, identifyExercise, estimateMet, type ChatMessage, type LoggedWorkoutDraft } from "../gemini";
 import { generateNutritionPlan, lookupFood, type RoutineLite } from "../nutrition";
@@ -727,6 +728,130 @@ dataRouter.post(
       .select()
       .single();
     if (error) throw new Error(error.message);
+    res.json(rowToExercise(data));
+  })
+);
+
+// ── Exercise demo videos (YouTube) ───────────────────────────────────────────
+// Returns a ranked list of demonstration videos for the client's picker. Almost
+// every call is served from the shared cache: a YouTube search costs 100 of a
+// ~100/day global allowance, so paying for one per sheet-open would take the
+// feature down before lunch. See youtube.ts for the full quota argument.
+//
+// Not entitlement-gated — knowing how to perform a movement safely is not a
+// premium feature, and the cost profile is nothing like Gemini's: the marginal
+// user costs zero once a movement has been searched once, for anyone, ever.
+dataRouter.get(
+  "/exercises/videos",
+  videoLimiter,
+  asyncHandler(async (req, res) => {
+    const userId = uid(req as AuthedRequest);
+    const { name, force } = z
+      .object({ name: z.string().min(1).max(120), force: z.coerce.boolean().optional() })
+      .parse(req.query);
+    const slug = slugify(name);
+
+    const cached = await readSharedVideos(slug);
+    const fresh =
+      cached?.videos.length &&
+      cached.updatedAt !== null &&
+      Date.now() - cached.updatedAt < config.youtubeCacheDays * 86_400_000;
+
+    // The user's own pick, so the client can open straight onto it.
+    const { data: own } = await supabaseAdmin
+      .from("exercises")
+      .select("video_id")
+      .eq("user_id", userId)
+      .eq("slug", slug)
+      .maybeSingle();
+
+    if (fresh && !force) {
+      // Re-ranked on every read rather than at write time, so a pick recorded a
+      // minute ago reorders the list for the next user without a new search.
+      res.json({
+        videos: rankVideos(cached!.videos, name, cached!.picks),
+        selectedId: own?.video_id ?? null,
+      });
+      return;
+    }
+
+    try {
+      // The budget claim sits *inside* the dedupe so callers piggybacking on an
+      // in-flight search don't each spend a unit for the same answer. Exhaustion
+      // throws and lands in the catch below, which serves stale results when we
+      // have them — a six-month-old demo of a squat is still a demo of a squat.
+      const found = await dedupeSearch(slug, async () => {
+        if (!(await claimYoutubeSearch())) throw new Error("YOUTUBE_QUOTA");
+        const videos = await searchExerciseVideos(name);
+        if (videos.length) await writeSharedVideos(slug, name, videos);
+        return videos;
+      });
+      res.json({
+        videos: rankVideos(found, name, cached?.picks ?? {}),
+        selectedId: own?.video_id ?? null,
+      });
+    } catch (err) {
+      // Never a 500: the text guide is the primary content and the video is an
+      // enhancement, so a YouTube outage degrades the sheet instead of breaking it.
+      console.error("[videos] search failed", err instanceof Error ? err.message : err);
+      res.json({
+        videos: cached?.videos.length ? rankVideos(cached.videos, name, cached.picks) : [],
+        selectedId: own?.video_id ?? null,
+        unavailable: cached?.videos.length ? undefined : unavailableReason(err),
+      });
+    }
+  })
+);
+
+// Remember which demo this user chose, and tally it towards the community
+// default that orders results for everyone else.
+dataRouter.post(
+  "/exercises/video",
+  asyncHandler(async (req, res) => {
+    const userId = uid(req as AuthedRequest);
+    const body = z
+      .object({
+        name: z.string().min(1),
+        // null clears the pick and returns the user to the ranked list.
+        videoId: z.string().min(5).max(20).regex(/^[\w-]+$/).nullable(),
+        muscleGroup: z.string().optional(),
+        equipment: z.string().optional(),
+      })
+      .parse(req.body);
+    const slug = slugify(body.name);
+
+    const { data: existing } = await supabaseAdmin
+      .from("exercises")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("slug", slug)
+      .maybeSingle();
+
+    // Upsert rather than update: a seed-library exercise has no row until the
+    // user does something with it, and picking a demo is that something.
+    const { data, error } = await supabaseAdmin
+      .from("exercises")
+      .upsert(
+        {
+          user_id: userId,
+          slug,
+          name: body.name,
+          muscle_group: body.muscleGroup ?? existing?.muscle_group ?? "Full Body",
+          equipment: body.equipment ?? existing?.equipment ?? "Other",
+          video_id: body.videoId,
+          source: existing?.source ?? "custom",
+        },
+        { onConflict: "user_id,slug" }
+      )
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+
+    // Tally only real picks, and only when it's a change — re-opening a sheet
+    // shouldn't inflate a video's standing.
+    if (body.videoId && body.videoId !== existing?.video_id) {
+      await recordVideoPick(slug, body.name, body.videoId);
+    }
     res.json(rowToExercise(data));
   })
 );
