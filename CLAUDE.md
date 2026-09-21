@@ -83,7 +83,7 @@ chain per request. `cloudrun` is any OpenAI-compatible server (vLLM/Ollama/TGI),
 authenticated with a Google ID token minted by `googleIdToken()` from the same
 service-account key Vertex uses — audience is the Cloud Run URL WITHOUT the `/v1`
 path, so don't "helpfully" pass the full base URL.
-[`docs/medgemma-cloud-run.md`](docs/medgemma-cloud-run.md) is the deployment
+[`wiki/MedGemma-Cloud-Run-Deployment.md`](wiki/MedGemma-Cloud-Run-Deployment.md) is the deployment
 runbook.
 Every reply carries the model that actually answered and the UI prints it — don't
 drop that field to tidy a payload, it's the only thing telling the user which

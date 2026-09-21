@@ -236,7 +236,7 @@ async function askVertex(system: string, messages: ChatMessage[], opts: AskOptio
 
 // ── Self-hosted (OpenAI-compatible) ──────────────────────────────────────────
 // vLLM, Ollama and TGI all speak the OpenAI chat-completions shape, so one
-// client covers every way of self-hosting MedGemma. See docs/medgemma-cloud-run.md.
+// client covers every way of self-hosting MedGemma. See wiki/MedGemma-Cloud-Run-Deployment.md.
 
 interface OpenAiMessage {
   role: "system" | "user" | "assistant";

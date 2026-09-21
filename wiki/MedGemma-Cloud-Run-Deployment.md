@@ -1,4 +1,4 @@
-# Running MedGemma on Cloud Run as the medical desk
+# Deploying MedGemma on Cloud Run (the medical desk)
 
 How to replace the general-purpose model behind `/api/health/*` with
 [MedGemma](https://developers.google.com/health-ai-developer-foundations/medgemma/model-card) —

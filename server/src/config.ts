@@ -51,7 +51,7 @@ export const config = {
   //   "cloudrun" — a model you host yourself behind an OpenAI-compatible API
   //                (vLLM, Ollama, TGI…), typically MedGemma on Cloud Run with a
   //                GPU. The weights and the request both stay on infrastructure
-  //                you control. See docs/medgemma-cloud-run.md.
+  //                you control. See wiki/MedGemma-Cloud-Run-Deployment.md.
   //   "vertex"   — Google Cloud Vertex AI (the service behind what Google now
   //                brands "Gemini Enterprise Agent Platform" — the product was
   //                renamed in April 2026 but `aiplatform.googleapis.com`, its

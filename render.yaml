@@ -52,7 +52,7 @@ services:
       - key: MEDICAL_AI_PROVIDER
         value: auto
       # Self-hosted medical model (MedGemma on Cloud Run with a GPU) — see
-      # docs/medgemma-cloud-run.md. The URL must include the /v1 path; auth
+      # wiki/MedGemma-Cloud-Run-Deployment.md. The URL must include the /v1 path; auth
       # reuses VERTEX_SERVICE_ACCOUNT_JSON below to mint a Cloud Run ID token.
       - key: MEDICAL_AI_BASE_URL
         sync: false

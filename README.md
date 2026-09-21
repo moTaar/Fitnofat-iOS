@@ -217,7 +217,7 @@ in the chat footer means the medical model answered, `(Gemini)` means it didn't.
 **`cloudrun` is the option to reach for if you don't want a general model.**
 It points at any OpenAI-compatible server you host — vLLM, Ollama, TGI — so the
 weights and the inference both stay on infrastructure you control.
-[`docs/medgemma-cloud-run.md`](docs/medgemma-cloud-run.md) is a full runbook for
+[`wiki/MedGemma-Cloud-Run-Deployment.md`](wiki/MedGemma-Cloud-Run-Deployment.md) is a full runbook for
 MedGemma (Google's open-weights medical model) on Cloud Run with an L4 GPU:
 ~$10–15/month because it scales to zero, authenticated with a Cloud Run ID token
 minted from the same service-account key Vertex uses.
