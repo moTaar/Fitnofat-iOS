@@ -116,6 +116,23 @@ gcloud config set project azwertyweb
 > machine; nothing here uses them, and Fitnofat authenticates with the
 > service-account key instead.
 
+### Three places you will be typing
+
+This runbook moves between environments, and pasting a command into the wrong
+one produces errors that look like real failures but aren't. Check the prompt
+before you paste:
+
+| Prompt looks like | What it is | What belongs there |
+|---|---|---|
+| `PS D:\...>` or `$` | **A shell** (PowerShell, Git Bash, Cloud Shell) | every `gcloud`, `docker` and `git` command |
+| `>>>` | **Python REPL** | nothing in this runbook — type `exit()` to leave |
+| A Colab cell | **A browser notebook** | step 0 only, and only the `python` blocks |
+
+A `gcloud` line at a `>>>` prompt gives you `SyntaxError: invalid syntax`, which
+is Python complaining it isn't Python — not gcloud rejecting anything. If you
+opened Python to run step 0, `exit()` first; step 0 belongs in Colab, not in a
+local interpreter.
+
 ### A note on shells
 
 **Every command below is bash.** On Windows, PowerShell will choke on two of its
@@ -310,6 +327,11 @@ entirely.
 ```bash
 printf 'hf_xxxxxxxxxxxxxxxxx' | gcloud secrets create hf-token --data-file=-
 ```
+
+> Both forms put the token in your shell history. That is usually fine on your
+> own machine — but if you paste it anywhere shared (a terminal you are
+> screen-sharing, a chat, an issue), treat it as burned and rotate it at
+> [Hugging Face → Settings → Access Tokens](https://huggingface.co/settings/tokens).
 
 PowerShell has no `printf`, and piping text into `--data-file=-` there can add a
 BOM or a trailing newline that ends up *inside* the token. Write a file and
