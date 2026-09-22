@@ -205,6 +205,17 @@ $SA      = "fitnofat-sa@azwertyweb.iam.gserviceaccount.com"
 ```
 
 These are set per shell session — reopen your terminal and you set them again.
+That catches everyone at least once, so pin the region into gcloud's own config
+as well, where it persists across terminals, shells and reboots:
+
+```bash
+gcloud config set run/region $REGION
+```
+
+Every `gcloud run` command below then works without `--region`. If gcloud ever
+answers a command with a numbered list of forty regions, that is it telling you
+the flag arrived empty — which usually means you are in a terminal where the
+`export` lines above were never run.
 
 ---
 
@@ -342,6 +353,48 @@ Set-Content -Path token.txt -Value "hf_xxxxxxxxxxxxxxxxx" -NoNewline -Encoding a
 gcloud secrets create hf-token --data-file=token.txt
 Remove-Item token.txt
 ```
+
+4. **Let Cloud Build read it.** A build fetches `availableSecrets` as its own
+   service account, and that account cannot read secret payloads by default —
+   `roles/editor` deliberately excludes `secretmanager.versions.access`, so even
+   a broadly-privileged account fails here. Without this grant step 2 dies with
+   `PermissionDenied ... secretmanager.versions.access`.
+
+   Which account it runs as depends on the project's age: builds used to run as
+   `PROJECT_NUMBER@cloudbuild.gserviceaccount.com`, and newer projects use the
+   Compute Engine default instead. Granting both is harmless — the binding is
+   scoped to this one secret, and a non-existent account just errors:
+
+```bash
+PN=$(gcloud projects describe $PROJECT --format='value(projectNumber)')
+
+gcloud secrets add-iam-policy-binding hf-token \
+  --member="serviceAccount:$PN-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+
+gcloud secrets add-iam-policy-binding hf-token \
+  --member="serviceAccount:$PN@cloudbuild.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+```powershell
+$PN = gcloud projects describe $PROJECT --format="value(projectNumber)"
+
+gcloud secrets add-iam-policy-binding hf-token --member="serviceAccount:$PN-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"
+
+gcloud secrets add-iam-policy-binding hf-token --member="serviceAccount:$PN@cloudbuild.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"
+```
+
+   To see exactly which account a failed build used:
+   `gcloud builds describe BUILD_ID --format='value(serviceAccount)'`. That is
+   also the quickest way out of a wrong guess — grant to the account it names
+   and skip the pair above.
+
+   > If the error reads `Service account -compute@developer.gserviceaccount.com
+   > does not exist`, with nothing before the hyphen, `$PN` was empty: shell
+   > variables do not survive a move between PowerShell and bash, and each
+   > terminal you open starts without them. Re-set the variables from the
+   > prerequisites in whichever shell you are in now.
 
 ---
 
@@ -528,21 +581,92 @@ also use the Vertex path, `roles/aiplatform.user`.
 
 ## Step 5 — Prove it works before touching the app
 
-```bash
-# Authenticated proxy on localhost — no token juggling.
-gcloud run services proxy medgemma --region=$REGION --port=8080 &
+First confirm the service is actually there, and that `$REGION` is set in *this*
+shell — an empty one makes gcloud prompt with a long interactive region list,
+which is its way of saying the flag arrived blank:
 
-curl -s localhost:8080/v1/models | jq .
+```bash
+echo $REGION                              # must not be empty
+gcloud run services list --region=$REGION
+```
+
+This needs **two terminals**. The proxy is a long-running foreground process:
+backgrounding it with `&` and immediately curling races the port, and if it needs
+to prompt you never see the question.
+
+**Terminal A** — leave this running:
+
+```bash
+gcloud run services proxy medgemma --region=$REGION --port=8080
+```
+
+Wait for `proxying to https://medgemma-....run.app`.
+
+**Terminal B** — re-export the variables here too, then:
+
+```bash
+curl -s localhost:8080/v1/models
 
 curl -s localhost:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"medgemma-1.5-4b-it","messages":[
         {"role":"user","content":"In one sentence: what does a ferritin of 18 ng/mL suggest in a menstruating endurance athlete?"}],
-      "max_tokens":150}' | jq -r '.choices[0].message.content'
+      "max_tokens":150}'
 ```
 
-The first call pays the cold start — expect **40–90 seconds**. The second should
-be a few seconds. If you don't see that pattern, fix it here, not later.
+Both print raw JSON. `jq` is lovely for reading it but ships with neither Git
+Bash nor Cloud Shell's default image, so it is not assumed here — pipe to
+`jq .` or `python -m json.tool` if you have either.
+
+Send **one request and wait** for it. The first call pays the cold start — a GPU
+instance loading the model takes 1–2 minutes — and `--max-instances=1` means
+there is exactly one instance to wait for. Firing a second request while the
+first is still starting doesn't queue politely: Cloud Run sheds it with HTTP 429
+and the body `Rate exceeded.`, which `curl -s` hides because it only prints the
+body. Use `-i` to see the status:
+
+```bash
+curl -sS -i --max-time 300 localhost:8080/v1/models
+```
+
+Once that returns `200`, the second call should be a few seconds. If you don't
+see that pattern, fix it here, not later.
+
+If you get `Rate exceeded.` on a request you waited for, the container is
+probably not starting at all. The logs say which:
+
+```bash
+gcloud run revisions list --service=medgemma --region=$REGION
+gcloud run services logs read medgemma --region=$REGION --limit=100
+```
+
+A healthy start logs vLLM loading the model and then
+`Uvicorn running on http://0.0.0.0:8080`. A CUDA OOM, a missing model path, or a
+process exiting immediately all show up here — and all of them present to the
+caller as the same 429, because Cloud Run cannot tell you "the container died",
+only "no instance available".
+
+Two things this proves and one it doesn't:
+
+- The `"id"` in the `/v1/models` response is exactly what
+  `MEDICAL_AI_SELF_HOSTED_MODEL` must be set to in step 6. Copy it from there
+  rather than retyping it.
+- The proxy authenticates as **you**, not as `fitnofat-sa`. A green result here
+  says the container works; it says nothing about whether the API service can
+  reach it. That is step 4's IAM binding, and it's worth confirming before you
+  go changing environment variables:
+
+```bash
+gcloud run services get-iam-policy medgemma --region=$REGION
+```
+
+`fitnofat-sa` should appear against `roles/run.invoker`. A response that is just
+`etag: ...` with no `bindings:` block means the policy is **empty** — nobody can
+invoke it, the grant never applied, and the app will get a 403 and fall back to
+Gemini. That fallback is quiet by design, so the only symptom is the model name
+under a reply.
+
+Stop the proxy with Ctrl+C in terminal A when you're done.
 
 ---
 
@@ -643,6 +767,9 @@ Then unset `MEDICAL_AI_BASE_URL` on Render (or set
 | 403 from Cloud Run | `fitnofat-sa` lacks invoker, or the ID-token audience is wrong | Step 4; audience must be the service URL **without** `/v1` — `vertex.ts` strips it, so don't add a path |
 | 401 `Invalid token` | Clock skew, or the wrong service-account key | Verify the key in `VERTEX_SERVICE_ACCOUNT_JSON` is `fitnofat-sa`'s |
 | Request fails at ~60 s in the browser, server log looks fine | Client timeout during cold start | See the cold-start section |
+| `Rate exceeded.` from a curl | Cloud Run 429: no instance available — still cold-starting, or the container is crashing | One request at a time, `-i` to see the status; if it persists, read the service logs |
+| gcloud prints a numbered list of regions and waits | the `--region` flag arrived empty | `echo $REGION`; shell variables don't cross terminals or shells |
+| Build fails: `PermissionDenied ... secretmanager.versions.access` | Cloud Build's service account can't read `hf-token` | Step 1.4 — `roles/editor` does not cover secret payloads |
 | Deploy fails: GPU quota | First L4 in a new region | IAM → Quotas → request Cloud Run L4 |
 | vLLM OOM at startup | `--max-model-len` too high for 24 GB | Lower to 4096, or drop `--gpu-memory-utilization` to 0.85 |
 | Model 404 from vLLM | Request's `model` ≠ `--served-model-name` | Match `MEDICAL_AI_SELF_HOSTED_MODEL` to it |
