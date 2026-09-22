@@ -46,21 +46,75 @@ service-account key in `VERTEX_SERVICE_ACCOUNT_JSON`, over plain HTTPS.
 
 You need:
 
-- **`gcloud`**, logged in (`gcloud auth login`), project `azwertyweb`:
-  - macOS: `brew install --cask google-cloud-sdk`
-  - Windows: the [installer](https://cloud.google.com/sdk/docs/install), or
-    `winget install Google.CloudSDK`
-  - Linux: `curl https://sdk.cloud.google.com | bash`
+- **`gcloud`**, installed and authenticated — see below
 - **Docker**, to build the image — *unless* you use the Cloud Build path in
   step 2, which needs neither Docker nor a fast upload
 - A Hugging Face account, for the MedGemma weights
 - The `fitnofat-sa` service-account key JSON you already created
 
-> **No install at all?** [Cloud Shell](https://shell.cloud.google.com) is a
-> browser terminal with `gcloud` and Docker already set up and already
-> authenticated. It is fine for every step here except building the image
-> locally — its home directory is 5 GB and the image is ~15 GB. Pair Cloud Shell
-> with the Cloud Build path in step 2 and you never install anything.
+> **Or install nothing at all.** [Cloud Shell](https://shell.cloud.google.com) is
+> a browser terminal with `gcloud` and Docker already installed and already
+> signed in as you, with the project preset. Paired with the Cloud Build path in
+> step 2 it covers this entire runbook — the one thing it can't do is build the
+> image locally, since its home directory is 5 GB and the image is ~15 GB.
+
+### Installing gcloud
+
+**macOS**
+
+```bash
+brew install --cask gcloud-cli        # formerly the google-cloud-sdk cask
+```
+
+Or without Homebrew: `curl https://sdk.cloud.google.com | bash && exec -l $SHELL`.
+
+**Windows**
+
+```powershell
+winget install -e --id Google.CloudSDK
+```
+
+Or run the [installer](https://cloud.google.com/sdk/docs/install). Either way,
+open a **new** terminal afterwards so `PATH` picks it up. Python ships bundled;
+you don't need your own.
+
+**Linux (Debian/Ubuntu)**
+
+```bash
+sudo apt-get update && sudo apt-get install -y apt-transport-https ca-certificates gnupg curl
+
+curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+  | sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
+
+sudo apt-get update && sudo apt-get install -y google-cloud-cli
+```
+
+The package is `google-cloud-cli`; the command is `gcloud`. On other distros use
+`curl https://sdk.cloud.google.com | bash` (needs Python 3.8+).
+
+**Then, on any OS**
+
+```bash
+gcloud init          # opens a browser: sign in, then pick project azwertyweb
+gcloud --version     # confirms it's on PATH
+gcloud config list   # should show account = you, project = azwertyweb
+```
+
+`gcloud init` bundles `gcloud auth login` and `gcloud config set project`. If you
+have already initialised for another project, just run:
+
+```bash
+gcloud auth login
+gcloud config set project azwertyweb
+```
+
+> You do **not** need `gcloud auth application-default login` for this runbook.
+> That command writes separate credentials for client libraries running on your
+> machine; nothing here uses them, and Fitnofat authenticates with the
+> service-account key instead.
 
 Enable the APIs (note that Vertex AI is listed as "Gemini Enterprise Agent
 Platform" since April 2026 — the service name is unchanged):
