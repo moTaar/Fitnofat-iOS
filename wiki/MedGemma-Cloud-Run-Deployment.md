@@ -607,8 +607,33 @@ Both print raw JSON. `jq` is lovely for reading it but ships with neither Git
 Bash nor Cloud Shell's default image, so it is not assumed here — pipe to
 `jq .` or `python -m json.tool` if you have either.
 
-The first call pays the cold start — expect **40–90 seconds**. The second should
-be a few seconds. If you don't see that pattern, fix it here, not later.
+Send **one request and wait** for it. The first call pays the cold start — a GPU
+instance loading the model takes 1–2 minutes — and `--max-instances=1` means
+there is exactly one instance to wait for. Firing a second request while the
+first is still starting doesn't queue politely: Cloud Run sheds it with HTTP 429
+and the body `Rate exceeded.`, which `curl -s` hides because it only prints the
+body. Use `-i` to see the status:
+
+```bash
+curl -sS -i --max-time 300 localhost:8080/v1/models
+```
+
+Once that returns `200`, the second call should be a few seconds. If you don't
+see that pattern, fix it here, not later.
+
+If you get `Rate exceeded.` on a request you waited for, the container is
+probably not starting at all. The logs say which:
+
+```bash
+gcloud run revisions list --service=medgemma --region=$REGION
+gcloud run services logs read medgemma --region=$REGION --limit=100
+```
+
+A healthy start logs vLLM loading the model and then
+`Uvicorn running on http://0.0.0.0:8080`. A CUDA OOM, a missing model path, or a
+process exiting immediately all show up here — and all of them present to the
+caller as the same 429, because Cloud Run cannot tell you "the container died",
+only "no instance available".
 
 Stop the proxy with Ctrl+C in terminal A when you're done.
 
@@ -711,6 +736,7 @@ Then unset `MEDICAL_AI_BASE_URL` on Render (or set
 | 403 from Cloud Run | `fitnofat-sa` lacks invoker, or the ID-token audience is wrong | Step 4; audience must be the service URL **without** `/v1` — `vertex.ts` strips it, so don't add a path |
 | 401 `Invalid token` | Clock skew, or the wrong service-account key | Verify the key in `VERTEX_SERVICE_ACCOUNT_JSON` is `fitnofat-sa`'s |
 | Request fails at ~60 s in the browser, server log looks fine | Client timeout during cold start | See the cold-start section |
+| `Rate exceeded.` from a curl | Cloud Run 429: no instance available — still cold-starting, or the container is crashing | One request at a time, `-i` to see the status; if it persists, read the service logs |
 | gcloud prints a numbered list of regions and waits | the `--region` flag arrived empty | `echo $REGION`; shell variables don't cross terminals or shells |
 | Build fails: `PermissionDenied ... secretmanager.versions.access` | Cloud Build's service account can't read `hf-token` | Step 1.4 — `roles/editor` does not cover secret payloads |
 | Deploy fails: GPU quota | First L4 in a new region | IAM → Quotas → request Cloud Run L4 |
