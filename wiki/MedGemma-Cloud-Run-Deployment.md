@@ -343,6 +343,40 @@ gcloud secrets create hf-token --data-file=token.txt
 Remove-Item token.txt
 ```
 
+4. **Let Cloud Build read it.** A build fetches `availableSecrets` as its own
+   service account, and that account cannot read secret payloads by default —
+   `roles/editor` deliberately excludes `secretmanager.versions.access`, so even
+   a broadly-privileged account fails here. Without this grant step 2 dies with
+   `PermissionDenied ... secretmanager.versions.access`.
+
+   Which account it runs as depends on the project's age: builds used to run as
+   `PROJECT_NUMBER@cloudbuild.gserviceaccount.com`, and newer projects use the
+   Compute Engine default instead. Granting both is harmless — the binding is
+   scoped to this one secret, and a non-existent account just errors:
+
+```bash
+PN=$(gcloud projects describe $PROJECT --format='value(projectNumber)')
+
+gcloud secrets add-iam-policy-binding hf-token \
+  --member="serviceAccount:$PN-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+
+gcloud secrets add-iam-policy-binding hf-token \
+  --member="serviceAccount:$PN@cloudbuild.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+```powershell
+$PN = gcloud projects describe $PROJECT --format="value(projectNumber)"
+
+gcloud secrets add-iam-policy-binding hf-token --member="serviceAccount:$PN-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"
+
+gcloud secrets add-iam-policy-binding hf-token --member="serviceAccount:$PN@cloudbuild.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"
+```
+
+   To see exactly which account a failed build used:
+   `gcloud builds describe BUILD_ID --format='value(serviceAccount)'`.
+
 ---
 
 ## Step 2 — Build the container
@@ -643,6 +677,7 @@ Then unset `MEDICAL_AI_BASE_URL` on Render (or set
 | 403 from Cloud Run | `fitnofat-sa` lacks invoker, or the ID-token audience is wrong | Step 4; audience must be the service URL **without** `/v1` — `vertex.ts` strips it, so don't add a path |
 | 401 `Invalid token` | Clock skew, or the wrong service-account key | Verify the key in `VERTEX_SERVICE_ACCOUNT_JSON` is `fitnofat-sa`'s |
 | Request fails at ~60 s in the browser, server log looks fine | Client timeout during cold start | See the cold-start section |
+| Build fails: `PermissionDenied ... secretmanager.versions.access` | Cloud Build's service account can't read `hf-token` | Step 1.4 — `roles/editor` does not cover secret payloads |
 | Deploy fails: GPU quota | First L4 in a new region | IAM → Quotas → request Cloud Run L4 |
 | vLLM OOM at startup | `--max-model-len` too high for 24 GB | Lower to 4096, or drop `--gpu-memory-utilization` to 0.85 |
 | Model 404 from vLLM | Request's `model` ≠ `--served-model-name` | Match `MEDICAL_AI_SELF_HOSTED_MODEL` to it |
