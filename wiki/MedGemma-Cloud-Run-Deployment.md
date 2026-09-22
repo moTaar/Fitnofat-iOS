@@ -26,12 +26,41 @@ roughly **$10–15/month**. The number that would hurt is `--min-instances 1`
 
 ## Before you start
 
+### Where you run these commands
+
+**On your own laptop or workstation** — the machine you sit at. Everything in
+steps 1–5 is one-time setup you perform *against* Google Cloud; none of it runs
+on a server.
+
+To be explicit about where these tools do **not** go:
+
+| Machine | Needs gcloud? | Why |
+|---|---|---|
+| Your laptop | **Yes** | You run every command here |
+| The API host (Render) | No | It only needs the env vars from step 6 |
+| The Cloud Run container | No | It just serves vLLM |
+| A CI runner | No | Nothing in CI touches this |
+
+Fitnofat never shells out to `gcloud` at runtime. The app authenticates with the
+service-account key in `VERTEX_SERVICE_ACCOUNT_JSON`, over plain HTTPS.
+
 You need:
 
-- `gcloud` installed and logged in (`gcloud auth login`), project `azwertyweb`
-- Docker, to build the image
+- **`gcloud`**, logged in (`gcloud auth login`), project `azwertyweb`:
+  - macOS: `brew install --cask google-cloud-sdk`
+  - Windows: the [installer](https://cloud.google.com/sdk/docs/install), or
+    `winget install Google.CloudSDK`
+  - Linux: `curl https://sdk.cloud.google.com | bash`
+- **Docker**, to build the image — *unless* you use the Cloud Build path in
+  step 2, which needs neither Docker nor a fast upload
 - A Hugging Face account, for the MedGemma weights
 - The `fitnofat-sa` service-account key JSON you already created
+
+> **No install at all?** [Cloud Shell](https://shell.cloud.google.com) is a
+> browser terminal with `gcloud` and Docker already set up and already
+> authenticated. It is fine for every step here except building the image
+> locally — its home directory is 5 GB and the image is ~15 GB. Pair Cloud Shell
+> with the Cloud Build path in step 2 and you never install anything.
 
 Enable the APIs (note that Vertex AI is listed as "Gemini Enterprise Agent
 Platform" since April 2026 — the service name is unchanged):
@@ -176,22 +205,60 @@ ENTRYPOINT python3 -m vllm.entrypoints.openai.api_server \
 `--served-model-name` is what the app sends in the request body — pin it so the
 value is stable and short.
 
-Build and push:
+Create the registry either way:
 
 ```bash
 gcloud artifacts repositories create fitnofat \
   --repository-format=docker --location=$REGION
 
-gcloud auth configure-docker $REGION-docker.pkg.dev
-
 export IMAGE=$REGION-docker.pkg.dev/$PROJECT/fitnofat/medgemma:1.5-4b-it
-
-docker build --secret id=HF_TOKEN,env=HF_TOKEN -t $IMAGE medgemma/
-docker push $IMAGE
 ```
 
-(Export `HF_TOKEN` in your shell for the build. The image will be ~15 GB — the
-push is the slow part, once.)
+**Option A — build in the cloud (recommended).** No Docker locally, and the
+~15 GB image never crosses your home connection: it is built next to Artifact
+Registry and pushed inside Google's network. It also reuses the Secret Manager
+secret from step 1, so `HF_TOKEN` never sits in your shell history.
+
+`medgemma/cloudbuild.yaml`:
+
+```yaml
+steps:
+  - name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    env: ['DOCKER_BUILDKIT=1']
+    secretEnv: ['HF_TOKEN']
+    args:
+      - -c
+      - docker build --secret id=HF_TOKEN,env=HF_TOKEN -t $_IMAGE .
+images: ['$_IMAGE']
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/hf-token/versions/latest
+      env: HF_TOKEN
+options:
+  machineType: E2_HIGHCPU_8
+  diskSizeGb: 100
+```
+
+```bash
+gcloud builds submit medgemma/ \
+  --config=medgemma/cloudbuild.yaml \
+  --substitutions=_IMAGE=$IMAGE \
+  --timeout=3600s
+```
+
+The default 10-minute build timeout is nowhere near enough to pull 8 GB of
+weights and push a 15 GB image — hence `--timeout=3600s`, and the larger disk.
+
+**Option B — build locally.** Needs Docker and the patience to upload 15 GB:
+
+```bash
+gcloud auth configure-docker $REGION-docker.pkg.dev
+export HF_TOKEN=hf_xxxxxxxxxxxxxxxxx
+
+DOCKER_BUILDKIT=1 docker build --secret id=HF_TOKEN,env=HF_TOKEN -t $IMAGE medgemma/
+docker push $IMAGE
+```
 
 ---
 
