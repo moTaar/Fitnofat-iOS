@@ -218,8 +218,17 @@ pretrained base and will not follow the system prompt.
 
 ## Step 0 — Decide whether MedGemma is worth hosting (30 min, ~$0)
 
-Do this before you pay for anything. Open a
-[Colab](https://colab.research.google.com) notebook with a T4 and run:
+Do this before you pay for anything. It needs no gcloud, no GCP and no billing —
+only a Hugging Face account, so it can be done before or alongside everything
+above.
+
+**First**, accept the licence and get a token (this is step 1.1–1.2, pulled
+forward because the notebook below downloads the weights too): sign in to Hugging
+Face, open [`google/medgemma-1.5-4b-it`](https://huggingface.co/google/medgemma-1.5-4b-it),
+accept the Health AI Developer Foundations terms, then create a **read** token at
+Settings → Access Tokens. Downloads 403 until the licence is accepted.
+
+Then open a [Colab](https://colab.research.google.com) notebook with a T4 and run:
 
 ```python
 !pip install -q transformers accelerate
