@@ -676,10 +676,45 @@ On the `fitnofat-api` service (Render → Environment):
 
 ```bash
 MEDICAL_AI_PROVIDER=cloudrun
-MEDICAL_AI_BASE_URL=https://medgemma-xxxxxxxx.europe-west1.run.app/v1   # note the /v1
+MEDICAL_AI_BASE_URL=https://medgemma-xxxxxxxx.us-east4.run.app/v1   # note the /v1
 MEDICAL_AI_SELF_HOSTED_MODEL=medgemma-1.5-4b-it
-VERTEX_SERVICE_ACCOUNT_JSON=<the fitnofat-sa key JSON>                   # already set
+VERTEX_SERVICE_ACCOUNT_JSON=<base64 of the fitnofat-sa key JSON>
 ```
+
+**Producing the base URL.** Print it with the `/v1` already appended, so the
+suffix can't be forgotten:
+
+```bash
+echo "$(gcloud run services describe medgemma --format='value(status.url)')/v1"
+```
+
+**Producing the key value.** `VERTEX_SERVICE_ACCOUNT_JSON` takes either the raw
+key JSON or a base64 encoding of it. Prefer **base64**: the raw file is
+multi-line and its `private_key` is full of `\n` escapes, which web consoles
+reliably mangle. Base64 is one line with no quotes or newlines to lose.
+
+```bash
+# from wherever you downloaded the key
+openssl base64 -A -in fitnofat-sa.json
+```
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("fitnofat-sa.json"))
+```
+
+Copy the single line it prints. Lost the key file? Mint another — a service
+account can hold several, and the old one keeps working:
+
+```bash
+gcloud iam service-accounts keys create fitnofat-sa.json \
+  --iam-account=fitnofat-sa@azwertyweb.iam.gserviceaccount.com
+```
+
+> That file is a full credential for the service account. Keep it out of the
+> repository — do not leave it in the project folder where a `git add -A` will
+> sweep it up — and delete it once the value is pasted into Render. If one ever
+> leaks, `gcloud iam service-accounts keys delete KEY_ID --iam-account=...`
+> revokes it.
 
 `VERTEX_SERVICE_ACCOUNT_JSON` is doing double duty: `server/src/vertex.ts` uses
 the same key to mint the **ID token** that Cloud Run checks (audience = the
