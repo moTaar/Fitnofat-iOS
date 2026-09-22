@@ -635,6 +635,24 @@ process exiting immediately all show up here — and all of them present to the
 caller as the same 429, because Cloud Run cannot tell you "the container died",
 only "no instance available".
 
+Two things this proves and one it doesn't:
+
+- The `"id"` in the `/v1/models` response is exactly what
+  `MEDICAL_AI_SELF_HOSTED_MODEL` must be set to in step 6. Copy it from there
+  rather than retyping it.
+- The proxy authenticates as **you**, not as `fitnofat-sa`. A green result here
+  says the container works; it says nothing about whether the API service can
+  reach it. That is step 4's IAM binding, and it's worth confirming before you
+  go changing environment variables:
+
+```bash
+gcloud run services get-iam-policy medgemma --region=$REGION
+```
+
+`fitnofat-sa` should appear against `roles/run.invoker`. If it doesn't, the app
+gets a 403 and falls back to Gemini — which is quiet by design, so you'd only
+notice from the model name under a reply.
+
 Stop the proxy with Ctrl+C in terminal A when you're done.
 
 ---
