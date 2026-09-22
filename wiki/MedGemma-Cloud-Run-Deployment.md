@@ -241,17 +241,45 @@ Face, open [`google/medgemma-1.5-4b-it`](https://huggingface.co/google/medgemma-
 accept the Health AI Developer Foundations terms, then create a **read** token at
 Settings → Access Tokens. Downloads 403 until the licence is accepted.
 
-Then open a [Colab](https://colab.research.google.com) notebook with a T4 and run:
+Then:
+
+1. Go to [colab.research.google.com](https://colab.research.google.com) and
+   create a **new notebook**. This runs in your browser on Google's hardware —
+   it is not your local Python. Pasting these lines into a `>>>` prompt on your
+   own machine will fail on the very first one, because `!pip` is notebook
+   syntax and nothing below is installed locally.
+2. **Runtime → Change runtime type → T4 GPU**, then Save. Without this you get a
+   CPU-only machine and the model will not load.
+3. Paste each block below into its own cell and run them in order
+   (Shift+Enter).
 
 ```python
-!pip install -q transformers accelerate
-from huggingface_hub import login; login()          # accept the MedGemma licence first
+# Cell 1 — confirm you actually have a GPU. If this errors, redo step 2 above.
+!nvidia-smi --query-gpu=name,memory.total --format=csv
+```
 
+```python
+# Cell 2 — install, then sign in with the read token from above.
+!pip install -q transformers accelerate
+from huggingface_hub import login
+login()
+```
+
+```python
+# Cell 3 — load the model (a few minutes the first time; it pulls ~8 GB).
 from transformers import pipeline
 import torch
-pipe = pipeline("image-text-to-text", model="google/medgemma-1.5-4b-it",
-                torch_dtype=torch.bfloat16, device="cuda")
 
+# A T4 has no bfloat16 support — that needs Ampere or newer (L4, A100).
+# float16 is the correct choice there, and fits in the T4's 16 GB.
+dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+
+pipe = pipeline("image-text-to-text", model="google/medgemma-1.5-4b-it",
+                torch_dtype=dtype, device="cuda")
+```
+
+```python
+# Cell 4 — ask it something that looks like your real traffic.
 msgs = [{"role": "user", "content": [{"type": "text", "text":
   "A 34-year-old with hypothyroidism on levothyroxine 50µg trains 4x/week. "
   "Ferritin 18 ng/mL, haemoglobin normal. What is worth investigating, and what "
@@ -259,9 +287,9 @@ msgs = [{"role": "user", "content": [{"type": "text", "text":
 print(pipe(text=msgs, max_new_tokens=400)[0]["generated_text"][-1]["content"])
 ```
 
-Run ten prompts that look like your real traffic — a nutrition question, a
-symptom description, a lab result, a medication interaction. Compare the answers
-to what the current desk gives you.
+Re-run cell 4 with ten prompts that look like your real traffic — a nutrition
+question, a symptom description, a lab result, a medication interaction. Compare
+the answers to what the current desk gives you.
 
 If MedGemma 4B isn't clearly better for *your* questions, stop here: the honest
 outcome is that hosting isn't worth $10/month plus the ops. The 27B text variant
