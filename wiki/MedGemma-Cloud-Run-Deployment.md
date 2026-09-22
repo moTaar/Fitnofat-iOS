@@ -205,6 +205,17 @@ $SA      = "fitnofat-sa@azwertyweb.iam.gserviceaccount.com"
 ```
 
 These are set per shell session — reopen your terminal and you set them again.
+That catches everyone at least once, so pin the region into gcloud's own config
+as well, where it persists across terminals, shells and reboots:
+
+```bash
+gcloud config set run/region $REGION
+```
+
+Every `gcloud run` command below then works without `--region`. If gcloud ever
+answers a command with a numbered list of forty regions, that is it telling you
+the flag arrived empty — which usually means you are in a terminal where the
+`export` lines above were never run.
 
 ---
 
@@ -649,9 +660,11 @@ Two things this proves and one it doesn't:
 gcloud run services get-iam-policy medgemma --region=$REGION
 ```
 
-`fitnofat-sa` should appear against `roles/run.invoker`. If it doesn't, the app
-gets a 403 and falls back to Gemini — which is quiet by design, so you'd only
-notice from the model name under a reply.
+`fitnofat-sa` should appear against `roles/run.invoker`. A response that is just
+`etag: ...` with no `bindings:` block means the policy is **empty** — nobody can
+invoke it, the grant never applied, and the app will get a 403 and fall back to
+Gemini. That fallback is quiet by design, so the only symptom is the model name
+under a reply.
 
 Stop the proxy with Ctrl+C in terminal A when you're done.
 
