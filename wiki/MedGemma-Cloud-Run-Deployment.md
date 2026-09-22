@@ -351,6 +351,11 @@ The weights are **baked into the image**. The alternative — downloading ~8 GB
 from Hugging Face on every cold start — turns a 40-second start into a
 multi-minute one and makes your health desk depend on hf.co being up.
 
+Both files already exist in this repo under **`medgemma/`**, at the root
+alongside `server/` and `web/` — `git pull` and you have them; there is nothing
+to copy out of this page. They are shown here so you can read what they do, and
+so the reasoning behind each line is somewhere other than a commit message.
+
 `medgemma/Dockerfile`:
 
 ```dockerfile
@@ -417,12 +422,22 @@ options:
   diskSizeGb: 100
 ```
 
+Run this from the **repository root** (the folder holding `medgemma/`), so the
+relative paths resolve:
+
 ```bash
 gcloud builds submit medgemma/ \
   --config=medgemma/cloudbuild.yaml \
   --substitutions=_IMAGE=$IMAGE \
   --timeout=3600s
 ```
+
+```powershell
+gcloud builds submit medgemma/ --config=medgemma/cloudbuild.yaml --substitutions=_IMAGE=$IMAGE --timeout=3600s
+```
+
+`medgemma/` is the build context that gets uploaded, so the Dockerfile lands at
+its root — which is why the `docker build ... .` inside the config finds it.
 
 The default 10-minute build timeout is nowhere near enough to pull 8 GB of
 weights and push a 15 GB image — hence `--timeout=3600s`, and the larger disk.
