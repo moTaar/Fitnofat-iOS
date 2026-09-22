@@ -570,21 +570,47 @@ also use the Vertex path, `roles/aiplatform.user`.
 
 ## Step 5 — Prove it works before touching the app
 
-```bash
-# Authenticated proxy on localhost — no token juggling.
-gcloud run services proxy medgemma --region=$REGION --port=8080 &
+First confirm the service is actually there, and that `$REGION` is set in *this*
+shell — an empty one makes gcloud prompt with a long interactive region list,
+which is its way of saying the flag arrived blank:
 
-curl -s localhost:8080/v1/models | jq .
+```bash
+echo $REGION                              # must not be empty
+gcloud run services list --region=$REGION
+```
+
+This needs **two terminals**. The proxy is a long-running foreground process:
+backgrounding it with `&` and immediately curling races the port, and if it needs
+to prompt you never see the question.
+
+**Terminal A** — leave this running:
+
+```bash
+gcloud run services proxy medgemma --region=$REGION --port=8080
+```
+
+Wait for `proxying to https://medgemma-....run.app`.
+
+**Terminal B** — re-export the variables here too, then:
+
+```bash
+curl -s localhost:8080/v1/models
 
 curl -s localhost:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"medgemma-1.5-4b-it","messages":[
         {"role":"user","content":"In one sentence: what does a ferritin of 18 ng/mL suggest in a menstruating endurance athlete?"}],
-      "max_tokens":150}' | jq -r '.choices[0].message.content'
+      "max_tokens":150}'
 ```
+
+Both print raw JSON. `jq` is lovely for reading it but ships with neither Git
+Bash nor Cloud Shell's default image, so it is not assumed here — pipe to
+`jq .` or `python -m json.tool` if you have either.
 
 The first call pays the cold start — expect **40–90 seconds**. The second should
 be a few seconds. If you don't see that pattern, fix it here, not later.
+
+Stop the proxy with Ctrl+C in terminal A when you're done.
 
 ---
 
@@ -685,6 +711,7 @@ Then unset `MEDICAL_AI_BASE_URL` on Render (or set
 | 403 from Cloud Run | `fitnofat-sa` lacks invoker, or the ID-token audience is wrong | Step 4; audience must be the service URL **without** `/v1` — `vertex.ts` strips it, so don't add a path |
 | 401 `Invalid token` | Clock skew, or the wrong service-account key | Verify the key in `VERTEX_SERVICE_ACCOUNT_JSON` is `fitnofat-sa`'s |
 | Request fails at ~60 s in the browser, server log looks fine | Client timeout during cold start | See the cold-start section |
+| gcloud prints a numbered list of regions and waits | the `--region` flag arrived empty | `echo $REGION`; shell variables don't cross terminals or shells |
 | Build fails: `PermissionDenied ... secretmanager.versions.access` | Cloud Build's service account can't read `hf-token` | Step 1.4 — `roles/editor` does not cover secret payloads |
 | Deploy fails: GPU quota | First L4 in a new region | IAM → Quotas → request Cloud Run L4 |
 | vLLM OOM at startup | `--max-model-len` too high for 24 GB | Lower to 4096, or drop `--gpu-memory-utilization` to 0.85 |
