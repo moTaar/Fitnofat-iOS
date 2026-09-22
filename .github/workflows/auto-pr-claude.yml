@@ -1,0 +1,36 @@
+name: Auto-Create PR for Claude Changes
+
+on:
+  push:
+    branches:
+      - claude-*  # Triggers when Claude pushes to any "claude-*" branch
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create Pull Request
+        uses: repo-sync/pull-request-action@v2
+        with:
+          source_branch: ${{ github.ref_name }}
+          destination_branch: master
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          pr_title: "Review: Changes from Claude (${{ github.ref_name }})"
+          pr_body: |
+            ## Claude-Generated Changes
+            
+            **Branch:** ${{ github.ref_name }}
+            
+            Please review the changes below before merging to master.
+            
+            ✅ Approve this PR to merge to master
+            ❌ Request changes if needed
+          pr_reviewer: ${{ github.actor }}

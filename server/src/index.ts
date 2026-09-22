@@ -4,7 +4,7 @@ import helmet from "helmet";
 import compression from "compression";
 import { config } from "./config";
 import { errorHandler, requireAdmin } from "./middleware";
-import { apiLimiter } from "./ratelimit";
+import { apiLimiter, readYoutubeBudget } from "./ratelimit";
 import { dataRouter } from "./routes/data";
 import { healthRouter } from "./routes/health";
 import { chatOnboarding } from "./gemini";
@@ -41,8 +41,23 @@ app.use("/api/health/chat", largeJson);
 app.use(express.json({ limit: "512kb" }));
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, ai: config.geminiApiKey ? "gemini" : "local-fallback" });
+  res.json({
+    ok: true,
+    ai: config.geminiApiKey ? "gemini" : "local-fallback",
+    videos: config.youtubeApiKey ? "youtube" : "disabled",
+  });
 });
+
+// How much of today's shared YouTube search allowance is gone. The budget is
+// global and can't be topped up before midnight Pacific, so "are we about to
+// run out" is an operational question worth being able to answer directly.
+app.get(
+  "/internal/youtube-budget",
+  requireAdmin,
+  async (_req, res) => {
+    res.json(await readYoutubeBudget());
+  }
+);
 
 // Gemini connectivity check. Gated on ADMIN_API_KEY: it makes a real (billable)
 // model call, so leaving it open is a free way for anyone to burn the quota.

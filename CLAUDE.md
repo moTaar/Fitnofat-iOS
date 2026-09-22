@@ -48,6 +48,29 @@ and onboarding.
 **Body limits are per-route.** Only `/api/ai/coach` gets 25mb (image
 attachments); everything else is capped at 512kb in `server/src/index.ts`.
 
+**The YouTube quota is global, not per-user.** `search.list` costs 100 units of
+a default 10,000/day project allocation — about **100 searches per day for the
+entire user base**. Three things keep `/exercises/videos` inside that and all
+three are load-bearing: results cache per movement in `exercise_guides.videos`
+(a search describes the lift, not the athlete), `claimYoutubeSearch` meters a
+global daily budget in Postgres, and `dedupeSearch` collapses concurrent misses
+on the same slug. Per-user rate limiting alone does **not** protect this — 50
+users each politely searching three times exhausts the day. Unlike `aiQuota`,
+the budget check fails *closed*: a broken meter that lets searches through burns
+an allowance that can't be topped up before midnight Pacific.
+
+**Demo videos degrade, they never 500.** The written guide is the primary
+content and the video is an enhancement, so `/exercises/videos` returns
+`{ videos: [], unavailable }` for a missing key, an exhausted budget or a
+YouTube outage, and serves stale cached results in preference to nothing.
+
+**The stick figure is a fallback now, and only renders when the archetype is
+actually known.** `knownArchetype` returns `undefined` rather than guessing; it
+used to default to `"squat"`, which is why a Pallof press and a farmer's carry
+both animated as a barbell squat. A confidently wrong demo teaches bad form and
+casts doubt on the correct written steps beside it — if you add a caller, branch
+on `knownArchetype` rather than rendering whatever `animationFor` returns.
+
 **`/bootstrap` returns a history window, not everything.** Older sessions come
 from `GET /workouts`. Code that assumes `store.history` is the complete archive
 is wrong — check `historyHasMore`.
@@ -71,6 +94,7 @@ messages can carry key fragments and row contents. Throw `HttpError` for anythin
 the client should read verbatim; everything else becomes a generic 500 when
 `NODE_ENV=production`.
 
+<<<<<<< HEAD
 **Medical AI has a consent gate, and it is server-side.** `/api/health/chat` and
 `/api/health/review` refuse with 403 `medical_consent_required` until
 `health_profile.ai_consent_at` is set. That flag is the only thing standing
@@ -112,6 +136,19 @@ metric readings survive, and resolved/dismissed issues are never reopened.
 deliberately omits `health`/`healthIssues`/`healthRecords`, and `logout` clears
 them. Adding them to the persisted set would leave medical data on a shared
 device and compete with workout history for the same 5MB.
+=======
+**The service worker is in `prompt` mode, not `autoUpdate`.** A new build
+installs and then *waits*; `UpdatePrompt` offers "A new version is ready" and the
+swap happens on a full reload when the user accepts. Do not switch this back to
+`autoUpdate` — with code-split chunks plus `cleanupOutdatedCaches`, an
+auto-activating worker deletes the hashed chunks the open tab still references,
+so the next lazy-route navigation fails to load.
+
+**The update banner defers to an active workout.** `useUpdateBannerVisible()` is
+the single source of truth for whether it's on screen; `InstallPrompt` and the
+dock-less full-height pages (login, reset, onboarding) both read it so they can
+yield the slot or reserve space. Any new bottom-anchored banner should too.
+>>>>>>> origin/main
 
 **Keep the eager route bundle small.** `web/src/App.tsx` lazy-loads every page
 except Dashboard and ActiveWorkout, which are the in-gym critical path. A static

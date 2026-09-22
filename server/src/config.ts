@@ -106,6 +106,35 @@ export const config = {
   // service's ADMIN_API_KEY. Unset ⇒ the routes report 503 rather than running.
   adminApiKey: process.env.ADMIN_API_KEY ?? "",
 
+  // ── YouTube demo videos ────────────────────────────────────────────────────
+  // Google Cloud console → YouTube Data API v3 → API key. Unset ⇒ the video
+  // picker reports "not configured" and the text guide renders on its own.
+  youtubeApiKey: process.env.YOUTUBE_API_KEY ?? "",
+  youtubeRegion: process.env.YOUTUBE_REGION ?? "US",
+  youtubeLanguage: process.env.YOUTUBE_RELEVANCE_LANGUAGE ?? "en",
+  youtubeTimeoutMs: num("YOUTUBE_TIMEOUT_MS", 10_000),
+  // Comma-separated YouTube channel IDs (UC…) whose videos are promoted to the
+  // top of every result set. This is the cheapest quality lever in the feature —
+  // it costs no extra quota and turns "whatever relevance returned" into "a
+  // coach you trust, when they've covered the movement". Empty by default
+  // because the right channels are an editorial choice, not a technical one.
+  youtubeChannelAllowlist: (process.env.YOUTUBE_CHANNEL_ALLOWLIST ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+  // GLOBAL searches per UTC day, shared by every user. `search.list` costs 100
+  // units of a default 10,000/day project allocation, so 100 is the hard ceiling
+  // and this sits below it to leave room for the 1-unit enrichment calls and any
+  // other API use in the same Cloud project. Raising this past ~99 without an
+  // approved quota increase just moves the failure from our meter to Google's.
+  youtubeDailyBudget: num("YOUTUBE_DAILY_BUDGET", 90),
+  // Per-user burst ceiling on the video route, within rateLimitWindowMs.
+  youtubeRateLimitMax: num("YOUTUBE_RATE_LIMIT_MAX", 12),
+  // How long a cached result set stays fresh. Long on purpose: form demos don't
+  // go stale, and every re-search costs a scarce unit. `force` bypasses it when
+  // a user explicitly asks for different videos.
+  youtubeCacheDays: num("YOUTUBE_CACHE_DAYS", 180),
+
   // ── Abuse limits ───────────────────────────────────────────────────────────
   // Coarse per-IP ceiling across the whole API (protects against unauthenticated
   // floods and credential-stuffing style bursts).

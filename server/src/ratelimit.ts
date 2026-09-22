@@ -6,9 +6,13 @@
 //   2. `aiQuota` — a persisted per-user daily allowance for the AI features that
 //      a *free* account can reach. In-process counters reset on every deploy and
 //      aren't shared between instances, so these live in Postgres.
+//   3. `claimYoutubeSearch` — a persisted *global* daily budget. Layers 1 and 2
+//      both bound one user; YouTube's quota is a single allocation shared by the
+//      whole user base, so it needs a meter nobody's politeness can evade.
 //
-// Gemini calls are the only thing in this app that costs real money per request,
-// so every route that can reach one is covered by at least one of these.
+// Gemini calls cost real money per request and YouTube searches spend a fixed
+// daily allowance that can't be topped up, so every route that can reach either
+// is covered by at least one of these.
 
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import type { NextFunction, Request, Response } from "express";
@@ -44,6 +48,23 @@ export const aiLimiter = rateLimit({
   keyGenerator: userOrIp,
   message: {
     error: "You're sending AI requests too quickly. Give it a moment.",
+    code: "rate_limited",
+  },
+});
+
+/**
+ * Ceiling for the demo-video route. Not a Gemini route, but it reaches an
+ * upstream with a metered budget, so the same rule applies: never make it
+ * reachable without a meter.
+ */
+export const videoLimiter = rateLimit({
+  windowMs: config.rateLimitWindowMs,
+  limit: config.youtubeRateLimitMax,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: userOrIp,
+  message: {
+    error: "You're browsing demo videos too quickly. Give it a moment.",
     code: "rate_limited",
   },
 });
@@ -122,4 +143,43 @@ export function aiQuota(feature: QuotaFeature) {
       next(err);
     }
   };
+}
+
+// ── Global YouTube search budget ─────────────────────────────────────────────
+// `videoLimiter` bounds what one client can do; this bounds what everyone can
+// do together, which is the constraint that actually matters. The YouTube quota
+// is a single allocation shared by the whole user base: 50 users each politely
+// making 3 searches exhausts the day just as thoroughly as one abusive client.
+//
+// Unlike aiQuota this is not middleware — it guards the single expensive call
+// inside the route, so a request served entirely from cache (the overwhelming
+// majority) never touches the meter.
+
+/**
+ * Claim one unit of today's global search budget.
+ * Returns false when the budget is spent and the caller must not search.
+ */
+export async function claimYoutubeSearch(): Promise<boolean> {
+  const { data, error } = await supabaseAdmin.rpc("increment_youtube_budget", {
+    p_day: today(),
+  });
+  if (error) {
+    // Fail CLOSED, unlike aiQuota. A broken AI meter costs money we chose to
+    // spend; a broken budget here silently burns a fixed daily allowance that
+    // cannot be topped up, taking the feature down for every other user until
+    // midnight Pacific. Declining to search degrades one sheet to text-only.
+    console.error("[youtube] budget check failed", error.message);
+    return false;
+  }
+  return typeof data === "number" ? data <= config.youtubeDailyBudget : false;
+}
+
+/** Today's global search spend, for the /internal diagnostics endpoint. */
+export async function readYoutubeBudget(): Promise<{ used: number; limit: number }> {
+  const { data } = await supabaseAdmin
+    .from("youtube_budget")
+    .select("count")
+    .eq("day", today())
+    .maybeSingle();
+  return { used: Number(data?.count ?? 0), limit: config.youtubeDailyBudget };
 }
