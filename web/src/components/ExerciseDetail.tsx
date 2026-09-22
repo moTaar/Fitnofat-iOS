@@ -7,6 +7,8 @@ import { Modal } from "@/components/ui/modal";
 import { Badge, Spinner } from "@/components/ui/misc";
 import { MuscleMap } from "@/components/MuscleMap";
 import { StickDemo } from "@/components/StickDemo";
+import { VideoPicker } from "@/components/VideoPicker";
+import { knownArchetype } from "@/lib/animations";
 
 // A bottom-sheet that explains how to perform an exercise correctly:
 // target muscles, step-by-step execution, form cues, common mistakes, breathing.
@@ -102,6 +104,10 @@ export function ExerciseDetail({
   // Only the AI path (no hand-written guide, nothing cached yet) shows a loader.
   const showLoader = !builtIn && !cached && !aiGuide && loadingGuide;
 
+  // Undefined when we can't actually tell what this movement looks like, which
+  // is most of the long tail. Rendering nothing beats rendering a squat.
+  const demo = knownArchetype(exercise.name, g.pattern);
+
   const refreshAction = (
     <button
       onClick={handleRefresh}
@@ -168,15 +174,28 @@ export function ExerciseDetail({
         {!showLoader && (
           <>
             <Section icon={<ListChecks className="h-4 w-4" />} title="How to perform" action={refreshAction}>
-              <div className="mb-3 flex items-center justify-center rounded-2xl border border-border bg-secondary/30 p-2">
-                <StickDemo
+              <div className="mb-3">
+                <VideoPicker
+                  exerciseId={exercise.id}
                   name={exercise.name}
-                  pattern={g.pattern}
-                  load={g.load}
-                  prop={g.prop}
-                  className="h-40 w-40"
+                  muscleGroup={exercise.muscleGroup}
+                  equipment={exercise.equipment !== "—" ? exercise.equipment : undefined}
                 />
               </div>
+              {/* The stick figure is now a fallback, not the demo. It renders
+                  only when the movement's archetype is actually known (seed map
+                  or an AI-classified pattern) — see lib/animations.ts. */}
+              {demo && (
+                <div className="mb-3 flex items-center justify-center rounded-2xl border border-border bg-secondary/30 p-2">
+                  <StickDemo
+                    name={exercise.name}
+                    pattern={demo}
+                    load={g.load}
+                    prop={g.prop}
+                    className="h-32 w-32"
+                  />
+                </div>
+              )}
               <ol className="space-y-2">
                 {g.steps.map((s, i) => (
                   <li key={i} className="flex gap-2.5 text-sm">

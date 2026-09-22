@@ -7,6 +7,7 @@ import { useStore } from "@/lib/store";
 import { InstallPrompt } from "./InstallPrompt";
 import { RestTimerBar } from "./RestTimerBar";
 import { CoachBubble } from "./CoachBubble";
+import { useUpdateBannerVisible } from "./UpdatePrompt";
 
 const NAV = [
   { to: "/", label: "Home", icon: Home, end: true },
@@ -70,6 +71,8 @@ export function Layout() {
   const pendingSync = useStore((s) => s.history.some((h) => !h.synced));
   const location = useLocation();
   const inWorkout = location.pathname.startsWith("/workout");
+  // The update banner shares this slot above the dock; installing can wait.
+  const updateBannerVisible = useUpdateBannerVisible();
   const dockRef = useRef<HTMLDivElement>(null);
 
   // The bottom dock (rest timer / active-workout banner / nav) is fixed, so it
@@ -144,7 +147,7 @@ export function Layout() {
       {/* Floating AI Coach launcher — hidden on the restart/onboarding chat page. */}
       {location.pathname !== "/ai-coach" && <CoachBubble />}
 
-      {!inWorkout && <InstallPrompt />}
+      {!inWorkout && !updateBannerVisible && <InstallPrompt />}
     </div>
   );
 }

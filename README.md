@@ -134,6 +134,12 @@ session is revoked server-side. Refreshing still goes through Supabase.
   quota, old *synced* history is shed first — unsynced sessions are never dropped.
 - **Installable** — manifest (`standalone`/`portrait`), maskable icons, and a custom
   A2HS banner (Android `beforeinstallprompt` + guided iOS steps).
+- **Controlled updates** — the service worker runs in `prompt` mode: a new build
+  is downloaded and precached in the background, then *waits*. The app surfaces
+  "A new version is ready — Reload" and only swaps over on a full reload, when
+  the user accepts. Long-lived tabs re-check for a new build hourly and whenever
+  the app returns to the foreground. The prompt is held back while a workout is
+  in progress, and reappears once the session ends.
 
 ## Cost and abuse controls
 Gemini calls are the only per-request cost in the app, so every route that can
@@ -173,6 +179,8 @@ model over the largest context in the app.
 | POST | `/nutrition/generate` `/nutrition/lookup` | diet plan / food lookup |
 | POST/PUT/DELETE | `/routines[/:id]` | routine CRUD |
 | POST | `/exercises` `/exercises/ai-assist` `/exercises/guide` `/exercises/met` | library + AI assist |
+| GET | `/exercises/videos?name=&force=` | ranked YouTube demos for the how-to picker |
+| POST | `/exercises/video` | remember the chosen demo (tallies the community default) |
 | POST | `/ai/chat` `/ai/coach` | onboarding chat / ongoing coaching |
 | POST/DELETE | `/workouts[/:id]` | save (bulk, idempotent) / delete history |
 | GET | `/health/overview` | health profile + tracked issues + medical history |
@@ -181,6 +189,14 @@ model over the largest context in the app.
 | POST | `/health/issues/:id/events` | check-in or measurement on an issue |
 | POST/DELETE | `/health/records[/:id]` | medical history entries |
 | POST | `/health/review` `/health/chat` | AI health review / medical + nutrition chat |
+
+`/exercises/videos` is served from a global cache keyed on the exercise slug.
+A YouTube `search.list` costs 100 units of a default 10,000/day allocation — a
+**global** ~100 searches per day for the whole service — so the cache, the
+`YOUTUBE_DAILY_BUDGET` meter and in-flight deduplication are what make the
+feature affordable rather than merely fast. With a warm cache the steady-state
+cost is zero. Unset `YOUTUBE_API_KEY` disables the picker; the written how-to
+guide still renders on its own.
 
 `/bootstrap` returns only the last `BOOTSTRAP_HISTORY_DAYS` (default 120) of
 sessions plus a `history` block describing the window; the client loads older
@@ -274,6 +290,7 @@ Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 | `QUOTA_LOOKUP_FREE` / `_PRO` | server | `25` / `250` | daily food lookups |
 | `QUOTA_MEDICAL_FREE` / `_PRO` | server | `0` / `60` | daily medical AI calls (Pro-only feature) |
 | `BOOTSTRAP_HISTORY_DAYS` | server | `120` | history window returned on cold start |
+<<<<<<< HEAD
 | `MEDICAL_AI_PROVIDER` | server | `auto` | `auto` / `cloudrun` / `vertex` / `gemini` — who answers medical questions |
 | `MEDICAL_AI_BASE_URL` | server | — | self-hosted OpenAI-compatible endpoint, incl. `/v1` (turns on `cloudrun`) |
 | `MEDICAL_AI_SELF_HOSTED_MODEL` | server | `MEDICAL_AI_MODEL` | model name the self-hosted server expects |
@@ -283,6 +300,14 @@ Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 | `MEDICAL_AI_TIMEOUT_MS` | server | `90000` | hard deadline on medical model calls |
 | `VERTEX_PROJECT_ID` / `VERTEX_LOCATION` | server | — / `us-central1` | Vertex AI project and region |
 | `VERTEX_SERVICE_ACCOUNT_JSON` | server | — | service-account key JSON (raw or base64) for Vertex OAuth |
+=======
+| `YOUTUBE_API_KEY` | server | — | YouTube Data API v3 key; unset disables the demo-video picker |
+| `YOUTUBE_DAILY_BUDGET` | server | `90` | **global** searches per UTC day (Google's hard ceiling is ~100) |
+| `YOUTUBE_CHANNEL_ALLOWLIST` | server | — | channel IDs promoted to the top of every result set |
+| `YOUTUBE_REGION` / `YOUTUBE_RELEVANCE_LANGUAGE` | server | `US` / `en` | search locale |
+| `YOUTUBE_CACHE_DAYS` | server | `180` | how long cached demo results stay fresh |
+| `YOUTUBE_RATE_LIMIT_MAX` | server | `12` | video requests per window per user |
+>>>>>>> origin/main
 
 ## Deploy to Render
 1. Push this repo to GitHub.

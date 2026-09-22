@@ -42,7 +42,12 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      // "prompt", not "autoUpdate": a new worker installs and then waits,
+      // instead of claiming the open tab and deleting the hashed chunks that
+      // tab still references (which breaks the next lazy-route navigation).
+      // The swap happens on a full reload, when the user accepts the
+      // "new version is ready" banner. See web/src/lib/pwa.ts.
+      registerType: "prompt",
       includeAssets: ["favicon.svg", "robots.txt", "apple-touch-icon.png"],
       manifest: {
         name: "Fitnofat — Workout Tracker",

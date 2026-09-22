@@ -6,8 +6,12 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/misc";
+import { useUpdateBannerPadding } from "@/components/UpdatePrompt";
+import { cn } from "@/lib/utils";
 
 export function Login() {
+  // Reserve room for the update banner — this screen has no dock to do it.
+  const bannerPad = useUpdateBannerPadding();
   const navigate = useNavigate();
   const login = useStore((s) => s.login);
   const signup = useStore((s) => s.signup);
@@ -49,7 +53,7 @@ export function Login() {
   };
 
   return (
-    <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col justify-center px-6 py-10">
+    <div className={cn("mx-auto flex min-h-[100dvh] max-w-md flex-col justify-center px-6 py-10", bannerPad)}>
       <div className="mb-8 flex flex-col items-center text-center">
         <div className="rounded-3xl bg-gradient-to-br from-primary to-orange-600 p-4 text-white shadow-lg shadow-primary/30">
           <Dumbbell className="h-9 w-9" />

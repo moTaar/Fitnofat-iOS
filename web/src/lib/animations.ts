@@ -197,7 +197,12 @@ export type Archetype = keyof typeof ARCH;
 // matches come first so e.g. "leg-extension"/"leg-curl" map to the seated
 // leg-machine and not to the triceps-extension / biceps-curl archetypes, and
 // cardio rowing isn't mistaken for a back row.
-function guessArchetype(slug: string): Archetype {
+//
+// Returns undefined when nothing matches. It used to return "squat", which is
+// why a cable crossover, a Pallof press and a farmer's carry all animated as a
+// barbell squat: a confidently wrong demo teaches bad form and casts doubt on
+// the (correct) written steps beside it. Callers render no figure instead.
+function guessArchetype(slug: string): Archetype | undefined {
   const has = (...k: string[]) => k.some((x) => slug.includes(x));
 
   // Cardio / conditioning first (some names contain "row").
@@ -250,7 +255,7 @@ function guessArchetype(slug: string): Archetype {
   // Anything else with "raise" (e.g. an unusual raise variation).
   if (has("raise")) return "raise";
 
-  return "squat";
+  return undefined;
 }
 
 const isArchetype = (v: unknown): v is Archetype =>
@@ -264,11 +269,20 @@ export function animationFor(
   name: string,
   opts?: { pattern?: string; load?: Load; prop?: Prop }
 ): Anim {
-  const slug = slugify(name);
-  const key = isArchetype(opts?.pattern)
-    ? opts.pattern
-    : SLUG_MAP[slug] ?? guessArchetype(slug);
+  const key = knownArchetype(name, opts?.pattern) ?? "squat";
   const base = ARCH[key];
   if (!opts?.load && !opts?.prop) return base;
   return { ...base, load: opts.load ?? base.load, prop: opts.prop ?? base.prop };
+}
+
+/**
+ * The archetype for an exercise, or undefined when we genuinely don't know what
+ * the movement looks like. Callers that can omit the demo entirely — which, now
+ * that a real video sits above it, is all of them — should branch on this rather
+ * than calling `animationFor` and rendering whatever comes back.
+ */
+export function knownArchetype(name: string, pattern?: string): Archetype | undefined {
+  if (isArchetype(pattern)) return pattern;
+  const slug = slugify(name);
+  return SLUG_MAP[slug] ?? guessArchetype(slug);
 }
