@@ -116,6 +116,28 @@ gcloud config set project azwertyweb
 > machine; nothing here uses them, and Fitnofat authenticates with the
 > service-account key instead.
 
+### A note on shells
+
+**Every command below is bash.** On Windows, PowerShell will choke on two of its
+habits: `\` for line continuation (PowerShell uses a backtick, so `\` gets passed
+along as a literal argument) and `export` for variables.
+
+The painless fix is to run the runbook in a bash shell —
+[Cloud Shell](https://shell.cloud.google.com) in the browser, WSL, or the Git
+Bash that ships with Git for Windows — and paste the commands as written.
+
+If you'd rather stay in PowerShell, three translations cover the whole document:
+
+| bash | PowerShell |
+|---|---|
+| `cmd \` + newline + `  arg` | put it on **one line**, or end lines with a backtick `` ` `` |
+| `export FOO=bar` | `$FOO = "bar"` |
+| `export FOO=$BAR-suffix` | `$FOO = "${BAR}-suffix"` — braces, or PowerShell eats the hyphen |
+
+`$(...)` command substitution works the same in both.
+
+---
+
 Enable the APIs (note that Vertex AI is listed as "Gemini Enterprise Agent
 Platform" since April 2026 — the service name is unchanged):
 
@@ -125,7 +147,14 @@ gcloud config set project azwertyweb
 gcloud services enable \
   run.googleapis.com \
   artifactregistry.googleapis.com \
-  cloudbuild.googleapis.com
+  cloudbuild.googleapis.com \
+  secretmanager.googleapis.com
+```
+
+PowerShell — one line:
+
+```powershell
+gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com
 ```
 
 Pick a region that actually has L4 GPUs. As of 2026 that is `europe-west1`,
@@ -138,6 +167,14 @@ export REGION=europe-west1
 export PROJECT=azwertyweb
 export SA=fitnofat-sa@azwertyweb.iam.gserviceaccount.com
 ```
+
+```powershell
+$REGION  = "europe-west1"
+$PROJECT = "azwertyweb"
+$SA      = "fitnofat-sa@azwertyweb.iam.gserviceaccount.com"
+```
+
+These are set per shell session — reopen your terminal and you set them again.
 
 ---
 
@@ -217,11 +254,21 @@ entirely.
    [`google/medgemma-1.5-4b-it`](https://huggingface.co/google/medgemma-1.5-4b-it) and
    accept the Health AI Developer Foundations terms. Downloads 403 until you do.
 2. Create a **read** token at Settings → Access Tokens.
-3. Put it in Secret Manager rather than in the Dockerfile:
+3. Put it in Secret Manager rather than in the Dockerfile (the API was
+   enabled in the prerequisites):
 
 ```bash
-gcloud services enable secretmanager.googleapis.com
 printf 'hf_xxxxxxxxxxxxxxxxx' | gcloud secrets create hf-token --data-file=-
+```
+
+PowerShell has no `printf`, and piping text into `--data-file=-` there can add a
+BOM or a trailing newline that ends up *inside* the token. Write a file and
+delete it:
+
+```powershell
+Set-Content -Path token.txt -Value "hf_xxxxxxxxxxxxxxxxx" -NoNewline -Encoding ascii
+gcloud secrets create hf-token --data-file=token.txt
+Remove-Item token.txt
 ```
 
 ---
@@ -266,6 +313,10 @@ gcloud artifacts repositories create fitnofat \
   --repository-format=docker --location=$REGION
 
 export IMAGE=$REGION-docker.pkg.dev/$PROJECT/fitnofat/medgemma:1.5-4b-it
+```
+
+```powershell
+$IMAGE = "${REGION}-docker.pkg.dev/${PROJECT}/fitnofat/medgemma:1.5-4b-it"
 ```
 
 **Option A — build in the cloud (recommended).** No Docker locally, and the
@@ -313,6 +364,18 @@ export HF_TOKEN=hf_xxxxxxxxxxxxxxxxx
 DOCKER_BUILDKIT=1 docker build --secret id=HF_TOKEN,env=HF_TOKEN -t $IMAGE medgemma/
 docker push $IMAGE
 ```
+
+```powershell
+gcloud auth configure-docker "${REGION}-docker.pkg.dev"
+$env:HF_TOKEN = "hf_xxxxxxxxxxxxxxxxx"
+$env:DOCKER_BUILDKIT = "1"
+
+docker build --secret id=HF_TOKEN,env=HF_TOKEN -t $IMAGE medgemma/
+docker push $IMAGE
+```
+
+Note `$env:` rather than a plain `$` for these two — `--secret …,env=HF_TOKEN`
+reads a real environment variable, and a PowerShell variable isn't one.
 
 ---
 
@@ -362,6 +425,13 @@ gcloud run services add-iam-policy-binding medgemma \
 export MEDGEMMA_URL=$(gcloud run services describe medgemma \
   --region=$REGION --format='value(status.url)')
 echo $MEDGEMMA_URL
+```
+
+```powershell
+gcloud run services add-iam-policy-binding medgemma --region=$REGION --member="serviceAccount:$SA" --role="roles/run.invoker"
+
+$MEDGEMMA_URL = $(gcloud run services describe medgemma --region=$REGION --format="value(status.url)")
+$MEDGEMMA_URL
 ```
 
 `fitnofat-sa` now needs **two** roles: `roles/run.invoker` (here) and, if you
