@@ -375,7 +375,15 @@ gcloud secrets add-iam-policy-binding hf-token --member="serviceAccount:$PN@clou
 ```
 
    To see exactly which account a failed build used:
-   `gcloud builds describe BUILD_ID --format='value(serviceAccount)'`.
+   `gcloud builds describe BUILD_ID --format='value(serviceAccount)'`. That is
+   also the quickest way out of a wrong guess — grant to the account it names
+   and skip the pair above.
+
+   > If the error reads `Service account -compute@developer.gserviceaccount.com
+   > does not exist`, with nothing before the hyphen, `$PN` was empty: shell
+   > variables do not survive a move between PowerShell and bash, and each
+   > terminal you open starts without them. Re-set the variables from the
+   > prerequisites in whichever shell you are in now.
 
 ---
 
