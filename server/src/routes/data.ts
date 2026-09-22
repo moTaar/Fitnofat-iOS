@@ -5,7 +5,7 @@ import { asyncHandler, requireAuth, AuthedRequest } from "../middleware";
 import { requireEntitlement } from "../entitlements";
 import { aiLimiter, aiQuota, readUsage, videoLimiter, claimYoutubeSearch } from "../ratelimit";
 import { readShared, writeShared, readSharedVideos, writeSharedVideos, recordVideoPick } from "../aicache";
-import { searchExerciseVideos, rankVideos, dedupeSearch, unavailableReason } from "../youtube";
+import { searchExerciseVideos, rankVideos, dedupeSearch, unavailableReason, youtubeConfigured } from "../youtube";
 import { config } from "../config";
 import { generateProgram, refreshProgram, chatOnboarding, chatCoach, generateExerciseGuide, identifyExercise, estimateMet, type ChatMessage, type LoggedWorkoutDraft } from "../gemini";
 import { generateNutritionPlan, lookupFood, type RoutineLite } from "../nutrition";
@@ -771,6 +771,18 @@ dataRouter.get(
       res.json({
         videos: rankVideos(cached!.videos, name, cached!.picks),
         selectedId: own?.video_id ?? null,
+      });
+      return;
+    }
+
+    // Checked before the budget claim, not inside the search: an unconfigured
+    // server would otherwise spend a unit per request and fail anyway, so by the
+    // time a key was added the day's allowance would already be gone.
+    if (!youtubeConfigured()) {
+      res.json({
+        videos: cached?.videos.length ? rankVideos(cached.videos, name, cached.picks) : [],
+        selectedId: own?.video_id ?? null,
+        unavailable: cached?.videos.length ? undefined : "not_configured",
       });
       return;
     }

@@ -3,14 +3,9 @@
 // an expired access token once on a 401.
 
 import type {
-<<<<<<< HEAD
-  Exercise, FoodLookupResult, HealthIssue, HealthIssueEvent, HealthProfile,
-  HealthRecord, MedicalAiStatus, NutritionPlan, Plan, PlanInfo, Program, Routine,
-  Subscription, UserProfile, WorkoutSession,
-=======
-  Exercise, ExerciseVideo, FoodLookupResult, NutritionPlan, Plan, PlanInfo,
+  Exercise, ExerciseVideo, FoodLookupResult, HealthIssue, HealthIssueEvent,
+  HealthProfile, HealthRecord, MedicalAiStatus, NutritionPlan, Plan, PlanInfo,
   Program, Routine, Subscription, UserProfile, WorkoutSession,
->>>>>>> origin/main
 } from "./types";
 
 // Two backends: the data API (workouts/programs/nutrition) and the accounts

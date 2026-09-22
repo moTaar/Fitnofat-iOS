@@ -290,7 +290,6 @@ Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 | `QUOTA_LOOKUP_FREE` / `_PRO` | server | `25` / `250` | daily food lookups |
 | `QUOTA_MEDICAL_FREE` / `_PRO` | server | `0` / `60` | daily medical AI calls (Pro-only feature) |
 | `BOOTSTRAP_HISTORY_DAYS` | server | `120` | history window returned on cold start |
-<<<<<<< HEAD
 | `MEDICAL_AI_PROVIDER` | server | `auto` | `auto` / `cloudrun` / `vertex` / `gemini` — who answers medical questions |
 | `MEDICAL_AI_BASE_URL` | server | — | self-hosted OpenAI-compatible endpoint, incl. `/v1` (turns on `cloudrun`) |
 | `MEDICAL_AI_SELF_HOSTED_MODEL` | server | `MEDICAL_AI_MODEL` | model name the self-hosted server expects |
@@ -300,14 +299,12 @@ Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 | `MEDICAL_AI_TIMEOUT_MS` | server | `90000` | hard deadline on medical model calls |
 | `VERTEX_PROJECT_ID` / `VERTEX_LOCATION` | server | — / `us-central1` | Vertex AI project and region |
 | `VERTEX_SERVICE_ACCOUNT_JSON` | server | — | service-account key JSON (raw or base64) for Vertex OAuth |
-=======
 | `YOUTUBE_API_KEY` | server | — | YouTube Data API v3 key; unset disables the demo-video picker |
 | `YOUTUBE_DAILY_BUDGET` | server | `90` | **global** searches per UTC day (Google's hard ceiling is ~100) |
 | `YOUTUBE_CHANNEL_ALLOWLIST` | server | — | channel IDs promoted to the top of every result set |
 | `YOUTUBE_REGION` / `YOUTUBE_RELEVANCE_LANGUAGE` | server | `US` / `en` | search locale |
 | `YOUTUBE_CACHE_DAYS` | server | `180` | how long cached demo results stay fresh |
 | `YOUTUBE_RATE_LIMIT_MAX` | server | `12` | video requests per window per user |
->>>>>>> origin/main
 
 ## Deploy to Render
 1. Push this repo to GitHub.

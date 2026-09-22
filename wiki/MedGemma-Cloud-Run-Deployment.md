@@ -26,12 +26,134 @@ roughly **$10–15/month**. The number that would hurt is `--min-instances 1`
 
 ## Before you start
 
+### Where you run these commands
+
+**On your own laptop or workstation** — the machine you sit at. Everything in
+steps 1–5 is one-time setup you perform *against* Google Cloud; none of it runs
+on a server.
+
+To be explicit about where these tools do **not** go:
+
+| Machine | Needs gcloud? | Why |
+|---|---|---|
+| Your laptop | **Yes** | You run every command here |
+| The API host (Render) | No | It only needs the env vars from step 6 |
+| The Cloud Run container | No | It just serves vLLM |
+| A CI runner | No | Nothing in CI touches this |
+
+Fitnofat never shells out to `gcloud` at runtime. The app authenticates with the
+service-account key in `VERTEX_SERVICE_ACCOUNT_JSON`, over plain HTTPS.
+
 You need:
 
-- `gcloud` installed and logged in (`gcloud auth login`), project `azwertyweb`
-- Docker, to build the image
+- **`gcloud`**, installed and authenticated — see below
+- **Docker**, to build the image — *unless* you use the Cloud Build path in
+  step 2, which needs neither Docker nor a fast upload
 - A Hugging Face account, for the MedGemma weights
 - The `fitnofat-sa` service-account key JSON you already created
+
+> **Or install nothing at all.** [Cloud Shell](https://shell.cloud.google.com) is
+> a browser terminal with `gcloud` and Docker already installed and already
+> signed in as you, with the project preset. Paired with the Cloud Build path in
+> step 2 it covers this entire runbook — the one thing it can't do is build the
+> image locally, since its home directory is 5 GB and the image is ~15 GB.
+
+### Installing gcloud
+
+**macOS**
+
+```bash
+brew install --cask gcloud-cli        # formerly the google-cloud-sdk cask
+```
+
+Or without Homebrew: `curl https://sdk.cloud.google.com | bash && exec -l $SHELL`.
+
+**Windows**
+
+```powershell
+winget install -e --id Google.CloudSDK
+```
+
+Or run the [installer](https://cloud.google.com/sdk/docs/install). Either way,
+open a **new** terminal afterwards so `PATH` picks it up. Python ships bundled;
+you don't need your own.
+
+**Linux (Debian/Ubuntu)**
+
+```bash
+sudo apt-get update && sudo apt-get install -y apt-transport-https ca-certificates gnupg curl
+
+curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+  | sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
+
+sudo apt-get update && sudo apt-get install -y google-cloud-cli
+```
+
+The package is `google-cloud-cli`; the command is `gcloud`. On other distros use
+`curl https://sdk.cloud.google.com | bash` (needs Python 3.8+).
+
+**Then, on any OS**
+
+```bash
+gcloud init          # opens a browser: sign in, then pick project azwertyweb
+gcloud --version     # confirms it's on PATH
+gcloud config list   # should show account = you, project = azwertyweb
+```
+
+`gcloud init` bundles `gcloud auth login` and `gcloud config set project`. If you
+have already initialised for another project, just run:
+
+```bash
+gcloud auth login
+gcloud config set project azwertyweb
+```
+
+> You do **not** need `gcloud auth application-default login` for this runbook.
+> That command writes separate credentials for client libraries running on your
+> machine; nothing here uses them, and Fitnofat authenticates with the
+> service-account key instead.
+
+### Three places you will be typing
+
+This runbook moves between environments, and pasting a command into the wrong
+one produces errors that look like real failures but aren't. Check the prompt
+before you paste:
+
+| Prompt looks like | What it is | What belongs there |
+|---|---|---|
+| `PS D:\...>` or `$` | **A shell** (PowerShell, Git Bash, Cloud Shell) | every `gcloud`, `docker` and `git` command |
+| `>>>` | **Python REPL** | nothing in this runbook — type `exit()` to leave |
+| A Colab cell | **A browser notebook** | step 0 only, and only the `python` blocks |
+
+A `gcloud` line at a `>>>` prompt gives you `SyntaxError: invalid syntax`, which
+is Python complaining it isn't Python — not gcloud rejecting anything. If you
+opened Python to run step 0, `exit()` first; step 0 belongs in Colab, not in a
+local interpreter.
+
+### A note on shells
+
+**Every command below is bash.** On Windows, PowerShell will choke on two of its
+habits: `\` for line continuation (PowerShell uses a backtick, so `\` gets passed
+along as a literal argument) and `export` for variables.
+
+The painless fix is to run the runbook in a bash shell —
+[Cloud Shell](https://shell.cloud.google.com) in the browser, WSL, or the Git
+Bash that ships with Git for Windows — and paste the commands as written.
+
+If you'd rather stay in PowerShell, three translations cover the whole document:
+
+| bash | PowerShell |
+|---|---|
+| `cmd \` + newline + `  arg` | put it on **one line**, or end lines with a backtick `` ` `` |
+| `export FOO=bar` | `$FOO = "bar"` |
+| `export FOO=$BAR-suffix` | `$FOO = "${BAR}-suffix"` — braces, or PowerShell eats the hyphen |
+
+`$(...)` command substitution works the same in both.
+
+---
 
 Enable the APIs (note that Vertex AI is listed as "Gemini Enterprise Agent
 Platform" since April 2026 — the service name is unchanged):
@@ -42,19 +164,58 @@ gcloud config set project azwertyweb
 gcloud services enable \
   run.googleapis.com \
   artifactregistry.googleapis.com \
-  cloudbuild.googleapis.com
+  cloudbuild.googleapis.com \
+  secretmanager.googleapis.com
 ```
 
-Pick a region that actually has L4 GPUs. As of 2026 that is `europe-west1`,
-`europe-west4`, `us-central1`, `us-east4`, `asia-southeast1`, `asia-south1`.
-The rest of this doc uses `europe-west1` — closest to EU users, and it keeps the
-health data in the EU.
+PowerShell — one line:
+
+```powershell
+gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com
+```
+
+Pick a region that has Cloud Run **L4 GPUs** — a shorter list than Cloud Run's
+regions generally, and it grows, so check the current one under "Supported
+regions" in the
+[Cloud Run GPU docs](https://cloud.google.com/run/docs/configuring/services/gpu)
+rather than trusting a list written down here. `europe-west1`, `europe-west4`,
+`us-central1`, `us-east4`, `asia-southeast1` and `asia-south1` have had it
+longest.
+
+Two things decide which one:
+
+- **Latency** — pick the closest supported region to wherever you are. This is a
+  chat; a round trip across an ocean is felt.
+- **Residency** — the request carries the medical record, so it is processed
+  wherever this runs. If that matters to you legally, it constrains the choice
+  more than latency does.
+
+The examples below use `$REGION`, so nothing downstream changes with your pick:
 
 ```bash
-export REGION=europe-west1
+export REGION=europe-west1     # substitute your own
 export PROJECT=azwertyweb
 export SA=fitnofat-sa@azwertyweb.iam.gserviceaccount.com
 ```
+
+```powershell
+$REGION  = "europe-west1"       # substitute your own
+$PROJECT = "azwertyweb"
+$SA      = "fitnofat-sa@azwertyweb.iam.gserviceaccount.com"
+```
+
+These are set per shell session — reopen your terminal and you set them again.
+That catches everyone at least once, so pin the region into gcloud's own config
+as well, where it persists across terminals, shells and reboots:
+
+```bash
+gcloud config set run/region $REGION
+```
+
+Every `gcloud run` command below then works without `--region`. If gcloud ever
+answers a command with a numbered list of forty regions, that is it telling you
+the flag arrived empty — which usually means you are in a terminal where the
+`export` lines above were never run.
 
 ---
 
@@ -98,18 +259,55 @@ pretrained base and will not follow the system prompt.
 
 ## Step 0 — Decide whether MedGemma is worth hosting (30 min, ~$0)
 
-Do this before you pay for anything. Open a
-[Colab](https://colab.research.google.com) notebook with a T4 and run:
+Do this before you pay for anything. It needs no gcloud, no GCP and no billing —
+only a Hugging Face account, so it can be done before or alongside everything
+above.
+
+**First**, accept the licence and get a token (this is step 1.1–1.2, pulled
+forward because the notebook below downloads the weights too): sign in to Hugging
+Face, open [`google/medgemma-1.5-4b-it`](https://huggingface.co/google/medgemma-1.5-4b-it),
+accept the Health AI Developer Foundations terms, then create a **read** token at
+Settings → Access Tokens. Downloads 403 until the licence is accepted.
+
+Then:
+
+1. Go to [colab.research.google.com](https://colab.research.google.com) and
+   create a **new notebook**. This runs in your browser on Google's hardware —
+   it is not your local Python. Pasting these lines into a `>>>` prompt on your
+   own machine will fail on the very first one, because `!pip` is notebook
+   syntax and nothing below is installed locally.
+2. **Runtime → Change runtime type → T4 GPU**, then Save. Without this you get a
+   CPU-only machine and the model will not load.
+3. Paste each block below into its own cell and run them in order
+   (Shift+Enter).
 
 ```python
-!pip install -q transformers accelerate
-from huggingface_hub import login; login()          # accept the MedGemma licence first
+# Cell 1 — confirm you actually have a GPU. If this errors, redo step 2 above.
+!nvidia-smi --query-gpu=name,memory.total --format=csv
+```
 
+```python
+# Cell 2 — install, then sign in with the read token from above.
+!pip install -q transformers accelerate
+from huggingface_hub import login
+login()
+```
+
+```python
+# Cell 3 — load the model (a few minutes the first time; it pulls ~8 GB).
 from transformers import pipeline
 import torch
-pipe = pipeline("image-text-to-text", model="google/medgemma-1.5-4b-it",
-                torch_dtype=torch.bfloat16, device="cuda")
 
+# A T4 has no bfloat16 support — that needs Ampere or newer (L4, A100).
+# float16 is the correct choice there, and fits in the T4's 16 GB.
+dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+
+pipe = pipeline("image-text-to-text", model="google/medgemma-1.5-4b-it",
+                torch_dtype=dtype, device="cuda")
+```
+
+```python
+# Cell 4 — ask it something that looks like your real traffic.
 msgs = [{"role": "user", "content": [{"type": "text", "text":
   "A 34-year-old with hypothyroidism on levothyroxine 50µg trains 4x/week. "
   "Ferritin 18 ng/mL, haemoglobin normal. What is worth investigating, and what "
@@ -117,9 +315,9 @@ msgs = [{"role": "user", "content": [{"type": "text", "text":
 print(pipe(text=msgs, max_new_tokens=400)[0]["generated_text"][-1]["content"])
 ```
 
-Run ten prompts that look like your real traffic — a nutrition question, a
-symptom description, a lab result, a medication interaction. Compare the answers
-to what the current desk gives you.
+Re-run cell 4 with ten prompts that look like your real traffic — a nutrition
+question, a symptom description, a lab result, a medication interaction. Compare
+the answers to what the current desk gives you.
 
 If MedGemma 4B isn't clearly better for *your* questions, stop here: the honest
 outcome is that hosting isn't worth $10/month plus the ops. The 27B text variant
@@ -134,12 +332,69 @@ entirely.
    [`google/medgemma-1.5-4b-it`](https://huggingface.co/google/medgemma-1.5-4b-it) and
    accept the Health AI Developer Foundations terms. Downloads 403 until you do.
 2. Create a **read** token at Settings → Access Tokens.
-3. Put it in Secret Manager rather than in the Dockerfile:
+3. Put it in Secret Manager rather than in the Dockerfile (the API was
+   enabled in the prerequisites):
 
 ```bash
-gcloud services enable secretmanager.googleapis.com
 printf 'hf_xxxxxxxxxxxxxxxxx' | gcloud secrets create hf-token --data-file=-
 ```
+
+> Both forms put the token in your shell history. That is usually fine on your
+> own machine — but if you paste it anywhere shared (a terminal you are
+> screen-sharing, a chat, an issue), treat it as burned and rotate it at
+> [Hugging Face → Settings → Access Tokens](https://huggingface.co/settings/tokens).
+
+PowerShell has no `printf`, and piping text into `--data-file=-` there can add a
+BOM or a trailing newline that ends up *inside* the token. Write a file and
+delete it:
+
+```powershell
+Set-Content -Path token.txt -Value "hf_xxxxxxxxxxxxxxxxx" -NoNewline -Encoding ascii
+gcloud secrets create hf-token --data-file=token.txt
+Remove-Item token.txt
+```
+
+4. **Let Cloud Build read it.** A build fetches `availableSecrets` as its own
+   service account, and that account cannot read secret payloads by default —
+   `roles/editor` deliberately excludes `secretmanager.versions.access`, so even
+   a broadly-privileged account fails here. Without this grant step 2 dies with
+   `PermissionDenied ... secretmanager.versions.access`.
+
+   Which account it runs as depends on the project's age: builds used to run as
+   `PROJECT_NUMBER@cloudbuild.gserviceaccount.com`, and newer projects use the
+   Compute Engine default instead. Granting both is harmless — the binding is
+   scoped to this one secret, and a non-existent account just errors:
+
+```bash
+PN=$(gcloud projects describe $PROJECT --format='value(projectNumber)')
+
+gcloud secrets add-iam-policy-binding hf-token \
+  --member="serviceAccount:$PN-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+
+gcloud secrets add-iam-policy-binding hf-token \
+  --member="serviceAccount:$PN@cloudbuild.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+```powershell
+$PN = gcloud projects describe $PROJECT --format="value(projectNumber)"
+
+gcloud secrets add-iam-policy-binding hf-token --member="serviceAccount:$PN-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"
+
+gcloud secrets add-iam-policy-binding hf-token --member="serviceAccount:$PN@cloudbuild.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"
+```
+
+   To see exactly which account a failed build used:
+   `gcloud builds describe BUILD_ID --format='value(serviceAccount)'`. That is
+   also the quickest way out of a wrong guess — grant to the account it names
+   and skip the pair above.
+
+   > If the error reads `Service account -compute@developer.gserviceaccount.com
+   > does not exist`, with nothing before the hyphen, `$PN` was empty: shell
+   > variables do not survive a move between PowerShell and bash, and each
+   > terminal you open starts without them. Re-set the variables from the
+   > prerequisites in whichever shell you are in now.
 
 ---
 
@@ -148,6 +403,11 @@ printf 'hf_xxxxxxxxxxxxxxxxx' | gcloud secrets create hf-token --data-file=-
 The weights are **baked into the image**. The alternative — downloading ~8 GB
 from Hugging Face on every cold start — turns a 40-second start into a
 multi-minute one and makes your health desk depend on hf.co being up.
+
+Both files already exist in this repo under **`medgemma/`**, at the root
+alongside `server/` and `web/` — `git pull` and you have them; there is nothing
+to copy out of this page. They are shown here so you can read what they do, and
+so the reasoning behind each line is somewhere other than a commit message.
 
 `medgemma/Dockerfile`:
 
@@ -176,22 +436,86 @@ ENTRYPOINT python3 -m vllm.entrypoints.openai.api_server \
 `--served-model-name` is what the app sends in the request body — pin it so the
 value is stable and short.
 
-Build and push:
+Create the registry either way:
 
 ```bash
 gcloud artifacts repositories create fitnofat \
   --repository-format=docker --location=$REGION
 
-gcloud auth configure-docker $REGION-docker.pkg.dev
-
 export IMAGE=$REGION-docker.pkg.dev/$PROJECT/fitnofat/medgemma:1.5-4b-it
+```
+
+```powershell
+$IMAGE = "${REGION}-docker.pkg.dev/${PROJECT}/fitnofat/medgemma:1.5-4b-it"
+```
+
+**Option A — build in the cloud (recommended).** No Docker locally, and the
+~15 GB image never crosses your home connection: it is built next to Artifact
+Registry and pushed inside Google's network. It also reuses the Secret Manager
+secret from step 1, so `HF_TOKEN` never sits in your shell history.
+
+`medgemma/cloudbuild.yaml`:
+
+```yaml
+steps:
+  - name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    env: ['DOCKER_BUILDKIT=1']
+    secretEnv: ['HF_TOKEN']
+    args:
+      - -c
+      - docker build --secret id=HF_TOKEN,env=HF_TOKEN -t $_IMAGE .
+images: ['$_IMAGE']
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/hf-token/versions/latest
+      env: HF_TOKEN
+options:
+  machineType: E2_HIGHCPU_8
+  diskSizeGb: 100
+```
+
+Run this from the **repository root** (the folder holding `medgemma/`), so the
+relative paths resolve:
+
+```bash
+gcloud builds submit medgemma/ \
+  --config=medgemma/cloudbuild.yaml \
+  --substitutions=_IMAGE=$IMAGE \
+  --timeout=3600s
+```
+
+```powershell
+gcloud builds submit medgemma/ --config=medgemma/cloudbuild.yaml --substitutions=_IMAGE=$IMAGE --timeout=3600s
+```
+
+`medgemma/` is the build context that gets uploaded, so the Dockerfile lands at
+its root — which is why the `docker build ... .` inside the config finds it.
+
+The default 10-minute build timeout is nowhere near enough to pull 8 GB of
+weights and push a 15 GB image — hence `--timeout=3600s`, and the larger disk.
+
+**Option B — build locally.** Needs Docker and the patience to upload 15 GB:
+
+```bash
+gcloud auth configure-docker $REGION-docker.pkg.dev
+export HF_TOKEN=hf_xxxxxxxxxxxxxxxxx
+
+DOCKER_BUILDKIT=1 docker build --secret id=HF_TOKEN,env=HF_TOKEN -t $IMAGE medgemma/
+docker push $IMAGE
+```
+
+```powershell
+gcloud auth configure-docker "${REGION}-docker.pkg.dev"
+$env:HF_TOKEN = "hf_xxxxxxxxxxxxxxxxx"
+$env:DOCKER_BUILDKIT = "1"
 
 docker build --secret id=HF_TOKEN,env=HF_TOKEN -t $IMAGE medgemma/
 docker push $IMAGE
 ```
 
-(Export `HF_TOKEN` in your shell for the build. The image will be ~15 GB — the
-push is the slow part, once.)
+Note `$env:` rather than a plain `$` for these two — `--secret …,env=HF_TOKEN`
+reads a real environment variable, and a PowerShell variable isn't one.
 
 ---
 
@@ -243,6 +567,13 @@ export MEDGEMMA_URL=$(gcloud run services describe medgemma \
 echo $MEDGEMMA_URL
 ```
 
+```powershell
+gcloud run services add-iam-policy-binding medgemma --region=$REGION --member="serviceAccount:$SA" --role="roles/run.invoker"
+
+$MEDGEMMA_URL = $(gcloud run services describe medgemma --region=$REGION --format="value(status.url)")
+$MEDGEMMA_URL
+```
+
 `fitnofat-sa` now needs **two** roles: `roles/run.invoker` (here) and, if you
 also use the Vertex path, `roles/aiplatform.user`.
 
@@ -250,21 +581,92 @@ also use the Vertex path, `roles/aiplatform.user`.
 
 ## Step 5 — Prove it works before touching the app
 
-```bash
-# Authenticated proxy on localhost — no token juggling.
-gcloud run services proxy medgemma --region=$REGION --port=8080 &
+First confirm the service is actually there, and that `$REGION` is set in *this*
+shell — an empty one makes gcloud prompt with a long interactive region list,
+which is its way of saying the flag arrived blank:
 
-curl -s localhost:8080/v1/models | jq .
+```bash
+echo $REGION                              # must not be empty
+gcloud run services list --region=$REGION
+```
+
+This needs **two terminals**. The proxy is a long-running foreground process:
+backgrounding it with `&` and immediately curling races the port, and if it needs
+to prompt you never see the question.
+
+**Terminal A** — leave this running:
+
+```bash
+gcloud run services proxy medgemma --region=$REGION --port=8080
+```
+
+Wait for `proxying to https://medgemma-....run.app`.
+
+**Terminal B** — re-export the variables here too, then:
+
+```bash
+curl -s localhost:8080/v1/models
 
 curl -s localhost:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"medgemma-1.5-4b-it","messages":[
         {"role":"user","content":"In one sentence: what does a ferritin of 18 ng/mL suggest in a menstruating endurance athlete?"}],
-      "max_tokens":150}' | jq -r '.choices[0].message.content'
+      "max_tokens":150}'
 ```
 
-The first call pays the cold start — expect **40–90 seconds**. The second should
-be a few seconds. If you don't see that pattern, fix it here, not later.
+Both print raw JSON. `jq` is lovely for reading it but ships with neither Git
+Bash nor Cloud Shell's default image, so it is not assumed here — pipe to
+`jq .` or `python -m json.tool` if you have either.
+
+Send **one request and wait** for it. The first call pays the cold start — a GPU
+instance loading the model takes 1–2 minutes — and `--max-instances=1` means
+there is exactly one instance to wait for. Firing a second request while the
+first is still starting doesn't queue politely: Cloud Run sheds it with HTTP 429
+and the body `Rate exceeded.`, which `curl -s` hides because it only prints the
+body. Use `-i` to see the status:
+
+```bash
+curl -sS -i --max-time 300 localhost:8080/v1/models
+```
+
+Once that returns `200`, the second call should be a few seconds. If you don't
+see that pattern, fix it here, not later.
+
+If you get `Rate exceeded.` on a request you waited for, the container is
+probably not starting at all. The logs say which:
+
+```bash
+gcloud run revisions list --service=medgemma --region=$REGION
+gcloud run services logs read medgemma --region=$REGION --limit=100
+```
+
+A healthy start logs vLLM loading the model and then
+`Uvicorn running on http://0.0.0.0:8080`. A CUDA OOM, a missing model path, or a
+process exiting immediately all show up here — and all of them present to the
+caller as the same 429, because Cloud Run cannot tell you "the container died",
+only "no instance available".
+
+Two things this proves and one it doesn't:
+
+- The `"id"` in the `/v1/models` response is exactly what
+  `MEDICAL_AI_SELF_HOSTED_MODEL` must be set to in step 6. Copy it from there
+  rather than retyping it.
+- The proxy authenticates as **you**, not as `fitnofat-sa`. A green result here
+  says the container works; it says nothing about whether the API service can
+  reach it. That is step 4's IAM binding, and it's worth confirming before you
+  go changing environment variables:
+
+```bash
+gcloud run services get-iam-policy medgemma --region=$REGION
+```
+
+`fitnofat-sa` should appear against `roles/run.invoker`. A response that is just
+`etag: ...` with no `bindings:` block means the policy is **empty** — nobody can
+invoke it, the grant never applied, and the app will get a 403 and fall back to
+Gemini. That fallback is quiet by design, so the only symptom is the model name
+under a reply.
+
+Stop the proxy with Ctrl+C in terminal A when you're done.
 
 ---
 
@@ -274,10 +676,45 @@ On the `fitnofat-api` service (Render → Environment):
 
 ```bash
 MEDICAL_AI_PROVIDER=cloudrun
-MEDICAL_AI_BASE_URL=https://medgemma-xxxxxxxx.europe-west1.run.app/v1   # note the /v1
+MEDICAL_AI_BASE_URL=https://medgemma-xxxxxxxx.us-east4.run.app/v1   # note the /v1
 MEDICAL_AI_SELF_HOSTED_MODEL=medgemma-1.5-4b-it
-VERTEX_SERVICE_ACCOUNT_JSON=<the fitnofat-sa key JSON>                   # already set
+VERTEX_SERVICE_ACCOUNT_JSON=<base64 of the fitnofat-sa key JSON>
 ```
+
+**Producing the base URL.** Print it with the `/v1` already appended, so the
+suffix can't be forgotten:
+
+```bash
+echo "$(gcloud run services describe medgemma --format='value(status.url)')/v1"
+```
+
+**Producing the key value.** `VERTEX_SERVICE_ACCOUNT_JSON` takes either the raw
+key JSON or a base64 encoding of it. Prefer **base64**: the raw file is
+multi-line and its `private_key` is full of `\n` escapes, which web consoles
+reliably mangle. Base64 is one line with no quotes or newlines to lose.
+
+```bash
+# from wherever you downloaded the key
+openssl base64 -A -in fitnofat-sa.json
+```
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("fitnofat-sa.json"))
+```
+
+Copy the single line it prints. Lost the key file? Mint another — a service
+account can hold several, and the old one keeps working:
+
+```bash
+gcloud iam service-accounts keys create fitnofat-sa.json \
+  --iam-account=fitnofat-sa@azwertyweb.iam.gserviceaccount.com
+```
+
+> That file is a full credential for the service account. Keep it out of the
+> repository — do not leave it in the project folder where a `git add -A` will
+> sweep it up — and delete it once the value is pasted into Render. If one ever
+> leaks, `gcloud iam service-accounts keys delete KEY_ID --iam-account=...`
+> revokes it.
 
 `VERTEX_SERVICE_ACCOUNT_JSON` is doing double duty: `server/src/vertex.ts` uses
 the same key to mint the **ID token** that Cloud Run checks (audience = the
@@ -365,6 +802,9 @@ Then unset `MEDICAL_AI_BASE_URL` on Render (or set
 | 403 from Cloud Run | `fitnofat-sa` lacks invoker, or the ID-token audience is wrong | Step 4; audience must be the service URL **without** `/v1` — `vertex.ts` strips it, so don't add a path |
 | 401 `Invalid token` | Clock skew, or the wrong service-account key | Verify the key in `VERTEX_SERVICE_ACCOUNT_JSON` is `fitnofat-sa`'s |
 | Request fails at ~60 s in the browser, server log looks fine | Client timeout during cold start | See the cold-start section |
+| `Rate exceeded.` from a curl | Cloud Run 429: no instance available — still cold-starting, or the container is crashing | One request at a time, `-i` to see the status; if it persists, read the service logs |
+| gcloud prints a numbered list of regions and waits | the `--region` flag arrived empty | `echo $REGION`; shell variables don't cross terminals or shells |
+| Build fails: `PermissionDenied ... secretmanager.versions.access` | Cloud Build's service account can't read `hf-token` | Step 1.4 — `roles/editor` does not cover secret payloads |
 | Deploy fails: GPU quota | First L4 in a new region | IAM → Quotas → request Cloud Run L4 |
 | vLLM OOM at startup | `--max-model-len` too high for 24 GB | Lower to 4096, or drop `--gpu-memory-utilization` to 0.85 |
 | Model 404 from vLLM | Request's `model` ≠ `--served-model-name` | Match `MEDICAL_AI_SELF_HOSTED_MODEL` to it |

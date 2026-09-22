@@ -34,6 +34,17 @@ export interface ExerciseVideo {
 /** Why a search produced nothing. Lets the UI explain itself instead of erroring. */
 export type VideoUnavailable = "not_configured" | "quota" | "error";
 
+/**
+ * Whether searching is possible at all. Callers must check this BEFORE claiming
+ * a unit of the daily budget: without a key every request would otherwise spend
+ * a unit and then fail, silently draining an allowance that can't be topped up
+ * before midnight Pacific — so the day a key is finally added, the feature would
+ * report "quota exhausted" until the next reset.
+ */
+export function youtubeConfigured(): boolean {
+  return !!config.youtubeApiKey;
+}
+
 const SEARCH_URL = "https://www.googleapis.com/youtube/v3/search";
 const VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos";
 

@@ -94,7 +94,6 @@ messages can carry key fragments and row contents. Throw `HttpError` for anythin
 the client should read verbatim; everything else becomes a generic 500 when
 `NODE_ENV=production`.
 
-<<<<<<< HEAD
 **Medical AI has a consent gate, and it is server-side.** `/api/health/chat` and
 `/api/health/review` refuse with 403 `medical_consent_required` until
 `health_profile.ai_consent_at` is set. That flag is the only thing standing
@@ -136,7 +135,7 @@ metric readings survive, and resolved/dismissed issues are never reopened.
 deliberately omits `health`/`healthIssues`/`healthRecords`, and `logout` clears
 them. Adding them to the persisted set would leave medical data on a shared
 device and compete with workout history for the same 5MB.
-=======
+
 **The service worker is in `prompt` mode, not `autoUpdate`.** A new build
 installs and then *waits*; `UpdatePrompt` offers "A new version is ready" and the
 swap happens on a full reload when the user accepts. Do not switch this back to
@@ -148,7 +147,6 @@ so the next lazy-route navigation fails to load.
 the single source of truth for whether it's on screen; `InstallPrompt` and the
 dock-less full-height pages (login, reset, onboarding) both read it so they can
 yield the slot or reserve space. Any new bottom-anchored banner should too.
->>>>>>> origin/main
 
 **Keep the eager route bundle small.** `web/src/App.tsx` lazy-loads every page
 except Dashboard and ActiveWorkout, which are the in-gym critical path. A static
