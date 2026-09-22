@@ -157,19 +157,32 @@ PowerShell — one line:
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com
 ```
 
-Pick a region that actually has L4 GPUs. As of 2026 that is `europe-west1`,
-`europe-west4`, `us-central1`, `us-east4`, `asia-southeast1`, `asia-south1`.
-The rest of this doc uses `europe-west1` — closest to EU users, and it keeps the
-health data in the EU.
+Pick a region that has Cloud Run **L4 GPUs** — a shorter list than Cloud Run's
+regions generally, and it grows, so check the current one under "Supported
+regions" in the
+[Cloud Run GPU docs](https://cloud.google.com/run/docs/configuring/services/gpu)
+rather than trusting a list written down here. `europe-west1`, `europe-west4`,
+`us-central1`, `us-east4`, `asia-southeast1` and `asia-south1` have had it
+longest.
+
+Two things decide which one:
+
+- **Latency** — pick the closest supported region to wherever you are. This is a
+  chat; a round trip across an ocean is felt.
+- **Residency** — the request carries the medical record, so it is processed
+  wherever this runs. If that matters to you legally, it constrains the choice
+  more than latency does.
+
+The examples below use `$REGION`, so nothing downstream changes with your pick:
 
 ```bash
-export REGION=europe-west1
+export REGION=europe-west1     # substitute your own
 export PROJECT=azwertyweb
 export SA=fitnofat-sa@azwertyweb.iam.gserviceaccount.com
 ```
 
 ```powershell
-$REGION  = "europe-west1"
+$REGION  = "europe-west1"       # substitute your own
 $PROJECT = "azwertyweb"
 $SA      = "fitnofat-sa@azwertyweb.iam.gserviceaccount.com"
 ```
