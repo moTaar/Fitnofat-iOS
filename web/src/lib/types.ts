@@ -321,9 +321,120 @@ export interface AIProgramResponse {
   routines: AIGeneratedRoutine[];
 }
 
+// ── Health / medical tracker ─────────────────────────────────────────────────
+// Mirrors server/src/types.ts. Note this data is deliberately NOT persisted to
+// localStorage (see store.ts `partialize`): it is fetched per session.
+
+export type HealthIssueCategory =
+  | "injury" | "pain" | "nutrition" | "metabolic" | "sleep"
+  | "stress" | "medical" | "lifestyle" | "other";
+export type HealthIssueStatus = "open" | "in_progress" | "monitoring" | "resolved" | "dismissed";
+export type HealthIssueSeverity = "low" | "moderate" | "high" | "urgent";
+export type HealthRecordKind =
+  | "symptom" | "condition" | "medication" | "allergy" | "injury"
+  | "surgery" | "lab" | "vitals" | "appointment" | "note";
+export type HealthEventKind = "note" | "check_in" | "status_change" | "measurement" | "ai_review";
+
+export interface Medication {
+  name: string;
+  dose?: string;
+  schedule?: string;
+}
+
+export interface HealthProfile {
+  /** Set once the user opts in to sending health data to the medical model. */
+  aiConsentAt?: number;
+  conditions: string[];
+  allergies: string[];
+  medications: Medication[];
+  surgeries: string[];
+  familyHistory: string[];
+  bloodType?: string;
+  smoking?: string;
+  alcohol?: string;
+  sleepHours?: number;
+  stressLevel?: string;
+  notes?: string;
+  lastReviewAt?: number;
+  lastReviewSummary?: string;
+}
+
+export interface ActionStep {
+  step: string;
+  cadence?: string;
+  done?: boolean;
+}
+
+export interface IssueMetric {
+  label: string;
+  unit?: string;
+  target?: string;
+  latest?: number;
+  latestAt?: number;
+}
+
+export interface HealthIssueEvent {
+  id: string;
+  issueId: string;
+  kind: HealthEventKind;
+  body?: string;
+  metric?: string;
+  value?: number;
+  unit?: string;
+  createdAt: number;
+}
+
+export interface HealthIssue {
+  id: string;
+  key: string;
+  title: string;
+  category: HealthIssueCategory;
+  status: HealthIssueStatus;
+  severity: HealthIssueSeverity;
+  progress: number;
+  bodyRegion?: string;
+  summary?: string;
+  whyItMatters?: string;
+  actionPlan: ActionStep[];
+  metrics: IssueMetric[];
+  redFlags: string[];
+  source: "ai" | "user";
+  confidence?: "low" | "medium" | "high";
+  firstNoticedAt?: number;
+  targetDate?: string;
+  resolvedAt?: number;
+  lastReviewedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+  events?: HealthIssueEvent[];
+}
+
+export interface HealthRecord {
+  id: string;
+  issueId?: string;
+  kind: HealthRecordKind;
+  title: string;
+  detail?: string;
+  occurredAt: number;
+  data: Record<string, unknown>;
+  source: "user" | "ai";
+  createdAt: number;
+}
+
+/** What the server says about the medical model backing this account. */
+export interface MedicalAiStatus {
+  available: boolean;
+  /** e.g. "medlm-medium (Vertex AI)" — shown so a fallback is never silent. */
+  model: string;
+  provider: "vertex" | "gemini" | "none";
+  consented: boolean;
+  disclaimer: string;
+}
+
 // ── Subscriptions / billing (accounts microservice) ──────────────────────────
 export type Plan = "free" | "pro";
-export type Feature = "ai_coach" | "ai_nutrition" | "program_refresh" | "ai_exercise";
+export type Feature =
+  | "ai_coach" | "ai_nutrition" | "program_refresh" | "ai_exercise" | "ai_medical";
 
 export interface PlanInfo {
   id: Plan;

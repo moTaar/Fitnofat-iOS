@@ -12,7 +12,9 @@ export type Feature =
   | "ai_coach"
   | "ai_nutrition"
   | "program_refresh"
-  | "ai_exercise";
+  | "ai_exercise"
+  // AI nutritionist + medical helper and the Medical dashboard's health review.
+  | "ai_medical";
 
 export interface Tier {
   id: Plan;
@@ -39,8 +41,9 @@ export const TIERS: Record<Plan, Tier> = {
     name: "Pro",
     priceUsd: 9,
     stripePriceId: config.stripePricePro,
-    features: ["ai_coach", "ai_nutrition", "program_refresh", "ai_exercise"],
-    blurb: "Everything in Free plus the AI Coach, evolving nutrition plans, program refresh, and AI exercise assist.",
+    features: ["ai_coach", "ai_nutrition", "program_refresh", "ai_exercise", "ai_medical"],
+    blurb:
+      "Everything in Free plus the AI Coach, evolving nutrition plans, program refresh, AI exercise assist, and the AI nutritionist + medical helper.",
   },
 };
 

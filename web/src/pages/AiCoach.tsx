@@ -1,15 +1,33 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, Send, RotateCcw, AlertTriangle, ClipboardList, Pencil, Check, X, ImagePlus } from "lucide-react";
+import {
+  Sparkles, Send, RotateCcw, AlertTriangle, ClipboardList, Pencil, Check, X, ImagePlus,
+  Dumbbell, HeartPulse, ShieldCheck,
+} from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "@/lib/store";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/misc";
 import { cn } from "@/lib/utils";
 
 type ChatImage = { mimeType: string; data: string };
-type ChatMsg = { role: "user" | "model"; content: string; suggestions?: string[]; images?: ChatImage[] };
+type ChatMsg = {
+  role: "user" | "model";
+  content: string;
+  suggestions?: string[];
+  images?: ChatImage[];
+  /** Health mode: the emergency screen fired on this turn. */
+  urgent?: boolean;
+  /** Health mode: which model answered, e.g. "medlm-medium (Vertex AI)". */
+  model?: string;
+};
+
+// The coach chat has two desks. "training" is the original coach (programming,
+// logging, routine edits); "health" routes to the medical model instead, with
+// the athlete's medical record as context — a different backend, a different
+// system prompt, and its own consent gate.
+type CoachDesk = "training" | "health";
 
 const MAX_IMAGES_PER_MESSAGE = 4;
 
@@ -52,6 +70,14 @@ const COACH_SUGGESTIONS = [
   "Explain my current plan",
 ];
 
+const HEALTH_SUGGESTIONS = [
+  "Review my diet",
+  "Something hurts",
+  "📷 Read my lab results",
+  "What should I be working on?",
+  "Am I eating enough protein?",
+];
+
 // Map a thrown API error to the reason the AI is offline, or null if it's an
 // ordinary (retryable) error. "unavailable" = server has no Gemini key;
 // "quota" = key is rate-limited. Both route the user to the manual setup form.
@@ -70,6 +96,12 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
   const receiveLoggedWorkout = useStore((s) => s.receiveLoggedWorkout);
   const onboarded = useStore((s) => s.onboarded);
   const profile = useStore((s) => s.profile);
+  const health = useStore((s) => s.health);
+  const medicalAi = useStore((s) => s.medicalAi);
+  const loadHealth = useStore((s) => s.loadHealth);
+  const setHealthConsent = useStore((s) => s.setHealthConsent);
+  const receiveHealthIssue = useStore((s) => s.receiveHealthIssue);
+  const receiveHealthRecord = useStore((s) => s.receiveHealthRecord);
 
   // Coach mode for onboarded users; onboarding interview otherwise (or when
   // explicitly restarted from Settings via ?restart=1).
@@ -93,6 +125,12 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
   const [equipOtherText, setEquipOtherText] = useState("");
   // Photos staged for the next message (coach mode only).
   const [pendingImages, setPendingImages] = useState<ChatImage[]>([]);
+  // Which desk is answering. Only meaningful in coach mode — the onboarding
+  // interview has no health desk.
+  const [desk, setDesk] = useState<CoachDesk>("training");
+  // Set when the health desk refuses for want of consent, so the chat can offer
+  // the opt-in inline instead of sending the user to another screen.
+  const [needsConsent, setNeedsConsent] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -100,7 +138,13 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
   useEffect(() => {
     void startConversation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [coachMode]);
+  }, [coachMode, desk]);
+
+  // The health desk needs to know whether consent has been given before the
+  // first message, so the opt-in can be shown up front rather than as an error.
+  useEffect(() => {
+    if (desk === "health") void loadHealth();
+  }, [desk, loadHealth]);
 
   useEffect(() => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
@@ -112,6 +156,22 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
     setAiError(null);
     setInput("");
     setPendingImages([]);
+
+    setNeedsConsent(false);
+
+    if (coachMode && desk === "health") {
+      // Local greeting again — no quota spent just to say hello.
+      const name = profile?.name ? `, ${profile.name}` : "";
+      setMessages([
+        {
+          role: "model",
+          content: `Health desk${name}. I'm your nutritionist and medical helper: ask me about your diet, a symptom, a medication interaction, or a lab result, and I'll answer against your own medical record. Anything worth fixing I'll add to your Medical dashboard so you can actually track it. You can attach a photo 📷 of a lab report or a medication label too.\n\nI don't diagnose or prescribe — for anything new or worrying, see a clinician.`,
+          suggestions: HEALTH_SUGGESTIONS,
+        },
+      ]);
+      setTimeout(() => inputRef.current?.focus(), 100);
+      return;
+    }
 
     if (coachMode) {
       // No API call — greet locally and offer quick actions. This avoids the
@@ -162,6 +222,35 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
     }));
 
     try {
+      if (coachMode && desk === "health") {
+        const reply = await api.medicalChat(payload);
+        const base: ChatMsg = {
+          role: "model",
+          content: reply.text,
+          urgent: reply.urgent,
+          model: reply.model,
+        };
+
+        if (reply.type === "issue") {
+          receiveHealthIssue(reply.issue);
+          toast.success(`Tracking "${reply.issue.title}"`);
+          setMessages([
+            ...next,
+            { ...base, suggestions: ["Open my Medical tab", "Add a detail", "Anything else?"] },
+          ]);
+        } else if (reply.type === "record") {
+          receiveHealthRecord(reply.record);
+          toast.success("Added to your medical history");
+          setMessages([
+            ...next,
+            { ...base, suggestions: ["Open my Medical tab", "Log something else", "What should I watch?"] },
+          ]);
+        } else {
+          setMessages([...next, { ...base, suggestions: reply.suggestions }]);
+        }
+        return;
+      }
+
       if (coachMode) {
         const reply = await api.aiCoach(payload);
         if (reply.type === "update") {
@@ -216,6 +305,14 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
         }
       }
     } catch (e) {
+      // The health desk refuses until the user has opted in — that's a prompt,
+      // not an error, so it gets its own inline card rather than a red toast.
+      if (e instanceof ApiError && e.code === "medical_consent_required") {
+        setNeedsConsent(true);
+        setMessages(next.slice(0, -1));
+        setInput(text.trim());
+        return;
+      }
       const reason = aiErrorReason(e);
       if (reason) {
         setAiError(reason);
@@ -265,8 +362,13 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
       void sendText("I did another workout I want to log");
       return;
     }
-    if (s === "📷 Log from a photo") {
+    if (s === "📷 Log from a photo" || s === "📷 Read my lab results") {
       fileInputRef.current?.click();
+      return;
+    }
+    if (s === "Open my Medical tab") {
+      onClose?.();
+      navigate("/health");
       return;
     }
     if (!coachMode && s === "Mixed") {
@@ -337,16 +439,26 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
       <div className="flex items-center justify-between pb-3 pt-2">
         <div className="flex items-center gap-2">
           <div className="rounded-xl bg-primary/15 p-2 text-primary">
-            <Sparkles className="h-5 w-5" />
+            {coachMode && desk === "health" ? (
+              <HeartPulse className="h-5 w-5" />
+            ) : (
+              <Sparkles className="h-5 w-5" />
+            )}
           </div>
           <div>
-            <h1 className="text-lg font-extrabold leading-tight tracking-tight">AI Coach</h1>
+            <h1 className="text-lg font-extrabold leading-tight tracking-tight">
+              {coachMode && desk === "health" ? "Health desk" : "AI Coach"}
+            </h1>
             <p className="text-xs text-muted-foreground">
-              {coachMode
-                ? profile?.name
-                  ? `Coaching ${profile.name}`
-                  : "Ask anything · adjust routines"
-                : "Building your program"}
+              {!coachMode
+                ? "Building your program"
+                : desk === "health"
+                  ? medicalAi?.model
+                    ? `Nutritionist + medical · ${medicalAi.model}`
+                    : "Nutritionist + medical helper"
+                  : profile?.name
+                    ? `Coaching ${profile.name}`
+                    : "Ask anything · adjust routines"}
             </p>
           </div>
         </div>
@@ -359,6 +471,63 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
           {coachMode ? "Reset chat" : "Restart"}
         </button>
       </div>
+
+      {/* Desk switch. Two different models with two different system prompts, so
+          switching starts a fresh conversation rather than carrying context over. */}
+      {coachMode && (
+        <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl bg-secondary p-1">
+          {([
+            ["training", "Training", Dumbbell],
+            ["health", "Health", HeartPulse],
+          ] as [CoachDesk, string, typeof Dumbbell][]).map(([value, label, Icon]) => (
+            <button
+              key={value}
+              onClick={() => !loading && setDesk(value)}
+              disabled={loading || generating}
+              className={cn(
+                "flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold tap disabled:opacity-50",
+                desk === value ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Consent prompt — the health desk sends medical data to a model, so it
+          asks first, right where the user hit it. */}
+      {coachMode && desk === "health" && (needsConsent || (health && !health.aiConsentAt)) && (
+        <div className="mb-3 flex flex-col gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+          <div className="flex gap-3">
+            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+            <div>
+              <p className="font-semibold text-amber-500">Turn on AI health analysis</p>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Your medical record lives in your own database. To answer health questions it has to
+                be sent to {medicalAi?.model ?? "the medical model"} for the length of the request.
+                Nothing is sent until you allow it, and you can turn it off again from the Medical
+                tab.
+              </p>
+            </div>
+          </div>
+          <Button
+            onClick={async () => {
+              try {
+                await setHealthConsent(true);
+                setNeedsConsent(false);
+                toast.success("AI health analysis is on.");
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : "Couldn't save that.");
+              }
+            }}
+            className="w-full"
+          >
+            Allow and continue
+          </Button>
+        </div>
+      )}
 
       {/* AI offline banner — quota-exceeded or no server key configured. */}
       {aiError && (
@@ -440,7 +609,11 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
                       "max-w-[78%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed",
                       m.role === "user"
                         ? "rounded-tr-sm bg-primary text-primary-foreground"
-                        : "rounded-tl-sm border border-border bg-card"
+                        : m.urgent
+                          // The emergency screen fired on this reply — it must not
+                          // look like an ordinary chat bubble.
+                          ? "rounded-tl-sm border border-destructive/50 bg-destructive/10"
+                          : "rounded-tl-sm border border-border bg-card"
                     )}
                   >
                     {m.images && m.images.length > 0 && (
@@ -456,6 +629,11 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
                       </div>
                     )}
                     {m.content}
+                    {m.model && (
+                      <span className="mt-2 block text-[10px] text-muted-foreground">
+                        {m.model} · not a diagnosis
+                      </span>
+                    )}
                   </div>
                   {m.role === "user" && !loading && !done && !generating && editingIdx === null && (
                     <button
@@ -667,7 +845,9 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
               ? "Program is being built…"
               : pendingImages.length > 0
                 ? "Add a note, or just send the photo…"
-                : "Type or tap a suggestion…"
+                : coachMode && desk === "health"
+                  ? "Ask about your diet, a symptom, a lab result…"
+                  : "Type or tap a suggestion…"
           }
           value={input}
           onChange={(e) => setInput(e.target.value)}

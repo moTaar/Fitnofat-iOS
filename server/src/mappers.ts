@@ -1,6 +1,12 @@
 import { slugify } from "./util";
 import type {
+  ActionStep,
   AIProgramResponse,
+  HealthIssue,
+  HealthIssueEvent,
+  HealthProfile,
+  HealthRecord,
+  IssueMetric,
   NutritionPlan,
   RoutineExercise,
   UserProfile,
@@ -165,4 +171,109 @@ export function aiRoutinesToRows(
       exercises,
     };
   });
+}
+
+// ── health / medical ────────────────────────────────────────────────────────
+export function rowToHealthProfile(row: any): HealthProfile {
+  return {
+    aiConsentAt: row?.ai_consent_at ? ms(row.ai_consent_at) : undefined,
+    conditions: row?.conditions ?? [],
+    allergies: row?.allergies ?? [],
+    medications: row?.medications ?? [],
+    surgeries: row?.surgeries ?? [],
+    familyHistory: row?.family_history ?? [],
+    bloodType: row?.blood_type ?? undefined,
+    smoking: row?.smoking ?? undefined,
+    alcohol: row?.alcohol ?? undefined,
+    sleepHours: row?.sleep_hours != null ? Number(row.sleep_hours) : undefined,
+    stressLevel: row?.stress_level ?? undefined,
+    notes: row?.notes ?? undefined,
+    lastReviewAt: row?.last_review_at ? ms(row.last_review_at) : undefined,
+    lastReviewSummary: row?.last_review_summary ?? undefined,
+  };
+}
+
+/**
+ * Empty background for a user who hasn't filled anything in yet. A function,
+ * not a constant: a shared constant would hand every caller the same array
+ * instances.
+ */
+export function emptyHealthProfile(): HealthProfile {
+  return {
+    conditions: [],
+    allergies: [],
+    medications: [],
+    surgeries: [],
+    familyHistory: [],
+  };
+}
+
+export function healthProfileToRow(userId: string, p: Partial<HealthProfile>) {
+  const row: Record<string, unknown> = { user_id: userId, updated_at: new Date().toISOString() };
+  if (p.conditions !== undefined) row.conditions = p.conditions;
+  if (p.allergies !== undefined) row.allergies = p.allergies;
+  if (p.medications !== undefined) row.medications = p.medications;
+  if (p.surgeries !== undefined) row.surgeries = p.surgeries;
+  if (p.familyHistory !== undefined) row.family_history = p.familyHistory;
+  if (p.bloodType !== undefined) row.blood_type = p.bloodType;
+  if (p.smoking !== undefined) row.smoking = p.smoking;
+  if (p.alcohol !== undefined) row.alcohol = p.alcohol;
+  if (p.sleepHours !== undefined) row.sleep_hours = p.sleepHours;
+  if (p.stressLevel !== undefined) row.stress_level = p.stressLevel;
+  if (p.notes !== undefined) row.notes = p.notes;
+  return row;
+}
+
+export function rowToHealthIssue(row: any, events?: any[]): HealthIssue {
+  return {
+    id: row.id,
+    key: row.key,
+    title: row.title,
+    category: row.category,
+    status: row.status,
+    severity: row.severity,
+    progress: Number(row.progress ?? 0),
+    bodyRegion: row.body_region ?? undefined,
+    summary: row.summary ?? undefined,
+    whyItMatters: row.why_it_matters ?? undefined,
+    actionPlan: (row.action_plan ?? []) as ActionStep[],
+    metrics: (row.metrics ?? []) as IssueMetric[],
+    redFlags: (row.red_flags ?? []) as string[],
+    source: row.source,
+    confidence: row.confidence ?? undefined,
+    firstNoticedAt: row.first_noticed_at ? ms(row.first_noticed_at) : undefined,
+    targetDate: row.target_date ?? undefined,
+    resolvedAt: row.resolved_at ? ms(row.resolved_at) : undefined,
+    lastReviewedAt: row.last_reviewed_at ? ms(row.last_reviewed_at) : undefined,
+    createdAt: ms(row.created_at),
+    updatedAt: ms(row.updated_at),
+    ...(events ? { events: events.map(rowToHealthEvent) } : {}),
+  };
+}
+
+export function rowToHealthEvent(row: any): HealthIssueEvent {
+  return {
+    id: row.id,
+    issueId: row.issue_id,
+    kind: row.kind,
+    body: row.body ?? undefined,
+    metric: row.metric ?? undefined,
+    value: row.value != null ? Number(row.value) : undefined,
+    unit: row.unit ?? undefined,
+    createdAt: ms(row.created_at),
+  };
+}
+
+export function rowToHealthRecord(row: any): HealthRecord {
+  return {
+    id: row.id,
+    issueId: row.issue_id ?? undefined,
+    kind: row.kind,
+    title: row.title,
+    detail: row.detail ?? undefined,
+    occurredAt: ms(row.occurred_at),
+    data: row.data ?? {},
+    source: row.source,
+    createdAt: ms(row.created_at),
+  };
 }

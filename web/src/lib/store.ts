@@ -3,13 +3,14 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { format } from "date-fns";
 import type {
   ActiveWorkout, Cuisine, EquipmentPrefCategory, EquipmentPreference, Exercise,
-  FoodLookupResult, LoggedExercise, LoggedFood, NutritionLog, NutritionPlan,
+  FoodLookupResult, HealthIssue, HealthIssueEvent, HealthProfile, HealthRecord,
+  LoggedExercise, LoggedFood, MedicalAiStatus, NutritionLog, NutritionPlan,
   Program, RepSensitivity, Routine, Subscription, UserProfile, WorkoutSession,
 } from "./types";
 import { SEED_EXERCISES } from "./exercises";
 import { sessionVolume, uid } from "./utils";
 import { estimateSessionCalories, needsAiMet, resolveKind } from "./calories";
-import { api, auth, AuthExpiredError, type Session } from "./api";
+import { api, auth, AuthExpiredError, type HealthReviewResult, type Session } from "./api";
 import { toast } from "./toast";
 
 // Cached METs keyed by exercise id/slug, for reusing known values in calorie
@@ -63,6 +64,18 @@ interface AppState {
   subscription: Subscription | null; // billing tier/status (accounts service)
   settings: Settings;
 
+  // ── health / medical ──
+  // Fetched on demand (the Medical tab / health chat), never written to
+  // localStorage — see `partialize`. Medical data has no business sitting in a
+  // browser cache that survives logout on a shared device, and it would compete
+  // with workout history for the same 5MB quota.
+  health: HealthProfile | null;
+  healthIssues: HealthIssue[];
+  healthRecords: HealthRecord[];
+  medicalAi: MedicalAiStatus | null;
+  healthLoaded: boolean;
+  healthLoading: boolean;
+
   // auth
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string, name?: string) => Promise<void>;
@@ -91,6 +104,38 @@ interface AppState {
   setCuisine: (cuisine: Cuisine) => void;          // persisted on the profile (server + local)
   logFood: (food: FoodLookupResult) => void;       // append a looked-up food to today's tracker
   removeLoggedFood: (id: string) => void;
+
+  // health / medical
+  loadHealth: (force?: boolean) => Promise<void>;
+  updateHealthProfile: (patch: Partial<HealthProfile>) => Promise<void>;
+  setHealthConsent: (granted: boolean) => Promise<void>;
+  /** Re-runs the AI review and folds the result into the tracked issues. */
+  runHealthReview: () => Promise<HealthReviewResult>;
+  createHealthIssue: (issue: {
+    title: string;
+    category?: HealthIssue["category"];
+    severity?: HealthIssue["severity"];
+    summary?: string;
+    targetDate?: string;
+  }) => Promise<void>;
+  updateHealthIssue: (id: string, patch: Partial<HealthIssue>) => Promise<void>;
+  deleteHealthIssue: (id: string) => Promise<void>;
+  /** Ticks/unticks a plan step and re-derives the issue's progress from it. */
+  toggleIssueStep: (id: string, stepIndex: number) => Promise<void>;
+  addIssueEvent: (
+    id: string,
+    event: { kind?: HealthIssueEvent["kind"]; body?: string; metric?: string; value?: number; unit?: string }
+  ) => Promise<void>;
+  addHealthRecord: (record: {
+    kind?: HealthRecord["kind"];
+    title: string;
+    detail?: string;
+    occurredAt?: number;
+  }) => Promise<void>;
+  deleteHealthRecord: (id: string) => Promise<void>;
+  // Merge something the health chat just created server-side.
+  receiveHealthIssue: (issue: HealthIssue) => void;
+  receiveHealthRecord: (record: HealthRecord) => void;
 
   // routines
   saveRoutine: (input: {
@@ -306,6 +351,12 @@ export const useStore = create<AppState>()(
       history: [],
       active: null,
       subscription: null,
+      health: null,
+      healthIssues: [],
+      healthRecords: [],
+      medicalAi: null,
+      healthLoaded: false,
+      healthLoading: false,
       settings: {
         theme: "dark",
         defaultRestSeconds: 90,
@@ -340,6 +391,12 @@ export const useStore = create<AppState>()(
           active: null,
           subscription: null,
           exercises: SEED_EXERCISES,
+          // Medical data is never left behind on the device after a logout.
+          health: null,
+          healthIssues: [],
+          healthRecords: [],
+          medicalAi: null,
+          healthLoaded: false,
         });
       },
 
@@ -575,6 +632,154 @@ export const useStore = create<AppState>()(
             ? base.checkedMeals.filter((k) => k !== mealKey)
             : [...base.checkedMeals, mealKey];
           return { nutritionLog: { ...base, checkedMeals: checked } };
+        });
+      },
+
+      // ── health / medical ────────────────────────────────────────────────
+      loadHealth: async (force = false) => {
+        if (!auth.isAuthenticated()) return;
+        if (get().healthLoading) return;
+        if (get().healthLoaded && !force) return;
+        set({ healthLoading: true });
+        try {
+          const data = await api.healthOverview();
+          set({
+            health: data.health,
+            healthIssues: data.issues,
+            healthRecords: data.records,
+            medicalAi: data.ai,
+            healthLoaded: true,
+          });
+        } catch (e) {
+          if (e instanceof AuthExpiredError) throw e;
+          // Leave healthLoaded false so opening the tab again retries.
+          toast.error(e instanceof Error ? e.message : "Couldn't load your health data.");
+        } finally {
+          set({ healthLoading: false });
+        }
+      },
+
+      updateHealthProfile: async (patch) => {
+        const health = await api.updateHealthProfile(patch);
+        set({ health });
+      },
+
+      setHealthConsent: async (granted) => {
+        const health = await api.setHealthConsent(granted);
+        const ai = get().medicalAi;
+        set({
+          health,
+          medicalAi: ai ? { ...ai, consented: !!health.aiConsentAt } : ai,
+        });
+      },
+
+      runHealthReview: async () => {
+        const result = await api.reviewHealth();
+        const health = get().health;
+        set({
+          healthIssues: result.issues,
+          health: health
+            ? { ...health, lastReviewAt: Date.now(), lastReviewSummary: result.summary }
+            : health,
+        });
+        return result;
+      },
+
+      createHealthIssue: async (issue) => {
+        const created = await api.createHealthIssue(issue);
+        set({ healthIssues: [created, ...get().healthIssues] });
+      },
+
+      updateHealthIssue: async (id, patch) => {
+        const prev = get().healthIssues;
+        // Optimistic: status flips and progress drags should feel instant.
+        set({ healthIssues: prev.map((i) => (i.id === id ? { ...i, ...patch } : i)) });
+        try {
+          const saved = await api.updateHealthIssue(id, patch);
+          set({
+            healthIssues: get().healthIssues.map((i) =>
+              // The server doesn't return the event log on a patch — keep ours.
+              i.id === id ? { ...saved, events: i.events } : i
+            ),
+          });
+        } catch (e) {
+          set({ healthIssues: prev });
+          toast.error(e instanceof Error ? e.message : "Couldn't save that change.");
+          throw e;
+        }
+      },
+
+      deleteHealthIssue: async (id) => {
+        const prev = get().healthIssues;
+        set({ healthIssues: prev.filter((i) => i.id !== id) });
+        try {
+          await api.deleteHealthIssue(id);
+        } catch (e) {
+          set({ healthIssues: prev });
+          toast.error(e instanceof Error ? e.message : "Couldn't delete that issue.");
+        }
+      },
+
+      toggleIssueStep: async (id, stepIndex) => {
+        const issue = get().healthIssues.find((i) => i.id === id);
+        if (!issue) return;
+        const actionPlan = issue.actionPlan.map((s, i) =>
+          i === stepIndex ? { ...s, done: !s.done } : s
+        );
+        // Progress follows the plan: ticking steps IS the progress bar, so the
+        // two can never disagree.
+        const done = actionPlan.filter((s) => s.done).length;
+        const progress = actionPlan.length
+          ? Math.round((done / actionPlan.length) * 100)
+          : issue.progress;
+        await get().updateHealthIssue(id, { actionPlan, progress });
+      },
+
+      addIssueEvent: async (id, event) => {
+        const { event: saved, issue } = await api.addIssueEvent(id, event);
+        set({
+          healthIssues: get().healthIssues.map((i) =>
+            i.id === id ? { ...issue, events: [saved, ...(i.events ?? [])] } : i
+          ),
+        });
+      },
+
+      addHealthRecord: async (record) => {
+        const created = await api.createHealthRecord(record);
+        set({
+          healthRecords: [created, ...get().healthRecords].sort(
+            (a, b) => b.occurredAt - a.occurredAt
+          ),
+        });
+      },
+
+      deleteHealthRecord: async (id) => {
+        const prev = get().healthRecords;
+        set({ healthRecords: prev.filter((r) => r.id !== id) });
+        try {
+          await api.deleteHealthRecord(id);
+        } catch (e) {
+          set({ healthRecords: prev });
+          toast.error(e instanceof Error ? e.message : "Couldn't delete that entry.");
+        }
+      },
+
+      receiveHealthIssue: (issue) => {
+        const existing = get().healthIssues;
+        // The chat may have updated an issue rather than created one — match on
+        // id so a re-tracked issue doesn't appear twice on the dashboard.
+        set({
+          healthIssues: existing.some((i) => i.id === issue.id)
+            ? existing.map((i) => (i.id === issue.id ? { ...issue, events: i.events } : i))
+            : [issue, ...existing],
+        });
+      },
+
+      receiveHealthRecord: (record) => {
+        set({
+          healthRecords: [record, ...get().healthRecords].sort(
+            (a, b) => b.occurredAt - a.occurredAt
+          ),
         });
       },
 
@@ -1051,6 +1256,9 @@ export const useStore = create<AppState>()(
     {
       name: "forgefit-store-v2",
       storage: createJSONStorage(() => resilientStorage),
+      // Explicit allowlist. Health/medical state is deliberately absent: it is
+      // fetched per session instead of cached on the device (see the comment on
+      // the health slice above).
       partialize: (s) => ({
         profile: s.profile,
         onboarded: s.onboarded,

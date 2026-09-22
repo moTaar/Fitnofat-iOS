@@ -121,6 +121,12 @@ session is revoked server-side. Refreshing still goes through Supabase.
   language, and proposes routine updates, grounded in the user's real recent history.
 - **Nutrition planning** re-scales with the training program — a program refresh
   regenerates the diet plan against the new metabolic demand.
+- **AI nutritionist + medical helper** (`POST /api/health/chat`) is the coach chat's
+  second desk. It answers against the user's own medical record, and can add to
+  that record from the conversation: `[ISSUE]` starts tracking something that needs
+  fixing, `[RECORD]` files a fact into the medical history. `POST /api/health/review`
+  compiles the whole record into a ranked worklist for the **Medical dashboard**.
+  See [Medical & health](#medical--health) for the safety and consent rules.
 - **Offline resilience** — the PWA caches the app shell (Workbox) and mirrors data
   to `localStorage`. The active workout (incl. rest-timer `endsAt`) survives a refresh.
   Workouts finished offline are queued with a `clientId` and **auto-synced** (idempotent
@@ -157,6 +163,10 @@ ever generated once across the whole user base.
 
 `GET /api/ai/usage` returns the caller's allowance and consumption for today.
 
+The medical routes are the one place all three layers stack: a burst limit, the
+`ai_medical` entitlement **and** a daily quota, because they run the priciest
+model over the largest context in the app.
+
 ## API surface
 ### Data API (`server/`, all under `/api`, auth required)
 | Method | Path | Purpose |
@@ -173,6 +183,12 @@ ever generated once across the whole user base.
 | POST | `/exercises/video` | remember the chosen demo (tallies the community default) |
 | POST | `/ai/chat` `/ai/coach` | onboarding chat / ongoing coaching |
 | POST/DELETE | `/workouts[/:id]` | save (bulk, idempotent) / delete history |
+| GET | `/health/overview` | health profile + tracked issues + medical history |
+| PUT/POST | `/health/profile` `/health/consent` | medical background / AI opt-in |
+| POST/PATCH/DELETE | `/health/issues[/:id]` | the "things to work on" tracker |
+| POST | `/health/issues/:id/events` | check-in or measurement on an issue |
+| POST/DELETE | `/health/records[/:id]` | medical history entries |
+| POST | `/health/review` `/health/chat` | AI health review / medical + nutrition chat |
 
 `/exercises/videos` is served from a global cache keyed on the exercise slug.
 A YouTube `search.list` costs 100 units of a default 10,000/day allocation — a
@@ -196,6 +212,66 @@ inside the browser's quota for long-time users.
 | POST | `/webhooks/stripe` | Stripe webhook (raw body, signature-verified) |
 | * | `/admin/*` | admin panel API, gated on `ADMIN_API_KEY` |
 
+## Medical & health
+The Medical tab and the coach chat's **Health** desk share one record, stored in
+the same database as everything else (`health_profile`, `health_issues`,
+`health_issue_events`, `health_records`). Four rules shape the design:
+
+**Consent gates the model, not the data.** The CRUD routes always work — it is the
+user's record, in the user's database. The two AI routes (`/health/review`,
+`/health/chat`) return 403 `medical_consent_required` until the user opts in,
+because those are the only paths that send health data to a model provider.
+Consent is a timestamp on `health_profile` and can be revoked from the Medical tab.
+
+**The model is pluggable and the fallback is visible.** `MEDICAL_AI_PROVIDER=auto`
+picks the first configured of **cloudrun → vertex → gemini**, and falls back down
+that chain per request when one fails (or when the turn carries a photo the
+text-only `:predict` contract can't take). Every reply reports the model that
+actually answered, so a fallback is never silent — `medgemma-1.5-4b-it (self-hosted)`
+in the chat footer means the medical model answered, `(Gemini)` means it didn't.
+
+**`cloudrun` is the option to reach for if you don't want a general model.**
+It points at any OpenAI-compatible server you host — vLLM, Ollama, TGI — so the
+weights and the inference both stay on infrastructure you control.
+[`wiki/MedGemma-Cloud-Run-Deployment.md`](wiki/MedGemma-Cloud-Run-Deployment.md) is a full runbook for
+MedGemma (Google's open-weights medical model) on Cloud Run with an L4 GPU:
+~$10–15/month because it scales to zero, authenticated with a Cloud Run ID token
+minted from the same service-account key Vertex uses.
+
+Running on Vertex is worth the setup even for a Gemini model: the request stays
+inside your own Google Cloud project, under your IAM and data-residency rules,
+instead of going to a shared API-key endpoint. Point `MEDICAL_AI_MODEL` at a
+medical-tuned publisher model if your project serves one — `usesPredictShape()`
+picks the request contract from the model id, so no code changes. Note that
+MedLM, the productized Med-PaLM 2 (`medlm-medium`/`medlm-large`), was
+[retired by Google on 2025-09-29](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/release-notes),
+which is why the default is a general Gemini model.
+
+Vertex needs OAuth rather than an API key; `server/src/vertex.ts` mints tokens
+from the service-account key directly, with no Google SDK. Two setup gotchas:
+the service account needs `roles/aiplatform.user` (**not** the Vertex AI Service
+Agent role, which is for Google's own service agents), and since Vertex AI was
+[renamed to Gemini Enterprise Agent Platform in April 2026](https://cloud.google.com/products/gemini-enterprise-agent-platform)
+searching the console API Library for "vertex" finds nothing — the service name
+is unchanged, so enable it directly at
+`console.cloud.google.com/apis/library/aiplatform.googleapis.com`.
+
+**Emergencies are screened for in code, not left to the model.** `detectRedFlags`
+runs over both the user's message and the model's reply; a hit prepends emergency
+guidance and marks the turn urgent regardless of what the model said — and still
+fires when the model call fails outright. The system prompt additionally forbids
+diagnosing, prescribing, and any dosing of prescription medication.
+
+**The AI never owns the tracker.** A review updates an issue's wording, plan and
+severity by reusing its `key`; `status` and `progress` stay user-owned, ticked
+steps stay ticked, metric readings survive a rewrite, and issues the user resolved
+or dismissed are never reopened. "This looks resolved" comes back as a suggestion
+the user confirms with one tap. The rules live in `reconcileIssues`
+(`server/src/medical.ts`) and are covered by `server/src/medical.test.ts`.
+
+Health data is also the one thing the web client does **not** mirror to
+`localStorage` — it is fetched per session and dropped on logout.
+
 ## Environment reference
 Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 
@@ -212,13 +288,26 @@ Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 | `QUOTA_PROGRAM_FREE` / `_PRO` | server | `3` / `30` | daily program generations |
 | `QUOTA_ONBOARD_FREE` / `_PRO` | server | `60` / `300` | daily onboarding chat turns |
 | `QUOTA_LOOKUP_FREE` / `_PRO` | server | `25` / `250` | daily food lookups |
+| `QUOTA_MEDICAL_FREE` / `_PRO` | server | `0` / `60` | daily medical AI calls (Pro-only feature) |
 | `BOOTSTRAP_HISTORY_DAYS` | server | `120` | history window returned on cold start |
+<<<<<<< HEAD
+| `MEDICAL_AI_PROVIDER` | server | `auto` | `auto` / `cloudrun` / `vertex` / `gemini` — who answers medical questions |
+| `MEDICAL_AI_BASE_URL` | server | — | self-hosted OpenAI-compatible endpoint, incl. `/v1` (turns on `cloudrun`) |
+| `MEDICAL_AI_SELF_HOSTED_MODEL` | server | `MEDICAL_AI_MODEL` | model name the self-hosted server expects |
+| `MEDICAL_AI_API_KEY` | server | — | static bearer for a self-hosted endpoint that isn't on Cloud Run |
+| `MEDICAL_AI_MODEL` | server | coach model | Vertex publisher model for the medical desk |
+| `MEDICAL_AI_GEMINI_MODEL` | server | coach model | model used when the medical desk runs on Gemini |
+| `MEDICAL_AI_TIMEOUT_MS` | server | `90000` | hard deadline on medical model calls |
+| `VERTEX_PROJECT_ID` / `VERTEX_LOCATION` | server | — / `us-central1` | Vertex AI project and region |
+| `VERTEX_SERVICE_ACCOUNT_JSON` | server | — | service-account key JSON (raw or base64) for Vertex OAuth |
+=======
 | `YOUTUBE_API_KEY` | server | — | YouTube Data API v3 key; unset disables the demo-video picker |
 | `YOUTUBE_DAILY_BUDGET` | server | `90` | **global** searches per UTC day (Google's hard ceiling is ~100) |
 | `YOUTUBE_CHANNEL_ALLOWLIST` | server | — | channel IDs promoted to the top of every result set |
 | `YOUTUBE_REGION` / `YOUTUBE_RELEVANCE_LANGUAGE` | server | `US` / `en` | search locale |
 | `YOUTUBE_CACHE_DAYS` | server | `180` | how long cached demo results stay fresh |
 | `YOUTUBE_RATE_LIMIT_MAX` | server | `12` | video requests per window per user |
+>>>>>>> origin/main
 
 ## Deploy to Render
 1. Push this repo to GitHub.

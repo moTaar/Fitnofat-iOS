@@ -167,3 +167,127 @@ export interface LoggedExercise {
   restSeconds: number;
   sets: LoggedSet[];
 }
+
+// ── Health / medical tracker contract ────────────────────────────────────────
+// Personal health data backing the AI nutritionist + medical helper and the
+// Medical dashboard. Mirrors web/src/lib/types.ts and the tables created in
+// supabase/migrations/add_medical.sql.
+
+export type HealthIssueCategory =
+  | "injury" | "pain" | "nutrition" | "metabolic" | "sleep"
+  | "stress" | "medical" | "lifestyle" | "other";
+export type HealthIssueStatus = "open" | "in_progress" | "monitoring" | "resolved" | "dismissed";
+export type HealthIssueSeverity = "low" | "moderate" | "high" | "urgent";
+export type HealthRecordKind =
+  | "symptom" | "condition" | "medication" | "allergy" | "injury"
+  | "surgery" | "lab" | "vitals" | "appointment" | "note";
+export type HealthEventKind = "note" | "check_in" | "status_change" | "measurement" | "ai_review";
+
+export interface Medication {
+  name: string;
+  dose?: string;
+  schedule?: string;
+}
+
+export interface HealthProfile {
+  aiConsentAt?: number;
+  conditions: string[];
+  allergies: string[];
+  medications: Medication[];
+  surgeries: string[];
+  familyHistory: string[];
+  bloodType?: string;
+  smoking?: string;
+  alcohol?: string;
+  sleepHours?: number;
+  stressLevel?: string;
+  notes?: string;
+  lastReviewAt?: number;
+  lastReviewSummary?: string;
+}
+
+/** One step of an issue's plan. `done` is user-owned — the AI never flips it. */
+export interface ActionStep {
+  step: string;
+  cadence?: string; // "daily", "3×/week", "once"
+  done?: boolean;
+}
+
+/** A number worth tracking for an issue (pain score, weight, BP…). */
+export interface IssueMetric {
+  label: string;
+  unit?: string;
+  target?: string;
+  latest?: number;
+  latestAt?: number;
+}
+
+export interface HealthIssue {
+  id: string;
+  key: string; // stable slug — how a re-review finds the issue it already made
+  title: string;
+  category: HealthIssueCategory;
+  status: HealthIssueStatus;
+  severity: HealthIssueSeverity;
+  progress: number; // 0..100
+  bodyRegion?: string;
+  summary?: string;
+  whyItMatters?: string;
+  actionPlan: ActionStep[];
+  metrics: IssueMetric[];
+  redFlags: string[];
+  source: "ai" | "user";
+  confidence?: "low" | "medium" | "high";
+  firstNoticedAt?: number;
+  targetDate?: string; // yyyy-mm-dd
+  resolvedAt?: number;
+  lastReviewedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+  events?: HealthIssueEvent[];
+}
+
+export interface HealthIssueEvent {
+  id: string;
+  issueId: string;
+  kind: HealthEventKind;
+  body?: string;
+  metric?: string;
+  value?: number;
+  unit?: string;
+  createdAt: number;
+}
+
+export interface HealthRecord {
+  id: string;
+  issueId?: string;
+  kind: HealthRecordKind;
+  title: string;
+  detail?: string;
+  occurredAt: number;
+  data: Record<string, unknown>;
+  source: "user" | "ai";
+  createdAt: number;
+}
+
+/** What the AI review proposes for one issue, before it is reconciled. */
+export interface AIHealthIssue {
+  key: string;
+  title: string;
+  category: HealthIssueCategory;
+  severity: HealthIssueSeverity;
+  summary: string;
+  whyItMatters?: string;
+  bodyRegion?: string;
+  actionPlan: ActionStep[];
+  metrics: IssueMetric[];
+  redFlags: string[];
+  confidence?: "low" | "medium" | "high";
+}
+
+export interface AIHealthReview {
+  summary: string;
+  issues: AIHealthIssue[];
+  /** Keys the model believes are resolved — surfaced, never auto-applied. */
+  resolvedKeys: string[];
+}

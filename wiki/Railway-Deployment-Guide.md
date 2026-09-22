@@ -150,6 +150,12 @@ error (see Troubleshooting).
    > Don't set `PORT` — Railway injects it automatically and the app already
    > reads `process.env.PORT`.
 
+   The AI nutritionist + medical helper needs nothing extra here: with only
+   `GEMINI_API_KEY` set it runs on Gemini. To point it at a medical-tuned model
+   instead, see
+   [MedGemma on Cloud Run](MedGemma-Cloud-Run-Deployment.md) and add the
+   `MEDICAL_AI_*` variables from step 15.
+
    You'll come back and fix `CORS_ORIGIN` to the real web app URL in step 8,
    once that URL exists.
 8. Deploy (Railway auto-deploys on the first save, and on every future
@@ -390,7 +396,16 @@ SUPABASE_SERVICE_ROLE_KEY=
 GEMINI_API_KEY=            # optional
 GEMINI_MODEL=gemini-3.6-flash   # optional
 CORS_ORIGIN=https://<web-domain>
+
+# Medical desk — all optional. Unset, it answers on GEMINI_MODEL.
+MEDICAL_AI_PROVIDER=auto              # auto | cloudrun | vertex | gemini
+MEDICAL_AI_BASE_URL=                  # self-hosted endpoint, incl. /v1
+MEDICAL_AI_SELF_HOSTED_MODEL=         # e.g. medgemma-1.5-4b-it
+VERTEX_SERVICE_ACCOUNT_JSON=          # also mints the Cloud Run ID token
 ```
+
+See [MedGemma on Cloud Run](MedGemma-Cloud-Run-Deployment.md) for what to put
+in those.
 
 **`accounts/`**
 ```

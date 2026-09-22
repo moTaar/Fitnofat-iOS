@@ -5,7 +5,7 @@ import type { Feature, Plan, Subscription } from "./types";
 
 const PLAN_FEATURES: Record<Plan, Feature[]> = {
   free: [],
-  pro: ["ai_coach", "ai_nutrition", "program_refresh", "ai_exercise"],
+  pro: ["ai_coach", "ai_nutrition", "program_refresh", "ai_exercise", "ai_medical"],
 };
 
 const LIVE_STATUSES = new Set(["active", "trialing", "past_due"]);
