@@ -26,7 +26,7 @@ import {
 } from "../mappers";
 import {
   activeProvider, medicalChat, MEDICAL_DISCLAIMER, modelLabel, reconcileIssues, reviewHealth,
-  type AIHealthRecordDraft, type HealthContext,
+  warmSelfHosted, type AIHealthRecordDraft, type HealthContext,
 } from "../medical";
 import type { ChatMessage } from "../gemini";
 import type {
@@ -715,6 +715,27 @@ healthRouter.delete(
       .from("health_records").delete().eq("id", req.params.id).eq("user_id", userId);
     if (error) throw new Error(error.message);
     res.status(204).end();
+  })
+);
+
+// ── POST /warm : wake a scaled-to-zero self-hosted model ─────────────────────
+// A GPU instance that has scaled to zero takes 1-2 minutes to load the model,
+// which is longer than anyone will wait staring at a chat box. The client calls
+// this the moment the user opens the health desk, so the boot overlaps with them
+// typing their question instead of following it.
+//
+// Metered (`aiLimiter`) and Pro-gated, because a spin-up costs real GPU time
+// even though it runs no inference — an open warm endpoint is a free way to
+// bill someone else's graphics card. It carries NO consent gate, unlike every
+// other route here: it sends nothing whatsoever about the user.
+healthRouter.post(
+  "/warm",
+  aiLimiter,
+  requireEntitlement("ai_medical"),
+  asyncHandler(async (_req, res) => {
+    const status = await warmSelfHosted();
+    const provider = activeProvider();
+    res.json({ status, model: modelLabel(provider), provider });
   })
 );
 

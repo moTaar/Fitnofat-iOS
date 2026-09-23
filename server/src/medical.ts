@@ -383,6 +383,44 @@ export async function askMedical(system: string, opts: AskOptions = {}): Promise
   return { text, provider, model: modelLabel(provider) };
 }
 
+export type WarmStatus = "ready" | "warming" | "unavailable";
+
+/**
+ * Nudges a scaled-to-zero self-hosted model awake, and reports whether it is
+ * already serving.
+ *
+ * Deliberately cheap and deliberately impatient: it asks `/v1/models`, which
+ * runs no inference, and gives up listening after `medicalWarmProbeMs`. Giving
+ * up does not cancel anything — the request has already reached Cloud Run, which
+ * starts an instance regardless of whether we wait for the reply. So a
+ * "warming" answer means the boot is underway, not that nothing happened.
+ *
+ * Sends nothing about the user, which is why the route that calls this needs no
+ * consent gate.
+ */
+export async function warmSelfHosted(): Promise<WarmStatus> {
+  if (activeProvider() !== "cloudrun") return "unavailable";
+  const base = config.medicalBaseUrl;
+  if (!base) return "unavailable";
+
+  try {
+    const headers: Record<string, string> = {};
+    if (config.medicalApiKey) {
+      headers.Authorization = `Bearer ${config.medicalApiKey}`;
+    } else {
+      headers.Authorization = `Bearer ${await googleIdToken(base.replace(/\/v\d+$/, ""))}`;
+    }
+    const res = await fetch(`${base}/models`, {
+      headers,
+      signal: AbortSignal.timeout(config.medicalWarmProbeMs),
+    });
+    return res.ok ? "ready" : "warming";
+  } catch {
+    // Timeout, socket error, cold-start 429 — all mean "not serving yet".
+    return "warming";
+  }
+}
+
 // ── Safety layer ─────────────────────────────────────────────────────────────
 
 export const MEDICAL_DISCLAIMER =

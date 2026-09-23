@@ -20,6 +20,12 @@ RUN --mount=type=secret,id=HF_TOKEN \
 # Nothing to fetch at runtime — fail loudly rather than reaching for the network.
 ENV HF_HUB_OFFLINE=1
 
+# --enforce-eager skips CUDA graph capture at startup. That capture is a large
+# slice of the cold start, and on a service that scales to zero the start time is
+# felt on every first question — while the throughput it buys back only matters
+# under concurrent load this service never sees. Drop the flag if you ever run
+# this warm and busy.
+#
 # Cloud Run injects $PORT; shell form so it expands.
 # --served-model-name is what the app sends as `model` in the request body:
 # it must match MEDICAL_AI_SELF_HOSTED_MODEL on the API service.
@@ -28,4 +34,5 @@ ENTRYPOINT python3 -m vllm.entrypoints.openai.api_server \
   --served-model-name medgemma-1.5-4b-it \
   --host 0.0.0.0 --port ${PORT:-8080} \
   --max-model-len 8192 \
-  --gpu-memory-utilization 0.90
+  --gpu-memory-utilization 0.90 \
+  --enforce-eager

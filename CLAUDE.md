@@ -125,6 +125,23 @@ mean the console API Library has no "Vertex AI API" entry to search for.
 runs on the user's message *and* the model's reply, and still fires when the model
 call fails. Widening `RED_FLAGS` is cheap; a miss is not.
 
+**Timeouts have to clear a cold start, at both ends.** A self-hosted medical
+model that has scaled to zero takes 1-2 minutes to load. `MEDICAL_AI_TIMEOUT_MS`
+defaults to 180s and the web client uses `MEDICAL_REQUEST_TIMEOUT_MS` (180s) for
+the health routes only — the training coach keeps the 60s
+`AI_REQUEST_TIMEOUT_MS`, since it talks to an always-warm hosted model. Lower
+either below a cold start and the first question of the day silently falls back
+to Gemini, or aborts in the browser while the server is still happily working.
+
+**Warm on intent, never on app start.** `POST /health/warm` is called when the
+health desk opens, so the boot overlaps with typing. Do not move this to app
+launch or a timer: Cloud Run bills instance lifetime, so frequent pinging stops
+the instance ever scaling to zero and silently costs `--min-instances=1` money
+without the reliability of having chosen it. The route is deliberately the one
+medical route with no consent gate — it runs no inference and sends nothing
+about the user — but it keeps `aiLimiter` and the entitlement, because a
+spin-up costs GPU time.
+
 **Rules are the user's list, not the AI's.** `upsertAiRules` in
 `routes/health.ts` may refresh a rule the AI wrote under the same `(user_id,
 key)`, but skips any rule with `user_edited` set or `status = 'archived'` —

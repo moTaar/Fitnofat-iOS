@@ -92,8 +92,16 @@ export const config = {
   medicalModel: process.env.MEDICAL_AI_MODEL ?? COACH_MODEL,
   // Model used when the request runs on the Gemini provider.
   medicalGeminiModel: process.env.MEDICAL_AI_GEMINI_MODEL ?? COACH_MODEL,
-  // Medical answers are longer and reasoned; give them the coach's budget.
-  medicalTimeoutMs: num("MEDICAL_AI_TIMEOUT_MS", 90_000),
+  // Medical answers are longer and reasoned, and a self-hosted model that has
+  // scaled to zero needs 1-2 minutes to load before it answers at all. 90s was
+  // shorter than a cold start, so the first question of the day fell back to
+  // Gemini every time.
+  medicalTimeoutMs: num("MEDICAL_AI_TIMEOUT_MS", 180_000),
+  // How long the warm-up probe waits before reporting "still warming". It only
+  // needs to TRIGGER the container start — Cloud Run keeps booting whether or
+  // not we are still listening — so this stays short enough to answer the
+  // client immediately.
+  medicalWarmProbeMs: num("MEDICAL_AI_WARM_PROBE_MS", 8_000),
 
   // Vertex AI credentials. `VERTEX_SERVICE_ACCOUNT_JSON` takes the key JSON
   // inline (raw or base64); `GOOGLE_APPLICATION_CREDENTIALS` points at a file.

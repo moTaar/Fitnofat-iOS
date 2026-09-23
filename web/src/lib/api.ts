@@ -102,6 +102,12 @@ const REQUEST_TIMEOUT_MS = 15_000;
 // routinely takes longer than a normal CRUD round trip — give them more room
 // before the client gives up on them.
 const AI_REQUEST_TIMEOUT_MS = 60_000;
+// The medical desk can be answered by a self-hosted model that scales to zero,
+// where a cold start alone is 1-2 minutes. At 60s the browser would abort a
+// request the server was still handling perfectly well, and the user would see
+// an error for a reply that then arrived nowhere. Only the health routes get
+// this — the training coach talks to an always-warm hosted model.
+const MEDICAL_REQUEST_TIMEOUT_MS = 180_000;
 
 async function rawRequest(
   base: string,
@@ -517,12 +523,23 @@ export const api = {
   deleteHealthRecord: (id: string) =>
     request<void>(`/api/health/records/${id}`, { method: "DELETE" }),
 
+  /**
+   * Wakes a self-hosted medical model that has scaled to zero. Cheap, runs no
+   * inference, and returns immediately with "warming" if the boot is underway.
+   */
+  warmMedical: () =>
+    request<{ status: "ready" | "warming" | "unavailable"; model: string; provider: string }>(
+      "/api/health/warm",
+      { method: "POST" },
+      true, API_BASE, 20_000
+    ),
+
   /** Re-runs the medical review and folds the result into the tracked issues. */
   reviewHealth: () =>
     request<HealthReviewResult>(
       "/api/health/review",
       { method: "POST" },
-      true, API_BASE, AI_REQUEST_TIMEOUT_MS
+      true, API_BASE, MEDICAL_REQUEST_TIMEOUT_MS
     ),
 
   medicalChat: (
@@ -535,6 +552,6 @@ export const api = {
     request<MedicalChatReply>(
       "/api/health/chat",
       { method: "POST", body: JSON.stringify({ messages }) },
-      true, API_BASE, AI_REQUEST_TIMEOUT_MS
+      true, API_BASE, MEDICAL_REQUEST_TIMEOUT_MS
     ),
 };

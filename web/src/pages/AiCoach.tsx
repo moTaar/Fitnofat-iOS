@@ -103,6 +103,8 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
   const receiveHealthIssue = useStore((s) => s.receiveHealthIssue);
   const receiveHealthRecord = useStore((s) => s.receiveHealthRecord);
   const receiveHealthRules = useStore((s) => s.receiveHealthRules);
+  const warmMedical = useStore((s) => s.warmMedical);
+  const medicalWarm = useStore((s) => s.medicalWarm);
 
   // Coach mode for onboarded users; onboarding interview otherwise (or when
   // explicitly restarted from Settings via ?restart=1).
@@ -143,9 +145,15 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
 
   // The health desk needs to know whether consent has been given before the
   // first message, so the opt-in can be shown up front rather than as an error.
+  //
+  // Switching here also starts waking a self-hosted model, so its 1-2 minute
+  // cold start overlaps with the user typing rather than following it. It is a
+  // no-op when the model is hosted (nothing to wake) or already up.
   useEffect(() => {
-    if (desk === "health") void loadHealth();
-  }, [desk, loadHealth]);
+    if (desk !== "health") return;
+    void loadHealth();
+    warmMedical();
+  }, [desk, loadHealth, warmMedical]);
 
   useEffect(() => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
@@ -831,6 +839,16 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Waking the self-hosted model. Not an error, and not blocking: the user
+          can type and send — the request simply waits for the model. */}
+      {coachMode && desk === "health" && medicalWarm === "warming" && (
+        <div className="flex items-center gap-2 pt-2 text-[11px] text-muted-foreground">
+          <Spinner className="h-3 w-3" />
+          Waking {medicalAi?.model ?? "the medical model"} — the first answer after a
+          quiet spell takes a minute.
         </div>
       )}
 

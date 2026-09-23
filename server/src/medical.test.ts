@@ -7,7 +7,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import { config } from "./config";
-import { __medical, activeProvider, EMERGENCY_NOTICE, modelLabel } from "./medical";
+import { __medical, activeProvider, EMERGENCY_NOTICE, modelLabel, warmSelfHosted } from "./medical";
 import type { AIHealthReview, HealthIssue, HealthProfile, UserProfile } from "./types";
 
 const {
@@ -488,6 +488,15 @@ describe("provider selection", () => {
     config.medicalBaseUrl = "";
     config.geminiApiKey = "key";
     expect(activeProvider()).toBe("none");
+  });
+
+  it("has nothing to warm unless a self-hosted model is what would answer", async () => {
+    config.medicalProvider = "gemini";
+    config.medicalBaseUrl = "";
+    config.geminiApiKey = "key";
+    // A hosted model is always warm, so the client is told there is nothing to
+    // wait for rather than being shown a spinner that would never resolve.
+    await expect(warmSelfHosted()).resolves.toBe("unavailable");
   });
 
   it("labels a self-hosted answer as such, so a fallback is visible", () => {
