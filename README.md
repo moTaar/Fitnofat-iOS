@@ -197,6 +197,7 @@ model over the largest context in the app.
 | POST/DELETE | `/health/records[/:id]` | medical history entries |
 | POST/PATCH/DELETE | `/health/rules[/:id]` | the do & don't list |
 | POST | `/health/review` `/health/chat` | AI health review / medical + nutrition chat |
+| POST | `/health/warm` | wake a scaled-to-zero self-hosted model |
 
 `/exercises/videos` is served from a global cache keyed on the exercise slug.
 A YouTube `search.list` costs 100 units of a default 10,000/day allocation — a
@@ -283,6 +284,17 @@ or dismissed are never reopened. "This looks resolved" comes back as a suggestio
 the user confirms with one tap. The rules live in `reconcileIssues`
 (`server/src/medical.ts`) and are covered by `server/src/medical.test.ts`.
 
+**A self-hosted model is woken before it is needed.** A Cloud Run GPU that has
+scaled to zero takes 1–2 minutes to load, which is longer than anyone will wait
+at a chat box. Opening the health desk (or the Medical tab, once the AI is
+usable) calls `POST /health/warm`, so the boot overlaps with the user typing
+instead of following it. That route runs no inference and sends nothing about
+the user — so unlike every other route here it carries no consent gate — but it
+does cost GPU time, so it is rate-limited and Pro-gated. Warming is per-visit by
+design: pinging from app start would keep the instance from ever sleeping and
+quietly cost `--min-instances=1` money (~$480/month) without the reliability of
+having chosen it.
+
 Health data is also the one thing the web client does **not** mirror to
 `localStorage` — it is fetched per session and dropped on logout.
 
@@ -310,7 +322,8 @@ Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 | `MEDICAL_AI_API_KEY` | server | — | static bearer for a self-hosted endpoint that isn't on Cloud Run |
 | `MEDICAL_AI_MODEL` | server | coach model | Vertex publisher model for the medical desk |
 | `MEDICAL_AI_GEMINI_MODEL` | server | coach model | model used when the medical desk runs on Gemini |
-| `MEDICAL_AI_TIMEOUT_MS` | server | `90000` | hard deadline on medical model calls |
+| `MEDICAL_AI_TIMEOUT_MS` | server | `180000` | hard deadline on medical model calls (must exceed a cold start) |
+| `MEDICAL_AI_WARM_PROBE_MS` | server | `8000` | how long `/health/warm` waits before reporting "warming" |
 | `VERTEX_PROJECT_ID` / `VERTEX_LOCATION` | server | — / `us-central1` | Vertex AI project and region |
 | `VERTEX_SERVICE_ACCOUNT_JSON` | server | — | service-account key JSON (raw or base64) for Vertex OAuth |
 | `YOUTUBE_API_KEY` | server | — | YouTube Data API v3 key; unset disables the demo-video picker |

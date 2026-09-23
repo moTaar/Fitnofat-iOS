@@ -756,17 +756,25 @@ curl -s https://<your-api>.onrender.com/health
 therefore fails in the browser while the server call is still healthy — the user
 sees an error on a request that was fine.
 
-Three options, cheapest first:
+**This is already handled** — three ways, all in the app:
 
-1. **Raise the client timeout** for health routes (edit that constant, or give
-   `medicalChat`/`reviewHealth` their own). Costs nothing.
-2. **Warn instead of hanging** — the chat already shows a typing bubble; a "first
-   answer of the day takes a minute" note sets the expectation honestly.
-3. **`--min-instances=1`** — kills cold starts and the ~$10/month price tag
-   along with them. Only if this becomes a product, not a personal app.
+1. `MEDICAL_REQUEST_TIMEOUT_MS` (180s) is used for the health routes, replacing
+   the 60s the training coach uses. `MEDICAL_AI_TIMEOUT_MS` matches it server-side.
+2. **The model is woken on intent.** Opening the health desk calls
+   `POST /api/health/warm`, so the boot overlaps with the user typing. The chat
+   shows "Waking … — the first answer after a quiet spell takes a minute" while
+   that runs, and stays usable throughout.
+3. The image runs vLLM with `--enforce-eager`, skipping CUDA graph capture at
+   startup — a meaningful slice of the cold start, for throughput this service
+   never needs.
+
+If it still bothers you, `--min-instances=1` removes cold starts entirely and
+the ~$10/month price tag along with them. Only worth it if this becomes a
+product rather than a personal app.
 
 Do not paper over it with a Cloud Scheduler ping every few minutes: each ping
 restarts the idle timer, so you pay nearly the full 24/7 rate for the privilege.
+That is the same trap as warming from app start rather than on intent.
 
 ---
 

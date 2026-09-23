@@ -82,6 +82,8 @@ export function HealthDashboard() {
   const loadHealth = useStore((s) => s.loadHealth);
   const setHealthConsent = useStore((s) => s.setHealthConsent);
   const runHealthReview = useStore((s) => s.runHealthReview);
+  const warmMedical = useStore((s) => s.warmMedical);
+  const medicalWarm = useStore((s) => s.medicalWarm);
   const updateHealthIssue = useStore((s) => s.updateHealthIssue);
 
   const [tab, setTab] = useState<Tab>("issues");
@@ -97,6 +99,14 @@ export function HealthDashboard() {
   useEffect(() => {
     void loadHealth();
   }, [loadHealth]);
+
+  // Start waking a self-hosted model as soon as the tab opens, so "Review" —
+  // the most expensive call in the app — isn't the thing that pays the cold
+  // start. Only once the AI is actually usable, so reading your own rules on a
+  // free plan never spins up a GPU.
+  useEffect(() => {
+    if (entitled && consented) warmMedical();
+  }, [entitled, consented, warmMedical]);
 
   const visible = useMemo(() => {
     const list = issues.filter((i) =>
@@ -176,7 +186,7 @@ export function HealthDashboard() {
           title={consented ? "Re-run the AI health review" : "Turn on AI health analysis first"}
         >
           {reviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          Review
+          {reviewing && medicalWarm === "warming" ? "Waking…" : "Review"}
         </Button>
       </div>
 
