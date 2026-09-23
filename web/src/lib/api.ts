@@ -4,7 +4,7 @@
 
 import type {
   Exercise, ExerciseVideo, FoodLookupResult, HealthIssue, HealthIssueEvent,
-  HealthProfile, HealthRecord, MedicalAiStatus, NutritionPlan, Plan, PlanInfo,
+  HealthProfile, HealthRecord, HealthRule, MedicalAiStatus, NutritionPlan, Plan, PlanInfo,
   Program, Routine, Subscription, UserProfile, WorkoutSession,
 } from "./types";
 
@@ -217,6 +217,7 @@ export interface HealthOverview {
   health: HealthProfile;
   issues: HealthIssue[];
   records: HealthRecord[];
+  rules: HealthRule[];
   ai: MedicalAiStatus;
 }
 
@@ -231,10 +232,21 @@ export interface HealthReviewResult {
   disclaimer: string;
 }
 
+// `rules` can ride along with any reply type — the chat may set standing
+// do/don't rules while also tracking an issue or filing a record.
+interface MedicalReplyCommon {
+  text: string;
+  urgent: boolean;
+  redFlags: string[];
+  model: string;
+  disclaimer: string;
+  rules?: HealthRule[];
+}
+
 export type MedicalChatReply =
-  | { type: "message"; text: string; suggestions?: string[]; urgent: boolean; redFlags: string[]; model: string; disclaimer: string }
-  | { type: "issue"; text: string; issue: HealthIssue; urgent: boolean; redFlags: string[]; model: string; disclaimer: string }
-  | { type: "record"; text: string; record: HealthRecord; urgent: boolean; redFlags: string[]; model: string; disclaimer: string };
+  | ({ type: "message"; suggestions?: string[] } & MedicalReplyCommon)
+  | ({ type: "issue"; issue: HealthIssue } & MedicalReplyCommon)
+  | ({ type: "record"; record: HealthRecord } & MedicalReplyCommon);
 
 export const api = {
   // auth — served by the accounts microservice
@@ -475,6 +487,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify(event),
     }),
+
+  createHealthRule: (rule: {
+    subject: string;
+    domain?: HealthRule["domain"];
+    direction?: HealthRule["direction"];
+    detail?: string;
+    reason?: string;
+  }) => request<HealthRule>("/api/health/rules", { method: "POST", body: JSON.stringify(rule) }),
+
+  updateHealthRule: (id: string, patch: Partial<HealthRule>) =>
+    request<HealthRule>(`/api/health/rules/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+
+  deleteHealthRule: (id: string) =>
+    request<void>(`/api/health/rules/${id}`, { method: "DELETE" }),
 
   createHealthRecord: (record: {
     kind?: HealthRecord["kind"];

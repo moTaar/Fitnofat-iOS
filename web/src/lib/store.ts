@@ -3,7 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { format } from "date-fns";
 import type {
   ActiveWorkout, Cuisine, EquipmentPrefCategory, EquipmentPreference, Exercise,
-  FoodLookupResult, HealthIssue, HealthIssueEvent, HealthProfile, HealthRecord,
+  FoodLookupResult, HealthIssue, HealthIssueEvent, HealthProfile, HealthRecord, HealthRule,
   LoggedExercise, LoggedFood, MedicalAiStatus, NutritionLog, NutritionPlan,
   Program, RepSensitivity, Routine, Subscription, UserProfile, WorkoutSession,
 } from "./types";
@@ -72,6 +72,7 @@ interface AppState {
   health: HealthProfile | null;
   healthIssues: HealthIssue[];
   healthRecords: HealthRecord[];
+  healthRules: HealthRule[];
   medicalAi: MedicalAiStatus | null;
   healthLoaded: boolean;
   healthLoading: boolean;
@@ -133,9 +134,19 @@ interface AppState {
     occurredAt?: number;
   }) => Promise<void>;
   deleteHealthRecord: (id: string) => Promise<void>;
+  createHealthRule: (rule: {
+    subject: string;
+    domain?: HealthRule["domain"];
+    direction?: HealthRule["direction"];
+    detail?: string;
+    reason?: string;
+  }) => Promise<void>;
+  updateHealthRule: (id: string, patch: Partial<HealthRule>) => Promise<void>;
+  deleteHealthRule: (id: string) => Promise<void>;
   // Merge something the health chat just created server-side.
   receiveHealthIssue: (issue: HealthIssue) => void;
   receiveHealthRecord: (record: HealthRecord) => void;
+  receiveHealthRules: (rules: HealthRule[]) => void;
 
   // routines
   saveRoutine: (input: {
@@ -354,6 +365,7 @@ export const useStore = create<AppState>()(
       health: null,
       healthIssues: [],
       healthRecords: [],
+      healthRules: [],
       medicalAi: null,
       healthLoaded: false,
       healthLoading: false,
@@ -395,6 +407,7 @@ export const useStore = create<AppState>()(
           health: null,
           healthIssues: [],
           healthRecords: [],
+          healthRules: [],
           medicalAi: null,
           healthLoaded: false,
         });
@@ -647,6 +660,7 @@ export const useStore = create<AppState>()(
             health: data.health,
             healthIssues: data.issues,
             healthRecords: data.records,
+            healthRules: data.rules ?? [],
             medicalAi: data.ai,
             healthLoaded: true,
           });
@@ -762,6 +776,48 @@ export const useStore = create<AppState>()(
           set({ healthRecords: prev });
           toast.error(e instanceof Error ? e.message : "Couldn't delete that entry.");
         }
+      },
+
+      createHealthRule: async (rule) => {
+        const created = await api.createHealthRule(rule);
+        set({ healthRules: [created, ...get().healthRules] });
+      },
+
+      updateHealthRule: async (id, patch) => {
+        const prev = get().healthRules;
+        // Optimistic: flipping a direction or pausing a rule should feel instant.
+        set({ healthRules: prev.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+        try {
+          const saved = await api.updateHealthRule(id, patch);
+          set({ healthRules: get().healthRules.map((r) => (r.id === id ? saved : r)) });
+        } catch (e) {
+          set({ healthRules: prev });
+          toast.error(e instanceof Error ? e.message : "Couldn't save that change.");
+          throw e;
+        }
+      },
+
+      deleteHealthRule: async (id) => {
+        const prev = get().healthRules;
+        set({ healthRules: prev.filter((r) => r.id !== id) });
+        try {
+          await api.deleteHealthRule(id);
+        } catch (e) {
+          set({ healthRules: prev });
+          toast.error(e instanceof Error ? e.message : "Couldn't delete that rule.");
+        }
+      },
+
+      receiveHealthRules: (rules) => {
+        if (!rules.length) return;
+        // The chat may have rewritten rules it wrote earlier, so match on id and
+        // replace rather than append — otherwise the list grows a near-duplicate
+        // every time the same advice is refined.
+        const byId = new Map(get().healthRules.map((r) => [r.id, r]));
+        for (const rule of rules) byId.set(rule.id, rule);
+        set({
+          healthRules: [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt),
+        });
       },
 
       receiveHealthIssue: (issue) => {

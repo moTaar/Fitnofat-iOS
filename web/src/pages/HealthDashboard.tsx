@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Activity, AlertTriangle, CalendarClock, Check, ChevronDown, ClipboardList,
-  HeartPulse, Loader2, Lock, Plus, RefreshCw, ShieldCheck, Stethoscope, Trash2, X,
+  Activity, AlertTriangle, ArrowDown, ArrowUp, Ban, CalendarClock, Check, ChevronDown,
+  ClipboardList, CircleCheck, HeartPulse, Loader2, Lock, PlayCircle, Plus, RefreshCw,
+  ShieldCheck, Stethoscope, Trash2, X,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useStore } from "@/lib/store";
@@ -10,6 +11,7 @@ import { isEntitled } from "@/lib/entitlements";
 import { UpgradeRequiredError } from "@/lib/api";
 import type {
   HealthIssue, HealthIssueCategory, HealthIssueSeverity, HealthIssueStatus, HealthRecordKind,
+  HealthRule, RuleDirection, RuleDomain,
 } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -48,13 +50,31 @@ const RECORD_KINDS: HealthRecordKind[] = [
 const dateLabel = (ms: number) =>
   new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 
-type Tab = "issues" | "history" | "background";
+// The five directions, in the order they're shown. Avoid first: the list is
+// most useful when the hard stops are the first thing you see.
+const DIRECTIONS: RuleDirection[] = ["avoid", "less", "more", "start", "keep"];
+
+const DIRECTION_META: Record<
+  RuleDirection,
+  { label: string; icon: typeof Ban; chip: string; dot: string }
+> = {
+  avoid:  { label: "Avoid",      icon: Ban,         chip: "border-destructive/40 bg-destructive/10 text-destructive", dot: "bg-destructive" },
+  less:   { label: "Less",       icon: ArrowDown,   chip: "border-amber-500/40 bg-amber-500/10 text-amber-500",       dot: "bg-amber-500" },
+  more:   { label: "More",       icon: ArrowUp,     chip: "border-success/40 bg-success/10 text-success",             dot: "bg-success" },
+  start:  { label: "Start",      icon: PlayCircle,  chip: "border-sky-500/40 bg-sky-500/10 text-sky-500",             dot: "bg-sky-500" },
+  keep:   { label: "Keep doing", icon: CircleCheck, chip: "border-border bg-secondary text-muted-foreground",         dot: "bg-muted-foreground" },
+};
+
+const DOMAINS: RuleDomain[] = ["nutrition", "physical", "medical", "lifestyle"];
+
+type Tab = "issues" | "rules" | "history" | "background";
 
 export function HealthDashboard() {
   const navigate = useNavigate();
   const health = useStore((s) => s.health);
   const issues = useStore((s) => s.healthIssues);
   const records = useStore((s) => s.healthRecords);
+  const rules = useStore((s) => s.healthRules);
   const ai = useStore((s) => s.medicalAi);
   const loading = useStore((s) => s.healthLoading);
   const loaded = useStore((s) => s.healthLoaded);
@@ -88,6 +108,7 @@ export function HealthDashboard() {
   }, [issues, showResolved]);
 
   const openCount = issues.filter((i) => OPEN_STATUSES.includes(i.status)).length;
+  const activeRules = rules.filter((r) => r.status === "active").length;
   const urgent = issues.filter((i) => i.severity === "urgent" && OPEN_STATUSES.includes(i.status));
 
   const handleReview = async () => {
@@ -143,6 +164,7 @@ export function HealthDashboard() {
             <h1 className="text-lg font-extrabold leading-tight tracking-tight">Medical</h1>
             <p className="text-xs text-muted-foreground">
               {openCount} thing{openCount === 1 ? "" : "s"} to work on
+              {activeRules ? ` · ${activeRules} rule${activeRules === 1 ? "" : "s"}` : ""}
               {health?.lastReviewAt ? ` · reviewed ${dateLabel(health.lastReviewAt)}` : ""}
             </p>
           </div>
@@ -257,9 +279,10 @@ export function HealthDashboard() {
       )}
 
       {/* Tabs */}
-      <div className="grid grid-cols-3 gap-1 rounded-xl bg-secondary p-1">
+      <div className="grid grid-cols-4 gap-1 rounded-xl bg-secondary p-1">
         {([
           ["issues", "To work on"],
+          ["rules", "Do & Don't"],
           ["history", "History"],
           ["background", "Background"],
         ] as [Tab, string][]).map(([value, label]) => (
@@ -309,6 +332,7 @@ export function HealthDashboard() {
         </div>
       )}
 
+      {tab === "rules" && <RulesTab />}
       {tab === "history" && <HistoryTab />}
       {tab === "background" && <BackgroundTab onRevokeConsent={() => handleConsent(false)} />}
 
@@ -584,6 +608,340 @@ function IssueCard({ issue }: { issue: HealthIssue }) {
         </CardContent>
       )}
     </Card>
+  );
+}
+
+// ── Do & Don't ───────────────────────────────────────────────────────────────
+// The standing rules the health chat has distilled, grouped by what to do about
+// them. Everything here is editable: the AI writes a rule, you own it the moment
+// you touch it (`userEdited`), and after that the AI stops rewriting that one.
+function RulesTab() {
+  const rules = useStore((s) => s.healthRules);
+  const [domain, setDomain] = useState<RuleDomain | "all">("all");
+  const [showArchived, setShowArchived] = useState(false);
+  const [adding, setAdding] = useState(false);
+
+  const visible = useMemo(() => {
+    return rules.filter((r) => {
+      if (showArchived ? r.status !== "archived" : r.status === "archived") return false;
+      return domain === "all" || r.domain === domain;
+    });
+  }, [rules, domain, showArchived]);
+
+  const grouped = useMemo(
+    () => DIRECTIONS.map((d) => [d, visible.filter((r) => r.direction === d)] as const)
+      .filter(([, list]) => list.length > 0),
+    [visible]
+  );
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-1.5">
+          {(["all", ...DOMAINS] as const).map((d) => (
+            <button
+              key={d}
+              onClick={() => setDomain(d)}
+              className={cn(
+                "rounded-full border px-2.5 py-1 text-[11px] font-medium tap",
+                domain === d
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border text-muted-foreground"
+              )}
+            >
+              {d}
+            </button>
+          ))}
+        </div>
+        <Button size="sm" variant="outline" onClick={() => setAdding(true)} className="shrink-0">
+          <Plus className="h-4 w-4" />
+          Add
+        </Button>
+      </div>
+
+      <button
+        onClick={() => setShowArchived((v) => !v)}
+        className="text-xs font-medium text-muted-foreground tap hover:text-foreground"
+      >
+        {showArchived ? "← Show active" : "Show archived →"}
+      </button>
+
+      {grouped.length === 0 ? (
+        <EmptyState
+          icon={<ClipboardList className="h-6 w-6" />}
+          title={showArchived ? "Nothing archived" : "No rules yet"}
+          description={
+            showArchived
+              ? "Rules you archive land here, and the AI won't bring them back."
+              : "Talk to the health desk about a symptom or your diet — what it works out lands here automatically. You can also add rules yourself."
+          }
+        />
+      ) : (
+        grouped.map(([direction, list]) => {
+          const meta = DIRECTION_META[direction];
+          const Icon = meta.icon;
+          return (
+            <div key={direction} className="space-y-2">
+              <div className="flex items-center gap-2 pt-1">
+                <span className={cn("flex h-6 w-6 items-center justify-center rounded-lg", meta.chip)}>
+                  <Icon className="h-3.5 w-3.5" />
+                </span>
+                <h2 className="text-sm font-bold tracking-tight">{meta.label}</h2>
+                <span className="text-xs text-muted-foreground">{list.length}</span>
+              </div>
+              {list.map((rule) => (
+                <RuleCard key={rule.id} rule={rule} />
+              ))}
+            </div>
+          );
+        })
+      )}
+
+      <AddRuleModal open={adding} onClose={() => setAdding(false)} />
+    </div>
+  );
+}
+
+function RuleCard({ rule }: { rule: HealthRule }) {
+  const updateHealthRule = useStore((s) => s.updateHealthRule);
+  const deleteHealthRule = useStore((s) => s.deleteHealthRule);
+
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [subject, setSubject] = useState(rule.subject);
+  const [detail, setDetail] = useState(rule.detail ?? "");
+
+  const meta = DIRECTION_META[rule.direction];
+
+  const save = async () => {
+    if (!subject.trim()) return;
+    await updateHealthRule(rule.id, {
+      subject: subject.trim(),
+      detail: detail.trim() || undefined,
+    });
+    setEditing(false);
+  };
+
+  return (
+    <Card className={cn(rule.status === "paused" && "opacity-60")}>
+      <button onClick={() => setOpen((v) => !v)} className="w-full p-3 text-left tap">
+        <div className="flex items-start gap-2.5">
+          <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", meta.dot)} />
+          <div className="min-w-0 flex-1">
+            <p className="font-medium leading-tight">{rule.subject}</p>
+            {rule.detail && (
+              <p className={cn("mt-0.5 text-sm text-muted-foreground", !open && "line-clamp-1")}>
+                {rule.detail}
+              </p>
+            )}
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <Badge variant="muted">{rule.domain}</Badge>
+              {rule.status === "paused" && <Badge variant="outline">paused</Badge>}
+              {rule.source === "ai" && !rule.userEdited && <Badge variant="outline">AI</Badge>}
+              {rule.userEdited && <Badge variant="outline">yours</Badge>}
+            </div>
+          </div>
+          <ChevronDown
+            className={cn(
+              "mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+              open && "rotate-180"
+            )}
+          />
+        </div>
+      </button>
+
+      {open && (
+        <CardContent className="space-y-3 border-t border-border p-3">
+          {rule.reason && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Why
+              </p>
+              <p className="mt-1 text-sm leading-relaxed">{rule.reason}</p>
+            </div>
+          )}
+
+          {editing ? (
+            <div className="space-y-2">
+              <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
+              <textarea
+                value={detail}
+                onChange={(e) => setDetail(e.target.value)}
+                rows={2}
+                placeholder="The specifics — how much, when, what instead"
+                className="w-full rounded-xl border border-input bg-background px-3 py-2 text-base placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+              <div className="flex gap-2">
+                <Button size="sm" onClick={save} disabled={!subject.trim()}>
+                  <Check className="h-4 w-4" />
+                  Save
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setEditing(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+              Edit wording
+            </Button>
+          )}
+
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Change to
+            </p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {DIRECTIONS.map((d) => (
+                <button
+                  key={d}
+                  onClick={() => void updateHealthRule(rule.id, { direction: d })}
+                  className={cn(
+                    "rounded-full border px-2.5 py-1 text-[11px] font-medium tap",
+                    rule.direction === d
+                      ? DIRECTION_META[d].chip
+                      : "border-border text-muted-foreground"
+                  )}
+                >
+                  {DIRECTION_META[d].label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-border pt-3">
+            <button
+              onClick={() =>
+                void updateHealthRule(rule.id, {
+                  status: rule.status === "paused" ? "active" : "paused",
+                })
+              }
+              className="rounded-full border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground tap"
+            >
+              {rule.status === "paused" ? "Resume" : "Pause"}
+            </button>
+            <button
+              onClick={() =>
+                void updateHealthRule(rule.id, {
+                  status: rule.status === "archived" ? "active" : "archived",
+                })
+              }
+              className="rounded-full border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground tap"
+              title="Archived rules stay out of the AI's way"
+            >
+              {rule.status === "archived" ? "Restore" : "Archive"}
+            </button>
+            <button
+              onClick={() => {
+                if (confirm(`Delete "${rule.subject}"?`)) void deleteHealthRule(rule.id);
+              }}
+              className="ml-auto rounded-full p-1.5 text-muted-foreground tap hover:text-destructive"
+              title="Delete rule"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+function AddRuleModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const createHealthRule = useStore((s) => s.createHealthRule);
+  const [subject, setSubject] = useState("");
+  const [detail, setDetail] = useState("");
+  const [direction, setDirection] = useState<RuleDirection>("less");
+  const [domain, setDomain] = useState<RuleDomain>("nutrition");
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (!subject.trim()) return;
+    setBusy(true);
+    try {
+      await createHealthRule({
+        subject: subject.trim(),
+        detail: detail.trim() || undefined,
+        direction,
+        domain,
+      });
+      setSubject("");
+      setDetail("");
+      onClose();
+      toast.success("Added to your list.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't add that.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Add a rule">
+      <div className="space-y-3">
+        <div>
+          <Label htmlFor="rule-subject">What</Label>
+          <Input
+            id="rule-subject"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            placeholder="e.g. Coffee after 16:00"
+            className="mt-1.5"
+          />
+        </div>
+        <div>
+          <Label>Do what about it</Label>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {DIRECTIONS.map((d) => (
+              <button
+                key={d}
+                onClick={() => setDirection(d)}
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-xs font-medium tap",
+                  direction === d ? DIRECTION_META[d].chip : "border-border text-muted-foreground"
+                )}
+              >
+                {DIRECTION_META[d].label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <Label>Area</Label>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {DOMAINS.map((d) => (
+              <button
+                key={d}
+                onClick={() => setDomain(d)}
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-xs font-medium tap",
+                  domain === d
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border text-muted-foreground"
+                )}
+              >
+                {d}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <Label htmlFor="rule-detail">Specifics (optional)</Label>
+          <textarea
+            id="rule-detail"
+            value={detail}
+            onChange={(e) => setDetail(e.target.value)}
+            rows={2}
+            placeholder="How much, when, what instead"
+            className="mt-1.5 w-full rounded-xl border border-input bg-background px-3 py-2 text-base placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+        <Button className="w-full" onClick={save} disabled={busy || !subject.trim()}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          Add rule
+        </Button>
+      </div>
+    </Modal>
   );
 }
 

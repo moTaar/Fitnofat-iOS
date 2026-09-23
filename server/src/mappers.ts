@@ -6,6 +6,7 @@ import type {
   HealthIssueEvent,
   HealthProfile,
   HealthRecord,
+  HealthRule,
   IssueMetric,
   NutritionPlan,
   RoutineExercise,
@@ -275,5 +276,24 @@ export function rowToHealthRecord(row: any): HealthRecord {
     data: row.data ?? {},
     source: row.source,
     createdAt: ms(row.created_at),
+  };
+}
+
+export function rowToHealthRule(row: any): HealthRule {
+  return {
+    id: row.id,
+    issueId: row.issue_id ?? undefined,
+    key: row.key,
+    domain: row.domain,
+    direction: row.direction,
+    subject: row.subject,
+    detail: row.detail ?? undefined,
+    reason: row.reason ?? undefined,
+    status: row.status,
+    source: row.source,
+    confidence: row.confidence ?? undefined,
+    userEdited: !!row.user_edited,
+    createdAt: ms(row.created_at),
+    updatedAt: ms(row.updated_at),
   };
 }

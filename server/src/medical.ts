@@ -33,14 +33,18 @@ import type {
   ActionStep,
   AIHealthIssue,
   AIHealthReview,
+  AIHealthRule,
   HealthIssue,
   HealthIssueCategory,
   HealthIssueSeverity,
   HealthProfile,
   HealthRecord,
   HealthRecordKind,
+  HealthRule,
   IssueMetric,
   NutritionPlan,
+  RuleDirection,
+  RuleDomain,
   UserProfile,
 } from "./types";
 
@@ -502,6 +506,41 @@ export function normalizeIssue(raw: any): AIHealthIssue | null {
   };
 }
 
+const RULE_DOMAINS: RuleDomain[] = ["nutrition", "physical", "medical", "lifestyle"];
+const RULE_DIRECTIONS: RuleDirection[] = ["start", "more", "less", "avoid", "keep"];
+const MAX_RULES_PER_REPLY = 6;
+
+/** One AI-proposed rule → a shape safe to persist. Null if unusable. */
+export function normalizeRule(raw: any): AIHealthRule | null {
+  const subject = str(raw?.subject, MAX_TITLE);
+  if (!subject) return null;
+  const domain: RuleDomain = RULE_DOMAINS.includes(raw?.domain) ? raw.domain : "lifestyle";
+  const direction: RuleDirection = RULE_DIRECTIONS.includes(raw?.direction) ? raw.direction : "less";
+  return {
+    key: issueKey(raw?.key, `${direction}-${subject}`),
+    domain,
+    direction,
+    subject,
+    detail: optStr(raw?.detail, MAX_TEXT),
+    reason: optStr(raw?.reason, MAX_TEXT),
+    confidence: ["low", "medium", "high"].includes(raw?.confidence) ? raw.confidence : undefined,
+    issueKey: optStr(raw?.issueKey, 64) ? slugify(str(raw.issueKey, 64)) : undefined,
+  };
+}
+
+/** The `[RULES]` payload is an array; anything else is ignored. */
+export function normalizeRules(raw: any): AIHealthRule[] {
+  const list = Array.isArray(raw) ? raw : Array.isArray(raw?.rules) ? raw.rules : [];
+  const out: AIHealthRule[] = [];
+  for (const item of list) {
+    const rule = normalizeRule(item);
+    // Same key twice in one reply is the model repeating itself, not two rules.
+    if (rule && !out.some((r) => r.key === rule.key)) out.push(rule);
+    if (out.length >= MAX_RULES_PER_REPLY) break;
+  }
+  return out;
+}
+
 export interface AIHealthRecordDraft {
   kind: HealthRecordKind;
   title: string;
@@ -550,6 +589,8 @@ export interface HealthContext {
   health: HealthProfile;
   issues: HealthIssue[];
   records: HealthRecord[];
+  /** Standing do/don't rules, so the model updates them instead of re-inventing. */
+  rules?: HealthRule[];
   nutritionPlan?: NutritionPlan | null;
   /** Pre-built training digest, same string the training coach gets. */
   trainingContext?: string;
@@ -570,6 +611,20 @@ function issueLine(i: HealthIssue): string {
     i.actionPlan.length ? ` (${steps}/${i.actionPlan.length} steps ticked)` : "",
     metrics ? ` — latest: ${metrics}` : "",
   ].join("");
+}
+
+const DIRECTION_WORD: Record<string, string> = {
+  start: "START",
+  more: "MORE",
+  less: "LESS",
+  avoid: "AVOID",
+  keep: "KEEP",
+};
+
+function ruleLine(r: HealthRule): string {
+  return `   • [${r.key}] ${DIRECTION_WORD[r.direction] ?? r.direction}: ${r.subject}${
+    r.detail ? ` — ${r.detail}` : ""
+  }${r.status !== "active" ? ` (${r.status})` : ""}${r.userEdited ? " (edited by them)" : ""}`;
 }
 
 function recordLine(r: HealthRecord): string {
@@ -609,6 +664,9 @@ ${ctx.issues.length ? ctx.issues.map(issueLine).join("\n") : "   • none tracke
 
 Recent medical history:
 ${ctx.records.length ? ctx.records.slice(0, 25).map(recordLine).join("\n") : "   • nothing recorded yet"}
+
+Their standing do & don't rules (reuse a key to change one; never restate one that already says the same thing, and leave anything marked "edited by them" alone unless they ask):
+${ctx.rules?.length ? ctx.rules.map(ruleLine).join("\n") : "   • none set yet"}
 ${
   targets
     ? `\nCurrent nutrition plan (training day): ${targets.calories} kcal, ${targets.protein} g protein, ${targets.carbs} g carbs, ${targets.fats} g fat — strategy: ${ctx.nutritionPlan?.strategy}`
@@ -643,6 +701,15 @@ When they report a FACT for their medical history (a past diagnosis, a lab resul
 [RECORD]
 {"kind":"<symptom|condition|medication|allergy|injury|surgery|lab|vitals|appointment|note>","title":"...","detail":"...","occurredAt":"<ISO date if known>","data":{}}
 
+Separately from those two, whenever the conversation establishes something the person should now DO or STOP DOING, record it as a standing rule. This is the point of the exercise: working out that late-night acidic food is causing their reflux is only useful if "no acidic food within 3h of bed" then lands on their list. Write the sentence you would say to them, then on a NEW line output [RULES] followed by a single JSON ARRAY and nothing after it:
+[RULES]
+[{"key":"<stable-slug, reuse an existing key to UPDATE that rule>","domain":"<nutrition|physical|medical|lifestyle>","direction":"<start|more|less|avoid|keep>","subject":"<the thing itself, short — 'Acidic food within 3h of bed'>","detail":"<the specifics: how much, when, what instead>","reason":"<why, in one line — tied to what they told you>","issueKey":"<optional key of the issue this came from>","confidence":"<low|medium|high>"}]
+   - Name the FOODS AND HABITS THEY ACTUALLY DESCRIBED, not categories. If they said they eat tomato sauce and drink orange juice at night, the rules say tomato sauce and orange juice — "acidic foods" is not actionable.
+   - "avoid" means off the table entirely; "less" means reduce. Do not write "avoid" for something merely worth reducing.
+   - "keep" is for a good habit they already have and should not lose.
+   - At most 6 rules in one reply, and only rules this conversation actually supports. A rule you invent to seem thorough is one they will delete.
+   - [RULES] may accompany [ISSUE] or [RECORD] in the same reply, or stand alone.
+
 [ISSUE] and [RECORD] are mutually exclusive in one reply — pick the one that fits. For an ordinary answer, emit neither. You MAY end any reply with a line [SUGGESTIONS: option | option | option] offering 2-4 short follow-ups.`;
 
 export interface MedicalReply {
@@ -651,6 +718,8 @@ export interface MedicalReply {
   suggestions?: string[];
   issue?: AIHealthIssue;
   record?: AIHealthRecordDraft;
+  /** Standing do/don't rules. May accompany any reply type, including a plain one. */
+  rules?: AIHealthRule[];
   /** True when the emergency screen fired — the UI renders this loudly. */
   urgent: boolean;
   redFlags: string[];
@@ -675,29 +744,97 @@ function payloadAfter(raw: string, marker: string): { text: string; json: any } 
 }
 
 /**
+ * Pulls a balanced JSON array out of the text following `marker`, and returns
+ * the text with that whole span removed.
+ *
+ * `payloadAfter` above takes the last `}` in the remainder, which is fine when a
+ * marker is the final thing in a reply. `[RULES]` is not: it may be followed by
+ * `[ISSUE]`, and swallowing to the end would eat it. So this counts brackets —
+ * ignoring any inside strings — and stops at the array's real end.
+ */
+function extractJsonArrayAfter(raw: string, marker: string): { json: any; rest: string } {
+  const markerIdx = raw.indexOf(marker);
+  if (markerIdx === -1) return { json: null, rest: raw };
+
+  const after = raw.slice(markerIdx + marker.length);
+  const start = after.indexOf("[");
+  if (start === -1) return { json: null, rest: raw.slice(0, markerIdx).trim() };
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let end = -1;
+  for (let i = start; i < after.length; i++) {
+    const ch = after[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "[") depth++;
+    else if (ch === "]") {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  // Unbalanced — drop everything from the marker on rather than leak raw JSON.
+  if (end === -1) return { json: null, rest: raw.slice(0, markerIdx).trim() };
+
+  const rest = (raw.slice(0, markerIdx) + after.slice(end + 1)).trim();
+  try {
+    return { json: JSON.parse(after.slice(start, end + 1)), rest };
+  } catch {
+    return { json: null, rest };
+  }
+}
+
+/**
  * Model text → a structured reply. Pure, so the marker handling is unit-tested
  * without a network call. `model` is threaded through for display only.
  */
-export function parseMedicalReply(raw: string, model: string, userRedFlags: string[] = []): MedicalReply {
-  const redFlags = [...new Set([...userRedFlags, ...detectRedFlags(raw)])];
+export function parseMedicalReply(
+  rawInput: string,
+  model: string,
+  userRedFlags: string[] = []
+): MedicalReply {
+  const redFlags = [...new Set([...userRedFlags, ...detectRedFlags(rawInput)])];
   const urgent = redFlags.length > 0;
   const withNotice = (text: string) => (urgent ? `${EMERGENCY_NOTICE}\n\n${text}` : text);
+
+  // Rules can ride along with any other marker, so they come out first and the
+  // remaining text is parsed as before.
+  const extracted = extractJsonArrayAfter(rawInput, "[RULES]");
+  const rules = extracted.json ? normalizeRules(extracted.json) : [];
+  const withRules = <T extends MedicalReply>(reply: T): T =>
+    rules.length ? { ...reply, rules } : reply;
+  const raw = extracted.rest;
 
   const issue = payloadAfter(raw, "[ISSUE]");
   if (issue) {
     const normalized = issue.json ? normalizeIssue(issue.json) : null;
     if (normalized) {
-      return {
+      return withRules({
         type: "issue",
         text: withNotice(issue.text || `Tracking "${normalized.title}" for you.`),
         issue: normalized,
         urgent,
         redFlags,
         model,
-      };
+      });
     }
     // Marker present but unusable — never leak raw JSON into the chat.
-    return {
+    return withRules({
       type: "message",
       text: withNotice(
         issue.text || "I couldn't structure that into something trackable — can you describe it again?"
@@ -705,43 +842,43 @@ export function parseMedicalReply(raw: string, model: string, userRedFlags: stri
       urgent,
       redFlags,
       model,
-    };
+    });
   }
 
   const record = payloadAfter(raw, "[RECORD]");
   if (record) {
     const normalized = record.json ? normalizeRecord(record.json) : null;
     if (normalized?.title) {
-      return {
+      return withRules({
         type: "record",
         text: withNotice(record.text || `Added "${normalized.title}" to your medical history.`),
         record: normalized as AIHealthRecordDraft,
         urgent,
         redFlags,
         model,
-      };
+      });
     }
-    return {
+    return withRules({
       type: "message",
       text: withNotice(record.text || "I couldn't save that to your history — could you rephrase it?"),
       urgent,
       redFlags,
       model,
-    };
+    });
   }
 
   const sugMatch = raw.match(/\[SUGGESTIONS:\s*([^\]]+)\]/i);
   const suggestions = sugMatch
     ? sugMatch[1].split("|").map((s) => s.trim()).filter(Boolean).slice(0, 4)
     : undefined;
-  return {
+  return withRules({
     type: "message",
     text: withNotice(raw.replace(/\[SUGGESTIONS:[^\]]*\]/i, "").trim()),
     suggestions,
     urgent,
     redFlags,
     model,
-  };
+  });
 }
 
 /**
@@ -1034,6 +1171,9 @@ export const __medical = {
   detectRedFlags,
   normalizeIssue,
   normalizeRecord,
+  normalizeRule,
+  normalizeRules,
+  extractJsonArrayAfter,
   boundedData,
   parseMedicalReply,
   localReview,

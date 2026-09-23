@@ -71,11 +71,11 @@ const COACH_SUGGESTIONS = [
 ];
 
 const HEALTH_SUGGESTIONS = [
-  "Review my diet",
   "Something hurts",
+  "Review my diet",
   "📷 Read my lab results",
+  "What should I cut out?",
   "What should I be working on?",
-  "Am I eating enough protein?",
 ];
 
 // Map a thrown API error to the reason the AI is offline, or null if it's an
@@ -102,6 +102,7 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
   const setHealthConsent = useStore((s) => s.setHealthConsent);
   const receiveHealthIssue = useStore((s) => s.receiveHealthIssue);
   const receiveHealthRecord = useStore((s) => s.receiveHealthRecord);
+  const receiveHealthRules = useStore((s) => s.receiveHealthRules);
 
   // Coach mode for onboarded users; onboarding interview otherwise (or when
   // explicitly restarted from Settings via ?restart=1).
@@ -231,6 +232,17 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
           model: reply.model,
         };
 
+        // Rules can accompany any reply type, so they're merged before the
+        // type-specific handling below.
+        if (reply.rules?.length) {
+          receiveHealthRules(reply.rules);
+          toast.success(
+            reply.rules.length === 1
+              ? `Added to your list: ${reply.rules[0].subject}`
+              : `${reply.rules.length} rules added to your list`
+          );
+        }
+
         if (reply.type === "issue") {
           receiveHealthIssue(reply.issue);
           toast.success(`Tracking "${reply.issue.title}"`);
@@ -246,7 +258,16 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
             { ...base, suggestions: ["Open my Medical tab", "Log something else", "What should I watch?"] },
           ]);
         } else {
-          setMessages([...next, { ...base, suggestions: reply.suggestions }]);
+          setMessages([
+            ...next,
+            {
+              ...base,
+              suggestions:
+                reply.rules?.length && !reply.suggestions?.length
+                  ? ["Open my Medical tab", "Why that rule?", "Anything else?"]
+                  : reply.suggestions,
+            },
+          ]);
         }
         return;
       }

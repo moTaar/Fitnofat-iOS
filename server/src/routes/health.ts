@@ -22,14 +22,16 @@ import { aiLimiter, aiQuota } from "../ratelimit";
 import { buildRefreshSummary, SessionLite } from "../analytics";
 import {
   emptyHealthProfile, healthProfileToRow, rowToHealthEvent, rowToHealthIssue,
-  rowToHealthProfile, rowToHealthRecord, rowToNutritionPlan, rowToProfile,
+  rowToHealthProfile, rowToHealthRecord, rowToHealthRule, rowToNutritionPlan, rowToProfile,
 } from "../mappers";
 import {
   activeProvider, medicalChat, MEDICAL_DISCLAIMER, modelLabel, reconcileIssues, reviewHealth,
   type AIHealthRecordDraft, type HealthContext,
 } from "../medical";
 import type { ChatMessage } from "../gemini";
-import type { AIHealthIssue, HealthIssue, HealthProfile, UserProfile } from "../types";
+import type {
+  AIHealthIssue, AIHealthRule, HealthIssue, HealthProfile, HealthRule, UserProfile,
+} from "../types";
 
 export const healthRouter = Router();
 healthRouter.use(requireAuth);
@@ -111,6 +113,23 @@ const eventSchema = z.object({
   unit: z.string().max(20).optional(),
 });
 
+const RULE_DOMAIN = z.enum(["nutrition", "physical", "medical", "lifestyle"]);
+const RULE_DIRECTION = z.enum(["start", "more", "less", "avoid", "keep"]);
+const RULE_STATUS = z.enum(["active", "paused", "archived"]);
+
+const ruleCreateSchema = z.object({
+  subject: z.string().min(1).max(120),
+  domain: RULE_DOMAIN.optional(),
+  direction: RULE_DIRECTION.optional(),
+  detail: z.string().max(1500).optional(),
+  reason: z.string().max(1500).optional(),
+  issueId: z.string().uuid().optional(),
+});
+
+const rulePatchSchema = ruleCreateSchema.partial().extend({
+  status: RULE_STATUS.optional(),
+});
+
 const recordSchema = z.object({
   kind: RECORD_KIND.optional(),
   title: z.string().min(1).max(120),
@@ -164,6 +183,14 @@ async function loadIssues(userId: string): Promise<HealthIssue[]> {
   return rows.map((r) => rowToHealthIssue(r, byIssue.get(r.id) ?? []));
 }
 
+async function loadRules(userId: string): Promise<HealthRule[]> {
+  const { data, error } = await supabaseAdmin
+    .from("health_rules").select("*").eq("user_id", userId)
+    .order("updated_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(rowToHealthRule);
+}
+
 async function loadRecords(userId: string, limit = 200) {
   const { data, error } = await supabaseAdmin
     .from("health_records").select("*").eq("user_id", userId)
@@ -201,11 +228,12 @@ async function loadTrainingContext(userId: string, profile: UserProfile): Promis
 
 /** Everything the medical model is allowed to see, assembled in one place. */
 async function buildContext(userId: string): Promise<HealthContext> {
-  const [profile, health, issues, records, nutritionPlan] = await Promise.all([
+  const [profile, health, issues, records, rules, nutritionPlan] = await Promise.all([
     loadTrainingProfile(userId),
     loadHealthProfile(userId),
     loadIssues(userId),
     loadRecords(userId, RECORDS_FOR_AI),
+    loadRules(userId),
     loadNutritionPlan(userId),
   ]);
   if (!profile) throw new HttpError(400, "Complete onboarding first", "onboarding_required");
@@ -214,6 +242,7 @@ async function buildContext(userId: string): Promise<HealthContext> {
     health,
     issues,
     records,
+    rules,
     nutritionPlan,
     trainingContext: await loadTrainingContext(userId, profile),
   };
@@ -307,6 +336,54 @@ async function upsertAiIssue(userId: string, proposal: AIHealthIssue): Promise<H
   return rowToHealthIssue(data, []);
 }
 
+/**
+ * Writes the rules a chat turn produced.
+ *
+ * The AI owns rules it wrote and nobody has touched. It may refresh their
+ * wording, detail and direction under the same key — that is how "actually,
+ * avoid it entirely" upgrades yesterday's "eat less of it". It may **not**:
+ *   • change a rule the user has edited (`user_edited`), or
+ *   • resurrect one they archived.
+ * Both are left exactly as they are, silently, so the list stays the user's.
+ */
+async function upsertAiRules(userId: string, proposals: AIHealthRule[]): Promise<HealthRule[]> {
+  if (!proposals.length) return [];
+  const existing = await loadRules(userId);
+  const byKey = new Map(existing.map((r) => [r.key, r]));
+  const now = new Date().toISOString();
+
+  // Link a rule to the issue it came out of, when the model named one.
+  const issues = proposals.some((p) => p.issueKey) ? await loadIssues(userId) : [];
+  const issueIdByKey = new Map(issues.map((i) => [i.key, i.id]));
+
+  const rows = proposals
+    .filter((p) => {
+      const current = byKey.get(p.key);
+      return !current || (!current.userEdited && current.status !== "archived");
+    })
+    .map((p) => ({
+      user_id: userId,
+      key: p.key,
+      domain: p.domain,
+      direction: p.direction,
+      subject: p.subject,
+      detail: p.detail ?? null,
+      reason: p.reason ?? null,
+      confidence: p.confidence ?? null,
+      issue_id: p.issueKey ? issueIdByKey.get(p.issueKey) ?? null : null,
+      source: "ai",
+      updated_at: now,
+    }));
+  if (!rows.length) return [];
+
+  const { data, error } = await supabaseAdmin
+    .from("health_rules")
+    .upsert(rows, { onConflict: "user_id,key" })
+    .select();
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(rowToHealthRule);
+}
+
 async function insertAiRecord(userId: string, draft: AIHealthRecordDraft) {
   const { data, error } = await supabaseAdmin
     .from("health_records")
@@ -330,16 +407,18 @@ healthRouter.get(
   "/overview",
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
-    const [health, issues, records] = await Promise.all([
+    const [health, issues, records, rules] = await Promise.all([
       loadHealthProfile(userId),
       loadIssues(userId),
       loadRecords(userId),
+      loadRules(userId),
     ]);
     const provider = activeProvider();
     res.json({
       health,
       issues,
       records,
+      rules,
       ai: {
         // The UI says which model would answer — a Gemini fallback is never
         // presented as if a medical-tuned model had replied.
@@ -531,6 +610,78 @@ healthRouter.post(
   })
 );
 
+// ── Rules (the do & don't list) ──────────────────────────────────────────────
+healthRouter.post(
+  "/rules",
+  asyncHandler(async (req, res) => {
+    const userId = uid(req as AuthedRequest);
+    const body = ruleCreateSchema.parse(req.body);
+    const base =
+      body.subject.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "rule";
+    const { data: taken } = await supabaseAdmin
+      .from("health_rules").select("key").eq("user_id", userId).like("key", `${base}%`);
+    const used = new Set((taken ?? []).map((r) => r.key));
+    let key = base;
+    for (let n = 2; used.has(key); n++) key = `${base}-${n}`;
+
+    const { data, error } = await supabaseAdmin
+      .from("health_rules")
+      .insert({
+        user_id: userId,
+        key,
+        subject: body.subject,
+        domain: body.domain ?? "lifestyle",
+        direction: body.direction ?? "less",
+        detail: body.detail ?? null,
+        reason: body.reason ?? null,
+        issue_id: body.issueId ?? null,
+        source: "user",
+        user_edited: true,
+      })
+      .select().single();
+    if (error) throw new Error(error.message);
+    res.status(201).json(rowToHealthRule(data));
+  })
+);
+
+healthRouter.patch(
+  "/rules/:id",
+  asyncHandler(async (req, res) => {
+    const userId = uid(req as AuthedRequest);
+    const body = rulePatchSchema.parse(req.body);
+    const patch: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+      // Any edit here hands the rule to the user: a later AI turn will refresh
+      // its own rules but must not rewrite this one.
+      user_edited: true,
+    };
+    if (body.subject !== undefined) patch.subject = body.subject;
+    if (body.domain !== undefined) patch.domain = body.domain;
+    if (body.direction !== undefined) patch.direction = body.direction;
+    if (body.detail !== undefined) patch.detail = body.detail;
+    if (body.reason !== undefined) patch.reason = body.reason;
+    if (body.status !== undefined) patch.status = body.status;
+
+    const { data, error } = await supabaseAdmin
+      .from("health_rules").update(patch).eq("id", req.params.id).eq("user_id", userId)
+      .select().single();
+    if (error) throw new Error(error.message);
+    if (!data) throw new HttpError(404, "Rule not found");
+    res.json(rowToHealthRule(data));
+  })
+);
+
+healthRouter.delete(
+  "/rules/:id",
+  asyncHandler(async (req, res) => {
+    const userId = uid(req as AuthedRequest);
+    const { error } = await supabaseAdmin
+      .from("health_rules").delete().eq("id", req.params.id).eq("user_id", userId);
+    if (error) throw new Error(error.message);
+    res.status(204).end();
+  })
+);
+
 // ── Records (medical history) ────────────────────────────────────────────────
 healthRouter.post(
   "/records",
@@ -645,31 +796,25 @@ healthRouter.post(
     const ctx = await buildContext(userId);
     const reply = await medicalChat(messages as ChatMessage[], ctx);
 
+    // Rules can accompany any reply type, so they are persisted once up front.
+    const rules = await upsertAiRules(userId, reply.rules ?? []);
+    const common = {
+      urgent: reply.urgent,
+      redFlags: reply.redFlags,
+      model: reply.model,
+      disclaimer: MEDICAL_DISCLAIMER,
+      ...(rules.length ? { rules } : {}),
+    };
+
     if (reply.type === "issue" && reply.issue) {
       const issue = await upsertAiIssue(userId, reply.issue);
-      res.json({
-        type: "issue",
-        text: reply.text,
-        issue,
-        urgent: reply.urgent,
-        redFlags: reply.redFlags,
-        model: reply.model,
-        disclaimer: MEDICAL_DISCLAIMER,
-      });
+      res.json({ type: "issue", text: reply.text, issue, ...common });
       return;
     }
 
     if (reply.type === "record" && reply.record) {
       const record = await insertAiRecord(userId, reply.record);
-      res.json({
-        type: "record",
-        text: reply.text,
-        record,
-        urgent: reply.urgent,
-        redFlags: reply.redFlags,
-        model: reply.model,
-        disclaimer: MEDICAL_DISCLAIMER,
-      });
+      res.json({ type: "record", text: reply.text, record, ...common });
       return;
     }
 
@@ -677,10 +822,7 @@ healthRouter.post(
       type: "message",
       text: reply.text,
       suggestions: reply.suggestions,
-      urgent: reply.urgent,
-      redFlags: reply.redFlags,
-      model: reply.model,
-      disclaimer: MEDICAL_DISCLAIMER,
+      ...common,
     });
   })
 );
