@@ -23,6 +23,9 @@ const {
   usesPredictShape,
   flattenTranscript,
   toOpenAiMessages,
+  normalizeRule,
+  normalizeRules,
+  extractJsonArrayAfter,
 } = __medical;
 
 const profile = (over: Partial<UserProfile> = {}): UserProfile =>
@@ -201,6 +204,97 @@ describe("parseMedicalReply", () => {
     const reply = parseMedicalReply("Aim for 1.6 g/kg of protein.", "m");
     expect(reply.urgent).toBe(false);
     expect(reply.text).not.toContain("emergency");
+  });
+});
+
+describe("rules", () => {
+  it("clamps unknown domain and direction to safe defaults", () => {
+    const r = normalizeRule({ subject: "Espresso after 16:00", domain: "sleep", direction: "ban" });
+    // "less" rather than "avoid": a bad guess should under-restrict, not over-.
+    expect(r).toMatchObject({ domain: "lifestyle", direction: "less" });
+  });
+
+  it("derives a key that keeps opposite directions on the same subject apart", () => {
+    const less = normalizeRule({ subject: "Coffee", direction: "less" })!;
+    const more = normalizeRule({ subject: "Coffee", direction: "more" })!;
+    expect(less.key).not.toBe(more.key);
+  });
+
+  it("rejects a rule with no subject", () => {
+    expect(normalizeRule({ detail: "sometime", direction: "avoid" })).toBeNull();
+  });
+
+  it("drops repeats of the same key and caps how many one reply can add", () => {
+    const many = Array.from({ length: 20 }, (_, i) => ({ subject: `Thing ${i}`, direction: "less" }));
+    expect(normalizeRules(many).length).toBeLessThanOrEqual(6);
+    const dupes = [{ subject: "Tomato sauce at night" }, { subject: "Tomato sauce at night" }];
+    expect(normalizeRules(dupes)).toHaveLength(1);
+  });
+
+  it("accepts either a bare array or an object wrapping one", () => {
+    expect(normalizeRules([{ subject: "Walk 20 min" }])).toHaveLength(1);
+    expect(normalizeRules({ rules: [{ subject: "Walk 20 min" }] })).toHaveLength(1);
+  });
+});
+
+describe("extractJsonArrayAfter", () => {
+  it("stops at the array's end so a following marker survives", () => {
+    const raw = 'Here you go.\n[RULES]\n[{"subject":"Orange juice at night","direction":"avoid"}]\n[ISSUE]\n{"title":"Reflux"}';
+    const { json, rest } = extractJsonArrayAfter(raw, "[RULES]");
+    expect(json).toHaveLength(1);
+    expect(rest).toContain("[ISSUE]");
+    expect(rest).not.toContain("[RULES]");
+    expect(rest).not.toContain("Orange juice");
+  });
+
+  it("is not fooled by brackets inside strings", () => {
+    const raw = '[RULES]\n[{"subject":"Chips [the salty kind]","direction":"less"}]';
+    const { json } = extractJsonArrayAfter(raw, "[RULES]");
+    expect(json[0].subject).toBe("Chips [the salty kind]");
+  });
+
+  it("drops an unbalanced payload rather than leaking it into the reply", () => {
+    const { json, rest } = extractJsonArrayAfter('Noted.\n[RULES]\n[{"subject":"x"', "[RULES]");
+    expect(json).toBeNull();
+    expect(rest).toBe("Noted.");
+  });
+
+  it("leaves text alone when the marker is absent", () => {
+    const { json, rest } = extractJsonArrayAfter("Just an answer.", "[RULES]");
+    expect(json).toBeNull();
+    expect(rest).toBe("Just an answer.");
+  });
+});
+
+describe("parseMedicalReply with rules", () => {
+  it("attaches rules to a plain message and keeps them out of the text", () => {
+    const raw = 'Cut those out after 8pm.\n[RULES]\n[{"subject":"Tomato sauce within 3h of bed","domain":"nutrition","direction":"avoid","reason":"Reflux at night"}]';
+    const reply = parseMedicalReply(raw, "m");
+    expect(reply.type).toBe("message");
+    expect(reply.text).toBe("Cut those out after 8pm.");
+    expect(reply.rules).toHaveLength(1);
+    expect(reply.rules![0]).toMatchObject({ direction: "avoid", domain: "nutrition" });
+  });
+
+  it("carries rules alongside a tracked issue in the same reply", () => {
+    const raw = `I'll track the reflux and note what to change.
+[RULES]
+[{"subject":"Orange juice after 20:00","domain":"nutrition","direction":"avoid"}]
+[ISSUE]
+{"key":"night-reflux","title":"Night-time reflux","category":"medical","severity":"moderate","summary":"Burning after late acidic meals.","actionPlan":[{"step":"Last meal 3h before bed"}]}`;
+    const reply = parseMedicalReply(raw, "m");
+    expect(reply.type).toBe("issue");
+    expect(reply.issue?.key).toBe("night-reflux");
+    expect(reply.rules).toHaveLength(1);
+    expect(reply.text).not.toContain("[");
+  });
+
+  it("still prepends the emergency notice when rules are present", () => {
+    const raw = 'Careful.\n[RULES]\n[{"subject":"Heavy lifting","direction":"avoid"}]';
+    const reply = parseMedicalReply(raw, "m", ["chest pain or pressure"]);
+    expect(reply.urgent).toBe(true);
+    expect(reply.text.startsWith(EMERGENCY_NOTICE)).toBe(true);
+    expect(reply.rules).toHaveLength(1);
   });
 });
 

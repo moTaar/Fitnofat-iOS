@@ -291,3 +291,42 @@ export interface AIHealthReview {
   /** Keys the model believes are resolved — surfaced, never auto-applied. */
   resolvedKeys: string[];
 }
+
+// ── Personal do & don't rules ────────────────────────────────────────────────
+// Standing instructions distilled from the health conversation — the things to
+// start, do more or less of, or avoid entirely. See add_health_rules.sql.
+
+export type RuleDomain = "nutrition" | "physical" | "medical" | "lifestyle";
+export type RuleDirection = "start" | "more" | "less" | "avoid" | "keep";
+export type RuleStatus = "active" | "paused" | "archived";
+
+export interface HealthRule {
+  id: string;
+  issueId?: string;
+  key: string;
+  domain: RuleDomain;
+  direction: RuleDirection;
+  subject: string;
+  detail?: string;
+  reason?: string;
+  status: RuleStatus;
+  source: "ai" | "user";
+  confidence?: "low" | "medium" | "high";
+  /** True once the user has edited it — the AI then leaves the wording alone. */
+  userEdited: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** One rule as the model proposes it, before it is reconciled and persisted. */
+export interface AIHealthRule {
+  key: string;
+  domain: RuleDomain;
+  direction: RuleDirection;
+  subject: string;
+  detail?: string;
+  reason?: string;
+  confidence?: "low" | "medium" | "high";
+  /** Key of the issue this came out of, when the model links them. */
+  issueKey?: string;
+}

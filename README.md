@@ -124,8 +124,15 @@ session is revoked server-side. Refreshing still goes through Supabase.
 - **AI nutritionist + medical helper** (`POST /api/health/chat`) is the coach chat's
   second desk. It answers against the user's own medical record, and can add to
   that record from the conversation: `[ISSUE]` starts tracking something that needs
-  fixing, `[RECORD]` files a fact into the medical history. `POST /api/health/review`
+  fixing, `[RECORD]` files a fact into the medical history, and `[RULES]` writes
+  standing do & don't rules. `POST /api/health/review`
   compiles the whole record into a ranked worklist for the **Medical dashboard**.
+- **The do & don't list** (`health_rules`) is where the conversation turns into
+  something actionable. Work out over a few turns that late-night acidic food is
+  driving someone's reflux, and "avoid tomato sauce within 3h of bed" lands on
+  their list by name — not "avoid acidic foods", which nobody can act on. Rules
+  carry a direction (start / more / less / avoid / keep), a domain and the reason
+  they exist, and the user can edit, pause, archive or add their own.
   See [Medical & health](#medical--health) for the safety and consent rules.
 - **Offline resilience** — the PWA caches the app shell (Workbox) and mirrors data
   to `localStorage`. The active workout (incl. rest-timer `endsAt`) survives a refresh.
@@ -188,6 +195,7 @@ model over the largest context in the app.
 | POST/PATCH/DELETE | `/health/issues[/:id]` | the "things to work on" tracker |
 | POST | `/health/issues/:id/events` | check-in or measurement on an issue |
 | POST/DELETE | `/health/records[/:id]` | medical history entries |
+| POST/PATCH/DELETE | `/health/rules[/:id]` | the do & don't list |
 | POST | `/health/review` `/health/chat` | AI health review / medical + nutrition chat |
 
 `/exercises/videos` is served from a global cache keyed on the exercise slug.
@@ -261,6 +269,12 @@ runs over both the user's message and the model's reply; a hit prepends emergenc
 guidance and marks the turn urgent regardless of what the model said — and still
 fires when the model call fails outright. The system prompt additionally forbids
 diagnosing, prescribing, and any dosing of prescription medication.
+
+**The do & don't list follows the same contract.** The AI may refresh a rule it
+wrote — re-wording it, or upgrading "less" to "avoid" as it learns more — under
+the same `key`. It may not touch a rule the user has edited (`user_edited`, set
+by any PATCH), and it may not resurrect one they archived. Both are skipped
+silently, so the list stays theirs.
 
 **The AI never owns the tracker.** A review updates an issue's wording, plan and
 severity by reusing its `key`; `status` and `progress` stay user-owned, ticked

@@ -125,6 +125,18 @@ mean the console API Library has no "Vertex AI API" entry to search for.
 runs on the user's message *and* the model's reply, and still fires when the model
 call fails. Widening `RED_FLAGS` is cheap; a miss is not.
 
+**Rules are the user's list, not the AI's.** `upsertAiRules` in
+`routes/health.ts` may refresh a rule the AI wrote under the same `(user_id,
+key)`, but skips any rule with `user_edited` set or `status = 'archived'` —
+silently, so an edit or an archive is permanent against later chat turns. Any
+PATCH to `/health/rules/:id` sets `user_edited`; that is the whole mechanism.
+
+**`[RULES]` can ride along with `[ISSUE]` or `[RECORD]` in one reply**, unlike
+those two, which stay mutually exclusive. `parseMedicalReply` therefore pulls the
+rules array out first with `extractJsonArrayAfter` — a bracket-counting scan
+rather than `lastIndexOf("]")`, because the array may be followed by another
+marker and the naive version would swallow it.
+
 **A health review must not clobber the user's progress.** `reconcileIssues` is the
 contract: the AI may rewrite an issue's wording/plan/severity under the same
 `key`, but `status` and `progress` are user-owned, ticked steps stay ticked,
@@ -161,5 +173,6 @@ policies) — the client never reads them directly.
 The medical tables (`add_medical.sql`) are ordinary owner-RLS tables:
 `health_profile` (background + AI consent), `health_issues` (the tracker, unique
 on `(user_id, key)` — that uniqueness is what lets a re-review update instead of
-duplicate), `health_issue_events` (check-ins/measurements) and `health_records`
-(medical history).
+duplicate), `health_issue_events` (check-ins/measurements), `health_records`
+(medical history) and `health_rules` (the do & don't list, also unique on
+`(user_id, key)` for the same update-don't-duplicate reason).

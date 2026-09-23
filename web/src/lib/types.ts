@@ -421,6 +421,32 @@ export interface HealthRecord {
   createdAt: number;
 }
 
+// ── Do & don't rules ─────────────────────────────────────────────────────────
+// Standing instructions distilled from the health conversation. Mirrors
+// server/src/types.ts.
+
+export type RuleDomain = "nutrition" | "physical" | "medical" | "lifestyle";
+export type RuleDirection = "start" | "more" | "less" | "avoid" | "keep";
+export type RuleStatus = "active" | "paused" | "archived";
+
+export interface HealthRule {
+  id: string;
+  issueId?: string;
+  key: string;
+  domain: RuleDomain;
+  direction: RuleDirection;
+  subject: string;
+  detail?: string;
+  reason?: string;
+  status: RuleStatus;
+  source: "ai" | "user";
+  confidence?: "low" | "medium" | "high";
+  /** Set once you edit it — the AI then stops rewriting this one. */
+  userEdited: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** What the server says about the medical model backing this account. */
 export interface MedicalAiStatus {
   available: boolean;
