@@ -100,10 +100,15 @@ function usesPredictShape(model: string): boolean {
   return !/^gemini/i.test(model);
 }
 
-/** Host of a URL for logs, or a clear marker when the URL won't even parse. */
+/**
+ * Scheme and host of a URL for logs, or a clear marker when it won't parse.
+ * The scheme is included on purpose: a misspelled one (`ttps://`) leaves the
+ * host looking perfectly correct, so showing the host alone hides the fault.
+ */
 function hostOf(url: string): string {
   try {
-    return new URL(url).host;
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}`;
   } catch {
     return `unparseable URL "${url.slice(0, 80)}"`;
   }
