@@ -23,6 +23,8 @@ const {
   usesPredictShape,
   flattenTranscript,
   toOpenAiMessages,
+  medicalFetch,
+  hostOf,
   normalizeRule,
   normalizeRules,
   extractJsonArrayAfter,
@@ -504,6 +506,28 @@ describe("provider selection", () => {
     expect(modelLabel("cloudrun")).toContain("self-hosted");
     expect(modelLabel("gemini")).toContain("Gemini");
     expect(modelLabel("none")).toBe("unavailable");
+  });
+});
+
+describe("medicalFetch error classification", () => {
+  // This used to report every failure as MEDICAL_TIMEOUT, so a typo in
+  // MEDICAL_AI_BASE_URL failed instantly while claiming to be a slow cold start
+  // — and raising the timeout, the obvious fix, could never help.
+  it("does not call a broken URL a timeout", async () => {
+    const err = await medicalFetch("medgemma.run.app/v1/chat/completions", {}).catch((e) => e);
+    expect(err.message).toMatch(/^MEDICAL_NETWORK /);
+    expect(err.message).not.toMatch(/TIMEOUT/);
+  });
+
+  it("says how long it took, since a real timeout takes the whole deadline", async () => {
+    const err = await medicalFetch("not a url at all", {}).catch((e) => e);
+    expect(err.message).toMatch(/after \d+ms/);
+  });
+
+  it("names the host so a mistyped base URL is visible in the log", () => {
+    expect(hostOf("https://medgemma-abc.us-east4.run.app/v1/chat/completions"))
+      .toBe("medgemma-abc.us-east4.run.app");
+    expect(hostOf("medgemma.run.app/v1")).toMatch(/^unparseable URL/);
   });
 });
 

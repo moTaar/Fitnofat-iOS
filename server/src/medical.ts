@@ -100,13 +100,50 @@ function usesPredictShape(model: string): boolean {
   return !/^gemini/i.test(model);
 }
 
+/** Host of a URL for logs, or a clear marker when the URL won't even parse. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return `unparseable URL "${url.slice(0, 80)}"`;
+  }
+}
+
+/**
+ * Node's fetch reports every network failure as a bare `TypeError: fetch
+ * failed` and hides the real reason in `cause` — ENOTFOUND for a mistyped host,
+ * ECONNREFUSED, a certificate error, an unparseable URL.
+ */
+function networkReason(err: unknown): string {
+  const e = err as Error & { cause?: { code?: string; message?: string } };
+  return e?.cause?.code || e?.cause?.message || e?.message || "unknown";
+}
+
+function isAbort(err: unknown): boolean {
+  const name = (err as Error)?.name;
+  return name === "TimeoutError" || name === "AbortError";
+}
+
+/**
+ * `fetch` with a deadline, and an error that says what actually happened.
+ *
+ * This used to map *every* failure to MEDICAL_TIMEOUT, so a typo in
+ * MEDICAL_AI_BASE_URL failed in milliseconds while reporting itself as a slow
+ * cold start — and no amount of raising the timeout could fix it. Timeouts and
+ * network errors are now distinct, and both carry the elapsed time, which is the
+ * fastest discriminator there is: a real timeout takes the whole deadline,
+ * everything else fails almost instantly.
+ */
 async function medicalFetch(url: string, init: RequestInit): Promise<Response> {
+  const started = Date.now();
   try {
     return await fetch(url, { ...init, signal: AbortSignal.timeout(config.medicalTimeoutMs) });
   } catch (err) {
-    const name = (err as Error)?.name;
-    if (name === "TimeoutError" || name === "AbortError") throw new Error("MEDICAL_TIMEOUT");
-    throw new Error("MEDICAL_TIMEOUT");
+    const ms = Date.now() - started;
+    if (isAbort(err)) {
+      throw new Error(`MEDICAL_TIMEOUT after ${ms}ms (limit ${config.medicalTimeoutMs}ms)`);
+    }
+    throw new Error(`MEDICAL_NETWORK ${networkReason(err)} after ${ms}ms to ${hostOf(url)}`);
   }
 }
 
@@ -414,10 +451,27 @@ export async function warmSelfHosted(): Promise<WarmStatus> {
       headers,
       signal: AbortSignal.timeout(config.medicalWarmProbeMs),
     });
-    return res.ok ? "ready" : "warming";
-  } catch {
-    // Timeout, socket error, cold-start 429 — all mean "not serving yet".
+    if (res.ok) return "ready";
+    // 401/403 will not fix themselves by waiting — that is a missing
+    // roles/run.invoker binding or a bad key. Saying "warming" would leave the
+    // client polling a service that will never let it in.
+    if (res.status === 401 || res.status === 403) {
+      console.error(`[medical] warm-up refused: HTTP ${res.status} from ${hostOf(base)}`);
+      return "unavailable";
+    }
+    // 429/503 are Cloud Run shedding while an instance boots: genuinely warming.
     return "warming";
+  } catch (err) {
+    // Still booting: we stopped listening, Cloud Run did not stop starting.
+    if (isAbort(err)) return "warming";
+    // Anything else — a bad URL, DNS, TLS, an auth-token failure — is a
+    // configuration fault that waiting cannot cure.
+    console.error(
+      `[medical] warm-up failed: ${err instanceof Error && err.message.startsWith("VERTEX_")
+        ? err.message
+        : networkReason(err)} (${hostOf(base)})`
+    );
+    return "unavailable";
   }
 }
 
@@ -1206,6 +1260,8 @@ export function reconcileIssues(
 // Test seam — these are pure and carry the safety-critical logic, so they are
 // exercised directly in medical.test.ts rather than through a mocked fetch.
 export const __medical = {
+  medicalFetch,
+  hostOf,
   detectRedFlags,
   normalizeIssue,
   normalizeRecord,
