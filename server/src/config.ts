@@ -15,6 +15,35 @@ function text(name: string, fallback = ""): string {
   return unquoted || fallback;
 }
 
+/**
+ * A base URL that is checked at boot rather than at first request.
+ *
+ * A misspelled scheme (`ttps://`, `hhttps://`) is still a valid URL, so it
+ * sails through every syntax check and only fails when fetch refuses it with an
+ * opaque "unknown scheme" — at which point the medical desk has already quietly
+ * fallen back to another model. Catching it here puts the mistake in the
+ * startup log, next to the variable that caused it.
+ */
+function url(name: string): string {
+  const value = text(name).replace(/\/+$/, "");
+  if (!value) return "";
+  let protocol = "";
+  try {
+    protocol = new URL(value).protocol;
+  } catch {
+    console.error(`[config] ${name}="${value}" is not a valid URL — it will not be used.`);
+    return "";
+  }
+  if (protocol !== "https:" && protocol !== "http:") {
+    console.error(
+      `[config] ${name} starts with "${protocol}//" — expected https://. ` +
+        `Check for a dropped or doubled letter. It will not be used.`
+    );
+    return "";
+  }
+  return value;
+}
+
 function required(name: string): string {
   const v = text(name);
   if (!v) {
@@ -93,7 +122,10 @@ export const config = {
   // Base URL of a self-hosted OpenAI-compatible server, INCLUDING the version
   // path — e.g. https://medgemma-xxxxx.europe-west1.run.app/v1. Setting this is
   // what turns the "cloudrun" provider on.
-  medicalBaseUrl: text("MEDICAL_AI_BASE_URL").replace(/\/+$/, ""),
+  // Validated at boot: a bad scheme is rejected with a named error here rather
+  // than failing every request later. Rejected means empty, which makes the
+  // provider chain skip self-hosting instead of retrying a URL that can't work.
+  medicalBaseUrl: url("MEDICAL_AI_BASE_URL"),
   // Model name the self-hosted server expects in the request body (vLLM echoes
   // whatever `--served-model-name` was set to). Defaults to `medicalModel`.
   medicalSelfHostedModel: text("MEDICAL_AI_SELF_HOSTED_MODEL"),

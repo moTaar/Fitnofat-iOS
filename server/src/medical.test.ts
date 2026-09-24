@@ -524,10 +524,17 @@ describe("medicalFetch error classification", () => {
     expect(err.message).toMatch(/after \d+ms/);
   });
 
-  it("names the host so a mistyped base URL is visible in the log", () => {
+  it("names scheme and host so a mistyped base URL is visible in the log", () => {
     expect(hostOf("https://medgemma-abc.us-east4.run.app/v1/chat/completions"))
-      .toBe("medgemma-abc.us-east4.run.app");
+      .toBe("https://medgemma-abc.us-east4.run.app");
     expect(hostOf("medgemma.run.app/v1")).toMatch(/^unparseable URL/);
+  });
+
+  it("shows a misspelled scheme instead of hiding it behind a correct host", () => {
+    // `ttps://` parses fine and keeps the right host; only the scheme is wrong.
+    expect(hostOf("ttps://medgemma-oqpa2o5cia-uk.a.run.app/v1")).toBe(
+      "ttps://medgemma-oqpa2o5cia-uk.a.run.app"
+    );
   });
 });
 
