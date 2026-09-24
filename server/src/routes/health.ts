@@ -1,17 +1,23 @@
-// Health & medical API — the AI nutritionist / medical helper and the Medical
-// dashboard's issue tracker.
+// Layer 5 — Chat + logging interface for health: the Medical dashboard's
+// tracker, the medical history, the do & don't list, and the health chat.
+//
+// The other layers live in ../health/: memory (the record and its persistence),
+// reasoning (the cloud model), safety (guardrails), anatomy (trends) and privacy
+// (what may leave the server). This file is HTTP only — validation, gating, and
+// wiring those layers together.
 //
 // Two things make this router different from the rest of the data API:
 //
 //   1. **Consent gates the AI, not the data.** The CRUD routes always work: the
 //      health record is the user's, kept in their own database. The AI routes
 //      refuse with 403 `medical_consent_required` until the user has explicitly
-//      opted in, because those are the only paths that send health data to a
-//      model provider.
+//      opted in, because those are the only paths that send anything derived
+//      from health data to a model provider — and even then, only the privacy
+//      layer's brief, never the record.
 //   2. **The AI never owns the tracker.** A review updates the wording, plan and
 //      severity of an issue; `status` and `progress` stay user-owned, ticked
 //      steps stay ticked, and "this looks resolved" is a suggestion the user
-//      confirms. See `reconcileIssues` in ../medical.ts.
+//      confirms. See `reconcileIssues` in ../health/memory.ts.
 
 import { Router } from "express";
 import { z } from "zod";
@@ -19,29 +25,23 @@ import { supabaseAdmin } from "../supabase";
 import { asyncHandler, requireAuth, AuthedRequest, HttpError } from "../middleware";
 import { requireEntitlement } from "../entitlements";
 import { aiLimiter, aiQuota } from "../ratelimit";
-import { buildRefreshSummary, SessionLite } from "../analytics";
 import {
-  emptyHealthProfile, healthProfileToRow, rowToHealthEvent, rowToHealthIssue,
-  rowToHealthProfile, rowToHealthRecord, rowToHealthRule, rowToNutritionPlan, rowToProfile,
+  healthProfileToRow, rowToHealthEvent, rowToHealthIssue, rowToHealthProfile, rowToHealthRecord,
+  rowToHealthRule,
 } from "../mappers";
+import { reconcileIssues } from "../health/memory";
 import {
-  activeProvider, medicalChat, MEDICAL_DISCLAIMER, modelLabel, reconcileIssues, reviewHealth,
-  warmSelfHosted, type AIHealthRecordDraft, type HealthContext,
-} from "../medical";
+  applyReview, insertAiRecord, loadHealthMemory, loadHealthProfile, loadIssues, loadRecords,
+  loadRules, upsertAiIssue, upsertAiRules,
+} from "../health/memoryStore";
+import { activeProvider, medicalChat, modelLabel, reviewHealth } from "../health/reasoning";
+import { MEDICAL_DISCLAIMER } from "../health/safety";
 import type { ChatMessage } from "../gemini";
-import type {
-  AIHealthIssue, AIHealthRule, HealthIssue, HealthProfile, HealthRule, UserProfile,
-} from "../types";
 
 export const healthRouter = Router();
 healthRouter.use(requireAuth);
 
 const uid = (req: AuthedRequest) => req.userId;
-
-// How much history the AI sees. Enough to reason over, small enough to keep the
-// prompt (and the amount of health data leaving the DB) bounded.
-const RECORDS_FOR_AI = 40;
-const EVENTS_PER_ISSUE = 10;
 
 // ── validation ───────────────────────────────────────────────────────────────
 const medicationSchema = z.object({
@@ -151,102 +151,7 @@ const chatMessageSchema = z.object({
   images: z.array(chatImageSchema).max(4).optional(),
 });
 
-// ── loaders ──────────────────────────────────────────────────────────────────
-
-async function loadHealthProfile(userId: string): Promise<HealthProfile> {
-  const { data } = await supabaseAdmin
-    .from("health_profile").select("*").eq("user_id", userId).maybeSingle();
-  return data ? rowToHealthProfile(data) : emptyHealthProfile();
-}
-
-async function loadIssues(userId: string): Promise<HealthIssue[]> {
-  const { data: issues, error } = await supabaseAdmin
-    .from("health_issues").select("*").eq("user_id", userId)
-    .order("created_at", { ascending: false });
-  if (error) throw new Error(error.message);
-  const rows = issues ?? [];
-  if (!rows.length) return [];
-
-  // One query for every issue's recent events, then grouped in memory — a query
-  // per issue would be a round trip per card on the dashboard.
-  const { data: events } = await supabaseAdmin
-    .from("health_issue_events")
-    .select("*")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false });
-  const byIssue = new Map<string, any[]>();
-  for (const e of events ?? []) {
-    const list = byIssue.get(e.issue_id) ?? [];
-    if (list.length < EVENTS_PER_ISSUE) list.push(e);
-    byIssue.set(e.issue_id, list);
-  }
-  return rows.map((r) => rowToHealthIssue(r, byIssue.get(r.id) ?? []));
-}
-
-async function loadRules(userId: string): Promise<HealthRule[]> {
-  const { data, error } = await supabaseAdmin
-    .from("health_rules").select("*").eq("user_id", userId)
-    .order("updated_at", { ascending: false });
-  if (error) throw new Error(error.message);
-  return (data ?? []).map(rowToHealthRule);
-}
-
-async function loadRecords(userId: string, limit = 200) {
-  const { data, error } = await supabaseAdmin
-    .from("health_records").select("*").eq("user_id", userId)
-    .order("occurred_at", { ascending: false }).limit(limit);
-  if (error) throw new Error(error.message);
-  return (data ?? []).map(rowToHealthRecord);
-}
-
-async function loadTrainingProfile(userId: string): Promise<UserProfile | null> {
-  const { data } = await supabaseAdmin
-    .from("profiles").select("*").eq("user_id", userId).maybeSingle();
-  return data ? rowToProfile(data) : null;
-}
-
-async function loadNutritionPlan(userId: string) {
-  const { data } = await supabaseAdmin
-    .from("nutrition_plans").select("*").eq("user_id", userId)
-    .order("created_at", { ascending: false }).limit(1).maybeSingle();
-  return data ? rowToNutritionPlan(data) : null;
-}
-
-/** Recent training digest — the same summary the training coach is given. */
-async function loadTrainingContext(userId: string, profile: UserProfile): Promise<string | undefined> {
-  const { data: workouts } = await supabaseAdmin
-    .from("workouts").select("*").eq("user_id", userId)
-    .order("started_at", { ascending: false }).limit(30);
-  const history: SessionLite[] = (workouts ?? []).map((w) => ({
-    startedAt: new Date(w.started_at).getTime(),
-    totalVolume: Number(w.total_volume),
-    exercises: w.exercises ?? [],
-  }));
-  if (!history.length) return undefined;
-  return buildRefreshSummary(history, profile);
-}
-
-/** Everything the medical model is allowed to see, assembled in one place. */
-async function buildContext(userId: string): Promise<HealthContext> {
-  const [profile, health, issues, records, rules, nutritionPlan] = await Promise.all([
-    loadTrainingProfile(userId),
-    loadHealthProfile(userId),
-    loadIssues(userId),
-    loadRecords(userId, RECORDS_FOR_AI),
-    loadRules(userId),
-    loadNutritionPlan(userId),
-  ]);
-  if (!profile) throw new HttpError(400, "Complete onboarding first", "onboarding_required");
-  return {
-    profile,
-    health,
-    issues,
-    records,
-    rules,
-    nutritionPlan,
-    trainingContext: await loadTrainingContext(userId, profile),
-  };
-}
+// ── consent gate (privacy layer, enforced at the HTTP boundary) ─────────────
 
 /**
  * Blocks the AI routes until the user has opted in. This is the boundary where
@@ -264,143 +169,6 @@ const requireHealthConsent = asyncHandler(async (req, _res, next) => {
   }
   next();
 });
-
-// ── writes shared by the chat and the review ─────────────────────────────────
-
-function issueToRow(userId: string, issue: AIHealthIssue) {
-  return {
-    user_id: userId,
-    key: issue.key,
-    title: issue.title,
-    category: issue.category,
-    severity: issue.severity,
-    summary: issue.summary,
-    why_it_matters: issue.whyItMatters ?? null,
-    body_region: issue.bodyRegion ?? null,
-    action_plan: issue.actionPlan,
-    metrics: issue.metrics,
-    red_flags: issue.redFlags,
-    confidence: issue.confidence ?? null,
-    source: "ai",
-    last_reviewed_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-}
-
-/**
- * Upserts an AI-proposed issue, preserving the user-owned fields of an issue
- * that already exists under the same key (see reconcileIssues). Used by the chat
- * path, where there is exactly one proposal rather than a whole review.
- */
-async function upsertAiIssue(userId: string, proposal: AIHealthIssue): Promise<HealthIssue> {
-  const existing = await loadIssues(userId);
-  const { create, update } = reconcileIssues(existing, {
-    summary: "",
-    issues: [proposal],
-    resolvedKeys: [],
-  });
-
-  if (update.length) {
-    const patch = update[0].patch;
-    const { data, error } = await supabaseAdmin
-      .from("health_issues")
-      .update({
-        title: patch.title,
-        category: patch.category,
-        severity: patch.severity,
-        summary: patch.summary,
-        why_it_matters: patch.whyItMatters ?? null,
-        body_region: patch.bodyRegion ?? null,
-        action_plan: patch.actionPlan,
-        metrics: patch.metrics,
-        red_flags: patch.redFlags,
-        confidence: patch.confidence ?? null,
-        last_reviewed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", update[0].id)
-      .eq("user_id", userId)
-      .select()
-      .single();
-    if (error) throw new Error(error.message);
-    return rowToHealthIssue(data, []);
-  }
-
-  const target = create[0] ?? proposal;
-  const { data, error } = await supabaseAdmin
-    .from("health_issues")
-    .upsert(issueToRow(userId, target), { onConflict: "user_id,key" })
-    .select()
-    .single();
-  if (error) throw new Error(error.message);
-  return rowToHealthIssue(data, []);
-}
-
-/**
- * Writes the rules a chat turn produced.
- *
- * The AI owns rules it wrote and nobody has touched. It may refresh their
- * wording, detail and direction under the same key — that is how "actually,
- * avoid it entirely" upgrades yesterday's "eat less of it". It may **not**:
- *   • change a rule the user has edited (`user_edited`), or
- *   • resurrect one they archived.
- * Both are left exactly as they are, silently, so the list stays the user's.
- */
-async function upsertAiRules(userId: string, proposals: AIHealthRule[]): Promise<HealthRule[]> {
-  if (!proposals.length) return [];
-  const existing = await loadRules(userId);
-  const byKey = new Map(existing.map((r) => [r.key, r]));
-  const now = new Date().toISOString();
-
-  // Link a rule to the issue it came out of, when the model named one.
-  const issues = proposals.some((p) => p.issueKey) ? await loadIssues(userId) : [];
-  const issueIdByKey = new Map(issues.map((i) => [i.key, i.id]));
-
-  const rows = proposals
-    .filter((p) => {
-      const current = byKey.get(p.key);
-      return !current || (!current.userEdited && current.status !== "archived");
-    })
-    .map((p) => ({
-      user_id: userId,
-      key: p.key,
-      domain: p.domain,
-      direction: p.direction,
-      subject: p.subject,
-      detail: p.detail ?? null,
-      reason: p.reason ?? null,
-      confidence: p.confidence ?? null,
-      issue_id: p.issueKey ? issueIdByKey.get(p.issueKey) ?? null : null,
-      source: "ai",
-      updated_at: now,
-    }));
-  if (!rows.length) return [];
-
-  const { data, error } = await supabaseAdmin
-    .from("health_rules")
-    .upsert(rows, { onConflict: "user_id,key" })
-    .select();
-  if (error) throw new Error(error.message);
-  return (data ?? []).map(rowToHealthRule);
-}
-
-async function insertAiRecord(userId: string, draft: AIHealthRecordDraft) {
-  const { data, error } = await supabaseAdmin
-    .from("health_records")
-    .insert({
-      user_id: userId,
-      kind: draft.kind,
-      title: draft.title,
-      detail: draft.detail ?? null,
-      occurred_at: new Date(draft.occurredAt ?? Date.now()).toISOString(),
-      data: draft.data,
-      source: "ai",
-    })
-    .select()
-    .single();
-  if (error) throw new Error(error.message);
-  return rowToHealthRecord(data);
-}
 
 // ── GET /overview : everything the Medical dashboard renders ─────────────────
 healthRouter.get(
@@ -718,31 +486,10 @@ healthRouter.delete(
   })
 );
 
-// ── POST /warm : wake a scaled-to-zero self-hosted model ─────────────────────
-// A GPU instance that has scaled to zero takes 1-2 minutes to load the model,
-// which is longer than anyone will wait staring at a chat box. The client calls
-// this the moment the user opens the health desk, so the boot overlaps with them
-// typing their question instead of following it.
-//
-// Metered (`aiLimiter`) and Pro-gated, because a spin-up costs real GPU time
-// even though it runs no inference — an open warm endpoint is a free way to
-// bill someone else's graphics card. It carries NO consent gate, unlike every
-// other route here: it sends nothing whatsoever about the user.
-healthRouter.post(
-  "/warm",
-  aiLimiter,
-  requireEntitlement("ai_medical"),
-  asyncHandler(async (_req, res) => {
-    const status = await warmSelfHosted();
-    const provider = activeProvider();
-    res.json({ status, model: modelLabel(provider), provider });
-  })
-);
-
 // ── POST /review : "what should I be working on?" ────────────────────────────
 // Pro-gated AND metered: it is the most expensive call in the app (a reasoning
-// model over the whole record), so it carries a burst limit, an entitlement and
-// a daily quota rather than just one of the three.
+// model over a review brief), so it carries a burst limit, an entitlement and a
+// daily quota rather than just one of the three.
 healthRouter.post(
   "/review",
   aiLimiter,
@@ -751,55 +498,24 @@ healthRouter.post(
   requireHealthConsent,
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
-    const ctx = await buildContext(userId);
-    const review = await reviewHealth(ctx);
-    const { create, update, resolvedSuggestions } = reconcileIssues(ctx.issues, review);
-
-    if (create.length) {
-      const { error } = await supabaseAdmin
-        .from("health_issues")
-        .upsert(create.map((i) => issueToRow(userId, i)), { onConflict: "user_id,key" });
-      if (error) throw new Error(error.message);
-    }
-    for (const u of update) {
-      const { error } = await supabaseAdmin
-        .from("health_issues")
-        .update({
-          title: u.patch.title,
-          category: u.patch.category,
-          severity: u.patch.severity,
-          summary: u.patch.summary,
-          why_it_matters: u.patch.whyItMatters ?? null,
-          body_region: u.patch.bodyRegion ?? null,
-          action_plan: u.patch.actionPlan,
-          metrics: u.patch.metrics,
-          red_flags: u.patch.redFlags,
-          confidence: u.patch.confidence ?? null,
-          last_reviewed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", u.id)
-        .eq("user_id", userId);
-      if (error) throw new Error(error.message);
-    }
-
-    await supabaseAdmin.from("health_profile").upsert({
-      user_id: userId,
-      last_review_at: new Date().toISOString(),
-      last_review_summary: review.summary,
-      updated_at: new Date().toISOString(),
-    });
+    const memory = await loadHealthMemory(userId);
+    const review = await reviewHealth(memory);
+    const reconciliation = reconcileIssues(memory.issues, review);
+    await applyReview(userId, reconciliation, review.summary);
 
     res.json({
       summary: review.summary,
       model: review.model,
-      created: create.length,
-      updated: update.length,
+      created: reconciliation.create.length,
+      updated: reconciliation.update.length,
       // Never applied automatically — the dashboard offers them as one-tap
       // confirmations, because closing an issue is the user's call.
-      resolvedSuggestions,
+      resolvedSuggestions: reconciliation.resolvedSuggestions,
       issues: await loadIssues(userId),
       disclaimer: MEDICAL_DISCLAIMER,
+      // What the cloud model was given. Shown, like `model`, so the user can
+      // see the minimisation rather than take it on trust.
+      ...(review.disclosure ? { disclosure: review.disclosure } : {}),
     });
   })
 );
@@ -814,8 +530,8 @@ healthRouter.post(
   asyncHandler(async (req, res) => {
     const userId = uid(req as AuthedRequest);
     const { messages } = z.object({ messages: z.array(chatMessageSchema).min(1) }).parse(req.body);
-    const ctx = await buildContext(userId);
-    const reply = await medicalChat(messages as ChatMessage[], ctx);
+    const memory = await loadHealthMemory(userId);
+    const reply = await medicalChat(messages as ChatMessage[], memory);
 
     // Rules can accompany any reply type, so they are persisted once up front.
     const rules = await upsertAiRules(userId, reply.rules ?? []);
@@ -825,6 +541,7 @@ healthRouter.post(
       model: reply.model,
       disclaimer: MEDICAL_DISCLAIMER,
       ...(rules.length ? { rules } : {}),
+      ...(reply.disclosure ? { disclosure: reply.disclosure } : {}),
     };
 
     if (reply.type === "issue" && reply.issue) {

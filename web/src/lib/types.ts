@@ -447,12 +447,27 @@ export interface HealthRule {
   updatedAt: number;
 }
 
+/**
+ * What one cloud model call was given, and what stayed on the server. The model
+ * never receives the health record — it gets a relevance-filtered brief built
+ * by the server's privacy layer, and this says what was in it.
+ */
+export interface CloudDisclosure {
+  scope: "question" | "review";
+  topics: string[];
+  sent: { issues: number; records: number; rules: number };
+  held: { issues: number; records: number; rules: number };
+  withheld: string[];
+  computedLocally: string[];
+  redactions: number;
+}
+
 /** What the server says about the medical model backing this account. */
 export interface MedicalAiStatus {
   available: boolean;
-  /** e.g. "medlm-medium (Vertex AI)" — shown so a fallback is never silent. */
+  /** e.g. "gemini-2.5-pro (Gemini)" — shown so the user can see who answered. */
   model: string;
-  provider: "vertex" | "gemini" | "none";
+  provider: "gemini" | "none";
   consented: boolean;
   disclaimer: string;
 }

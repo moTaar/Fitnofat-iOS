@@ -11,13 +11,14 @@ import { isEntitled } from "@/lib/entitlements";
 import { UpgradeRequiredError } from "@/lib/api";
 import type {
   HealthIssue, HealthIssueCategory, HealthIssueSeverity, HealthIssueStatus, HealthRecordKind,
-  HealthRule, RuleDirection, RuleDomain,
+  HealthRule, RuleDirection, RuleDomain, CloudDisclosure,
 } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Badge, EmptyState, Progress, Spinner } from "@/components/ui/misc";
+import { CloudDisclosureNote } from "@/components/CloudDisclosureNote";
 import { cn } from "@/lib/utils";
 
 // Severity drives the entire visual hierarchy of the list — an urgent item must
@@ -82,8 +83,6 @@ export function HealthDashboard() {
   const loadHealth = useStore((s) => s.loadHealth);
   const setHealthConsent = useStore((s) => s.setHealthConsent);
   const runHealthReview = useStore((s) => s.runHealthReview);
-  const warmMedical = useStore((s) => s.warmMedical);
-  const medicalWarm = useStore((s) => s.medicalWarm);
   const updateHealthIssue = useStore((s) => s.updateHealthIssue);
 
   const [tab, setTab] = useState<Tab>("issues");
@@ -92,6 +91,8 @@ export function HealthDashboard() {
   const [addingIssue, setAddingIssue] = useState(false);
   // Keys the last review believes are done. Applied only when the user taps.
   const [resolvedSuggestions, setResolvedSuggestions] = useState<string[]>([]);
+  // What the cloud model was given for the review run in this visit.
+  const [lastDisclosure, setLastDisclosure] = useState<CloudDisclosure | null>(null);
 
   const entitled = isEntitled(subscription, "ai_medical");
   const consented = !!health?.aiConsentAt;
@@ -99,14 +100,6 @@ export function HealthDashboard() {
   useEffect(() => {
     void loadHealth();
   }, [loadHealth]);
-
-  // Start waking a self-hosted model as soon as the tab opens, so "Review" —
-  // the most expensive call in the app — isn't the thing that pays the cold
-  // start. Only once the AI is actually usable, so reading your own rules on a
-  // free plan never spins up a GPU.
-  useEffect(() => {
-    if (entitled && consented) warmMedical();
-  }, [entitled, consented, warmMedical]);
 
   const visible = useMemo(() => {
     const list = issues.filter((i) =>
@@ -126,6 +119,7 @@ export function HealthDashboard() {
     try {
       const result = await runHealthReview();
       setResolvedSuggestions(result.resolvedSuggestions);
+      setLastDisclosure(result.disclosure ?? null);
       toast.success(
         result.created || result.updated
           ? `Review done — ${result.created} new, ${result.updated} updated.`
@@ -186,7 +180,7 @@ export function HealthDashboard() {
           title={consented ? "Re-run the AI health review" : "Turn on AI health analysis first"}
         >
           {reviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          {reviewing && medicalWarm === "warming" ? "Waking…" : "Review"}
+          Review
         </Button>
       </div>
 
@@ -230,11 +224,12 @@ export function HealthDashboard() {
             <div className="flex-1">
               <p className="font-semibold text-amber-500">Your health data stays in your database</p>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                Everything on this page lives in your own Supabase project. To get an AI review or
-                use the health chat, that record has to be sent to{" "}
-                <b className="text-foreground">{ai?.model ?? "the medical model"}</b> for the length
-                of the request. Nothing is sent until you turn this on, and you can turn it off at
-                any time.
+                Everything on this page lives in your own Supabase project, and the AI never receives
+                it. For a review or a chat question, the app's server prepares a short summary — trends
+                worked out on the server, history older than six months reduced to counts, your name
+                and contact details removed — and only that goes to{" "}
+                <b className="text-foreground">{ai?.model ?? "the medical model"}</b>. Nothing is sent
+                until you turn this on, and you can turn it off at any time.
               </p>
               <Button size="sm" className="mt-3" onClick={() => handleConsent(true)}>
                 Turn on AI health analysis
@@ -256,6 +251,7 @@ export function HealthDashboard() {
             {ai?.model && (
               <p className="mt-2 text-[11px] text-muted-foreground">Answered by {ai.model}</p>
             )}
+            {lastDisclosure && <CloudDisclosureNote disclosure={lastDisclosure} className="mt-1" />}
           </CardContent>
         </Card>
       )}

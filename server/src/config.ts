@@ -15,35 +15,6 @@ function text(name: string, fallback = ""): string {
   return unquoted || fallback;
 }
 
-/**
- * A base URL that is checked at boot rather than at first request.
- *
- * A misspelled scheme (`ttps://`, `hhttps://`) is still a valid URL, so it
- * sails through every syntax check and only fails when fetch refuses it with an
- * opaque "unknown scheme" — at which point the medical desk has already quietly
- * fallen back to another model. Catching it here puts the mistake in the
- * startup log, next to the variable that caused it.
- */
-function url(name: string): string {
-  const value = text(name).replace(/\/+$/, "");
-  if (!value) return "";
-  let protocol = "";
-  try {
-    protocol = new URL(value).protocol;
-  } catch {
-    console.error(`[config] ${name}="${value}" is not a valid URL — it will not be used.`);
-    return "";
-  }
-  if (protocol !== "https:" && protocol !== "http:") {
-    console.error(
-      `[config] ${name} starts with "${protocol}//" — expected https://. ` +
-        `Check for a dropped or doubled letter. It will not be used.`
-    );
-    return "";
-  }
-  return value;
-}
-
 function required(name: string): string {
   const v = text(name);
   if (!v) {
@@ -64,8 +35,24 @@ function num(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-// The coach model doubles as the medical fallback when Vertex isn't configured,
-// so it's resolved once here rather than duplicated in the object below.
+// Settings for medical providers that no longer exist: self-hosted MedGemma and
+// Vertex AI were removed in Sept 2026. Nothing reads them, so a leftover value
+// does nothing — except VERTEX_SERVICE_ACCOUNT_JSON, which is a private key
+// sitting in the host's dashboard for no reason. Say so at boot.
+const RETIRED_ENV = [
+  "MEDICAL_AI_PROVIDER", "MEDICAL_AI_BASE_URL", "MEDICAL_AI_SELF_HOSTED_MODEL", "MEDICAL_AI_API_KEY",
+  "MEDICAL_AI_WARM_PROBE_MS", "MEDICAL_AI_MODEL",
+  "VERTEX_PROJECT_ID", "VERTEX_LOCATION", "VERTEX_SERVICE_ACCOUNT_JSON",
+];
+const leftover = RETIRED_ENV.filter((name) => text(name));
+if (leftover.length) {
+  console.warn(
+    `[config] No longer used (the medical desk runs on Gemini only) — delete from the environment: ${leftover.join(", ")}`
+  );
+}
+
+// The coach model doubles as the medical model, so it's resolved once here
+// rather than duplicated in the object below.
 const COACH_MODEL = process.env.GEMINI_COACH_MODEL ?? "gemini-2.5-pro";
 
 export const config = {
@@ -97,71 +84,13 @@ export const config = {
   geminiCoachTimeoutMs: num("GEMINI_COACH_TIMEOUT_MS", 90_000),
 
   // ── Medical / health AI (nutritionist + medical helper) ────────────────────
-  // Which backend answers medical questions:
-  //   "cloudrun" — a model you host yourself behind an OpenAI-compatible API
-  //                (vLLM, Ollama, TGI…), typically MedGemma on Cloud Run with a
-  //                GPU. The weights and the request both stay on infrastructure
-  //                you control. See wiki/MedGemma-Cloud-Run-Deployment.md.
-  //   "vertex"   — Google Cloud Vertex AI (the service behind what Google now
-  //                brands "Gemini Enterprise Agent Platform" — the product was
-  //                renamed in April 2026 but `aiplatform.googleapis.com`, its
-  //                model ids and its auth are unchanged). Needs a service
-  //                account, not an API key.
-  //   "gemini"   — the same generativelanguage endpoint the rest of the app uses.
-  //   "auto"     — the first of those that is configured, in that order
-  //                (default): a self-hosted medical model wins over Vertex,
-  //                which wins over the shared Gemini endpoint.
-  // Vertex is never a hard requirement: a medical request degrades to Gemini
-  // rather than failing, because a health question going unanswered is worse
-  // than one answered by the general model (the reply says which model ran).
-  medicalProvider: (text("MEDICAL_AI_PROVIDER", "auto")) as
-    | "auto"
-    | "cloudrun"
-    | "vertex"
-    | "gemini",
-  // Base URL of a self-hosted OpenAI-compatible server, INCLUDING the version
-  // path — e.g. https://medgemma-xxxxx.europe-west1.run.app/v1. Setting this is
-  // what turns the "cloudrun" provider on.
-  // Validated at boot: a bad scheme is rejected with a named error here rather
-  // than failing every request later. Rejected means empty, which makes the
-  // provider chain skip self-hosting instead of retrying a URL that can't work.
-  medicalBaseUrl: url("MEDICAL_AI_BASE_URL"),
-  // Model name the self-hosted server expects in the request body (vLLM echoes
-  // whatever `--served-model-name` was set to). Defaults to `medicalModel`.
-  medicalSelfHostedModel: text("MEDICAL_AI_SELF_HOSTED_MODEL"),
-  // Optional static bearer token for a self-hosted endpoint that isn't on Cloud
-  // Run. Leave unset for Cloud Run: the service account mints an ID token, which
-  // is the better credential — short-lived and audience-scoped.
-  medicalApiKey: text("MEDICAL_AI_API_KEY"),
-  // Vertex publisher model id. The caller picks the request shape from the id
-  // (see server/src/medical.ts), so both families work:
-  //   `gemini-*`  → the modern `:generateContent` contract. This is the default
-  //                 because Google retired MedLM (the productized Med-PaLM 2,
-  //                 `medlm-medium`/`medlm-large`) on 2025-09-29 — those ids no
-  //                 longer resolve for anyone.
-  //   `medlm-*`   → the PaLM-era `:predict` contract, kept for any project that
-  //                 still has a medical-tuned model served under it.
-  // Point this at a medical-tuned publisher model if your project has one.
-  medicalModel: text("MEDICAL_AI_MODEL", COACH_MODEL),
-  // Model used when the request runs on the Gemini provider.
+  // Runs on the Gemini API with GEMINI_API_KEY. The model reasons over the
+  // privacy layer's brief and never sees the full record — see
+  // server/src/health/privacy.ts.
   medicalGeminiModel: text("MEDICAL_AI_GEMINI_MODEL", COACH_MODEL),
-  // Medical answers are longer and reasoned, and a self-hosted model that has
-  // scaled to zero needs 1-2 minutes to load before it answers at all. 90s was
-  // shorter than a cold start, so the first question of the day fell back to
-  // Gemini every time.
-  medicalTimeoutMs: num("MEDICAL_AI_TIMEOUT_MS", 180_000),
-  // How long the warm-up probe waits before reporting "still warming". It only
-  // needs to TRIGGER the container start — Cloud Run keeps booting whether or
-  // not we are still listening — so this stays short enough to answer the
-  // client immediately.
-  medicalWarmProbeMs: num("MEDICAL_AI_WARM_PROBE_MS", 8_000),
-
-  // Vertex AI credentials. `VERTEX_SERVICE_ACCOUNT_JSON` takes the key JSON
-  // inline (raw or base64); `GOOGLE_APPLICATION_CREDENTIALS` points at a file.
-  vertexProjectId: text("VERTEX_PROJECT_ID"),
-  vertexLocation: text("VERTEX_LOCATION", "us-central1"),
-  vertexServiceAccountJson: process.env.VERTEX_SERVICE_ACCOUNT_JSON ?? "",
-  googleCredentialsPath: process.env.GOOGLE_APPLICATION_CREDENTIALS ?? "",
+  // Medical answers are longer and reasoned — the same budget as the coach
+  // model. The web client's MEDICAL_REQUEST_TIMEOUT_MS sits above this.
+  medicalTimeoutMs: num("MEDICAL_AI_TIMEOUT_MS", 90_000),
 
   // Shared secret gating /internal diagnostics. Same value as the accounts
   // service's ADMIN_API_KEY. Unset ⇒ the routes report 503 rather than running.

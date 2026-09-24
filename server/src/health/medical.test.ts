@@ -6,29 +6,17 @@
 // thing — so it's pinned down here.
 
 import { afterEach, describe, expect, it } from "vitest";
-import { config } from "./config";
-import { __medical, activeProvider, EMERGENCY_NOTICE, modelLabel, warmSelfHosted } from "./medical";
-import type { AIHealthReview, HealthIssue, HealthProfile, UserProfile } from "./types";
+import { config } from "../config";
+import { reconcileIssues } from "./memory";
+import { buildChatBrief } from "./privacy";
+import { __reasoning, activeProvider, localReview, modelLabel, parseMedicalReply } from "./reasoning";
+import {
+  boundedData, detectRedFlags, EMERGENCY_NOTICE, issueKey, normalizeIssue, normalizeRecord,
+  normalizeRule, normalizeRules,
+} from "./safety";
+import type { AIHealthReview, HealthIssue, HealthProfile, UserProfile } from "../types";
 
-const {
-  detectRedFlags,
-  normalizeIssue,
-  normalizeRecord,
-  boundedData,
-  parseMedicalReply,
-  localReview,
-  reconcileIssues,
-  issueKey,
-  buildHealthContext,
-  usesPredictShape,
-  flattenTranscript,
-  toOpenAiMessages,
-  medicalFetch,
-  hostOf,
-  normalizeRule,
-  normalizeRules,
-  extractJsonArrayAfter,
-} = __medical;
+const { medicalFetch, hostOf, extractJsonArrayAfter } = __reasoning;
 
 const profile = (over: Partial<UserProfile> = {}): UserProfile =>
   ({
@@ -160,11 +148,11 @@ describe("parseMedicalReply", () => {
     const raw = `I'll track that for you.
 [ISSUE]
 {"key":"low-protein","title":"Protein intake below target","category":"nutrition","severity":"low","summary":"Averaging 90 g against a 140 g target.","actionPlan":[{"step":"Add a 30 g shake after training","cadence":"training days"}],"metrics":[{"label":"Daily protein","unit":"g","target":"140"}],"redFlags":[]}`;
-    const reply = parseMedicalReply(raw, "medlm-medium (Vertex AI)");
+    const reply = parseMedicalReply(raw, "gemini-2.5-pro (Gemini)");
     expect(reply.type).toBe("issue");
     expect(reply.text).toBe("I'll track that for you.");
     expect(reply.issue?.key).toBe("low-protein");
-    expect(reply.model).toBe("medlm-medium (Vertex AI)");
+    expect(reply.model).toBe("gemini-2.5-pro (Gemini)");
   });
 
   it("extracts a history record", () => {
@@ -425,32 +413,16 @@ describe("localReview (no-model fallback)", () => {
 });
 
 describe("prompt plumbing", () => {
-  it("routes MedLM ids to the PaLM-era predict shape and Gemini ids to generateContent", () => {
-    expect(usesPredictShape("medlm-medium")).toBe(true);
-    expect(usesPredictShape("medlm-large")).toBe(true);
-    expect(usesPredictShape("gemini-2.5-pro")).toBe(false);
-  });
-
-  it("flattens a transcript with the newest turn last", () => {
-    const flat = flattenTranscript("SYSTEM", [
-      { role: "user", content: "first" },
-      { role: "model", content: "answer" },
-      { role: "user", content: "newest" },
-    ]);
-    expect(flat).toContain("SYSTEM");
-    expect(flat).toContain("Patient: first");
-    expect(flat).toContain("Clinician: answer");
-    expect(flat.indexOf("Patient: newest")).toBeGreaterThan(flat.indexOf("Clinician: answer"));
-    expect(flat.trimEnd().endsWith("Clinician:")).toBe(true);
-  });
-
   it("gives the model the issue keys it needs to update instead of duplicate", () => {
-    const text = buildHealthContext({
-      profile: profile({ age: 30 }),
-      health: healthProfile({ conditions: ["asthma"], medications: [{ name: "Ventolin", dose: "100µg" }] }),
-      issues: [issue()],
-      records: [],
-    });
+    const { text } = buildChatBrief(
+      {
+        profile: profile({ age: 30 }),
+        health: healthProfile({ conditions: ["asthma"], medications: [{ name: "Ventolin", dose: "100µg" }] }),
+        issues: [issue()],
+        records: [],
+      },
+      [{ role: "user", content: "My shoulder still aches when I press overhead" }]
+    );
     expect(text).toContain("[left-shoulder-pain]");
     expect(text).toContain("asthma");
     expect(text).toContain("Ventolin 100µg");
@@ -460,61 +432,33 @@ describe("prompt plumbing", () => {
 describe("provider selection", () => {
   // `config` is read at call time, so the env-driven fields can be swapped per
   // test. Snapshot and restore them rather than leaking into the next test.
-  const original = {
-    provider: config.medicalProvider,
-    baseUrl: config.medicalBaseUrl,
-    geminiKey: config.geminiApiKey,
-  };
+  const original = { geminiKey: config.geminiApiKey };
   afterEach(() => {
-    config.medicalProvider = original.provider;
-    config.medicalBaseUrl = original.baseUrl;
     config.geminiApiKey = original.geminiKey;
   });
 
-  it("prefers a self-hosted endpoint over the shared Gemini one on auto", () => {
-    config.medicalProvider = "auto";
-    config.medicalBaseUrl = "https://medgemma-abc.run.app/v1";
-    config.geminiApiKey = "key";
-    expect(activeProvider()).toBe("cloudrun");
-  });
-
-  it("falls to Gemini on auto when nothing is self-hosted", () => {
-    config.medicalProvider = "auto";
-    config.medicalBaseUrl = "";
+  it("answers on Gemini when there is a key", () => {
     config.geminiApiKey = "key";
     expect(activeProvider()).toBe("gemini");
   });
 
-  it("reports none rather than silently downgrading when cloudrun is forced but unset", () => {
-    config.medicalProvider = "cloudrun";
-    config.medicalBaseUrl = "";
-    config.geminiApiKey = "key";
+  it("reports none rather than pretending when there is no key", () => {
+    config.geminiApiKey = "  ";
     expect(activeProvider()).toBe("none");
   });
 
-  it("has nothing to warm unless a self-hosted model is what would answer", async () => {
-    config.medicalProvider = "gemini";
-    config.medicalBaseUrl = "";
-    config.geminiApiKey = "key";
-    // A hosted model is always warm, so the client is told there is nothing to
-    // wait for rather than being shown a spinner that would never resolve.
-    await expect(warmSelfHosted()).resolves.toBe("unavailable");
-  });
-
-  it("labels a self-hosted answer as such, so a fallback is visible", () => {
-    config.medicalBaseUrl = "https://medgemma-abc.run.app/v1";
-    expect(modelLabel("cloudrun")).toContain("self-hosted");
+  it("labels the model, so the user can see who answered", () => {
     expect(modelLabel("gemini")).toContain("Gemini");
     expect(modelLabel("none")).toBe("unavailable");
   });
 });
 
 describe("medicalFetch error classification", () => {
-  // This used to report every failure as MEDICAL_TIMEOUT, so a typo in
-  // MEDICAL_AI_BASE_URL failed instantly while claiming to be a slow cold start
-  // — and raising the timeout, the obvious fix, could never help.
+  // This used to report every failure as MEDICAL_TIMEOUT, so a broken URL failed
+  // instantly while claiming to be slow — and raising the timeout, the obvious
+  // fix, could never help.
   it("does not call a broken URL a timeout", async () => {
-    const err = await medicalFetch("medgemma.run.app/v1/chat/completions", {}).catch((e) => e);
+    const err = await medicalFetch("generativelanguage.googleapis.com/v1beta/models", {}).catch((e) => e);
     expect(err.message).toMatch(/^MEDICAL_NETWORK /);
     expect(err.message).not.toMatch(/TIMEOUT/);
   });
@@ -524,50 +468,17 @@ describe("medicalFetch error classification", () => {
     expect(err.message).toMatch(/after \d+ms/);
   });
 
-  it("names scheme and host so a mistyped base URL is visible in the log", () => {
-    expect(hostOf("https://medgemma-abc.us-east4.run.app/v1/chat/completions"))
-      .toBe("https://medgemma-abc.us-east4.run.app");
-    expect(hostOf("medgemma.run.app/v1")).toMatch(/^unparseable URL/);
+  it("names scheme and host so a mistyped URL is visible in the log", () => {
+    expect(hostOf("https://generativelanguage.googleapis.com/v1beta/models/x:generateContent"))
+      .toBe("https://generativelanguage.googleapis.com");
+    expect(hostOf("generativelanguage.googleapis.com/v1beta")).toMatch(/^unparseable URL/);
   });
 
   it("shows a misspelled scheme instead of hiding it behind a correct host", () => {
     // `ttps://` parses fine and keeps the right host; only the scheme is wrong.
-    expect(hostOf("ttps://medgemma-oqpa2o5cia-uk.a.run.app/v1")).toBe(
-      "ttps://medgemma-oqpa2o5cia-uk.a.run.app"
+    expect(hostOf("ttps://generativelanguage.googleapis.com/v1beta")).toBe(
+      "ttps://generativelanguage.googleapis.com"
     );
-  });
-});
-
-describe("toOpenAiMessages", () => {
-  it("puts the system prompt first and maps model turns to assistant", () => {
-    const out = toOpenAiMessages("SYSTEM", [
-      { role: "user", content: "hi" },
-      { role: "model", content: "hello" },
-    ]);
-    expect(out).toEqual([
-      { role: "system", content: "SYSTEM" },
-      { role: "user", content: "hi" },
-      { role: "assistant", content: "hello" },
-    ]);
-  });
-
-  it("sends attachments as data-URI image parts", () => {
-    const out = toOpenAiMessages("S", [
-      { role: "user", content: "read this", images: [{ mimeType: "image/jpeg", data: "AAAA" }] },
-    ]);
-    expect(out[1].content).toEqual([
-      { type: "text", text: "read this" },
-      { type: "image_url", image_url: { url: "data:image/jpeg;base64,AAAA" } },
-    ]);
-  });
-
-  it("omits the empty text part when a photo is sent with no caption", () => {
-    const out = toOpenAiMessages("S", [
-      { role: "user", content: "   ", images: [{ mimeType: "image/png", data: "BBBB" }] },
-    ]);
-    expect(out[1].content).toEqual([
-      { type: "image_url", image_url: { url: "data:image/png;base64,BBBB" } },
-    ]);
   });
 });
 

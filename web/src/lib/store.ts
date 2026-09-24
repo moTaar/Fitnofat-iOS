@@ -76,12 +76,6 @@ interface AppState {
   medicalAi: MedicalAiStatus | null;
   healthLoaded: boolean;
   healthLoading: boolean;
-  /**
-   * Whether the self-hosted medical model is serving. "unknown" until asked;
-   * "unavailable" whenever nothing needs waking (a hosted model is always warm),
-   * which is also what the UI treats as "don't mention any of this".
-   */
-  medicalWarm: "unknown" | "warming" | "ready" | "unavailable";
 
   // auth
   login: (email: string, password: string) => Promise<void>;
@@ -114,8 +108,6 @@ interface AppState {
 
   // health / medical
   loadHealth: (force?: boolean) => Promise<void>;
-  /** Wakes the medical model ahead of the first question. Safe to call often. */
-  warmMedical: () => void;
   updateHealthProfile: (patch: Partial<HealthProfile>) => Promise<void>;
   setHealthConsent: (granted: boolean) => Promise<void>;
   /** Re-runs the AI review and folds the result into the tracked issues. */
@@ -350,45 +342,6 @@ const resilientStorage = {
   },
 };
 
-// Waking a scaled-to-zero GPU takes 1-2 minutes, so the first probe almost
-// always comes back "warming" and we keep asking until it is serving. Lives
-// outside the store so the timer is a module detail rather than state, and is
-// bounded: a model that never comes up stops being asked about rather than
-// polling forever behind an open tab.
-const WARM_POLL_MS = 12_000;
-const WARM_MAX_ATTEMPTS = 15; // ~3 minutes
-
-async function pollWarm(
-  set: (partial: Partial<AppState>) => void,
-  get: () => AppState,
-  attempt = 0
-): Promise<void> {
-  if (attempt === 0) set({ medicalWarm: "warming" });
-  try {
-    const { status } = await api.warmMedical();
-    if (status === "ready" || status === "unavailable") {
-      set({ medicalWarm: status });
-      return;
-    }
-  } catch {
-    // A failed probe is not worth surfacing — the chat itself reports trouble.
-    // Stop polling rather than hammering an endpoint that is refusing us.
-    set({ medicalWarm: "unavailable" });
-    return;
-  }
-  if (attempt + 1 >= WARM_MAX_ATTEMPTS) {
-    // Give up quietly. The chat still works; it will just be slow.
-    set({ medicalWarm: "unavailable" });
-    return;
-  }
-  setTimeout(() => {
-    // Only keep going while someone is still logged in.
-    if (auth.isAuthenticated() && get().medicalWarm === "warming") {
-      void pollWarm(set, get, attempt + 1);
-    }
-  }, WARM_POLL_MS);
-}
-
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -416,7 +369,6 @@ export const useStore = create<AppState>()(
       medicalAi: null,
       healthLoaded: false,
       healthLoading: false,
-      medicalWarm: "unknown",
       settings: {
         theme: "dark",
         defaultRestSeconds: 90,
@@ -458,7 +410,6 @@ export const useStore = create<AppState>()(
           healthRules: [],
           medicalAi: null,
           healthLoaded: false,
-          medicalWarm: "unknown",
         });
       },
 
@@ -720,14 +671,6 @@ export const useStore = create<AppState>()(
         } finally {
           set({ healthLoading: false });
         }
-      },
-
-      warmMedical: () => {
-        if (!auth.isAuthenticated()) return;
-        const current = get().medicalWarm;
-        // Already serving, already being woken, or nothing to wake.
-        if (current === "ready" || current === "warming" || current === "unavailable") return;
-        void pollWarm(set, get);
       },
 
       updateHealthProfile: async (patch) => {

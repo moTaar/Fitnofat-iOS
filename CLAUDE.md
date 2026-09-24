@@ -100,50 +100,45 @@ the client should read verbatim; everything else becomes a generic 500 when
 between the user's medical record and a model provider — never bypass it, and
 never move the check into the client.
 
-**The medical model is pluggable and the fallback is visible.** `server/src/medical.ts`
-picks the first configured of cloudrun → vertex → gemini and falls back down that
-chain per request. `cloudrun` is any OpenAI-compatible server (vLLM/Ollama/TGI),
-authenticated with a Google ID token minted by `googleIdToken()` from the same
-service-account key Vertex uses — audience is the Cloud Run URL WITHOUT the `/v1`
-path, so don't "helpfully" pass the full base URL.
-[`wiki/MedGemma-Cloud-Run-Deployment.md`](wiki/MedGemma-Cloud-Run-Deployment.md) is the deployment
-runbook.
-Every reply carries the model that actually answered and the UI prints it — don't
-drop that field to tidy a payload, it's the only thing telling the user which
-model replied. `usesPredictShape()` picks the contract from the model id:
-`medlm-*`/`text-bison` take the PaLM-era `:predict` shape (no system role, no
-JSON mode, no images), `gemini-*` take `:generateContent`. Keep both paths —
-MedLM itself was retired in Sept 2025, but the `:predict` branch is what lets a
-medical-tuned publisher model be swapped in by env var alone.
+**Health code is six layers; keep them apart.** `server/src/health/`: `memory.ts`
++ `memoryStore.ts` (the record, persistence, field ownership), `reasoning.ts`
+(the cloud model), `safety.ts` (red flags, output clamping), `anatomy.ts`
+(regions, trends, calculations), `privacy.ts` (what leaves the server); the
+chat/logging interface is `routes/health.ts` plus the web UI. `memory.ts`,
+`anatomy.ts`, `privacy.ts` and `safety.ts` are pure on purpose — they must not
+import `supabase.ts`, or their tests need a live client.
 
-**Vertex AI is now called "Gemini Enterprise Agent Platform"** (renamed April
-2026). Only the branding moved: `aiplatform.googleapis.com`, model ids, IAM role
-ids and auth are unchanged, so `server/src/vertex.ts` needs no follow-up. It does
-mean the console API Library has no "Vertex AI API" entry to search for.
+**The cloud model gets a brief, never the record.** `reasoning.ts` is only ever
+handed `buildChatBrief` / `buildReviewBrief` output from `privacy.ts` — never a
+`HealthMemory`, never the raw transcript. Do not add a code path that
+serialises the record into a prompt, and do not "improve an answer" by widening
+what the brief carries without weighing it: every item added to a brief is
+health data sent to a third party. Conditions, medications and allergies are
+the one always-sent set (interaction safety); everything else is chosen by
+relevance. The `disclosure` on each reply says what was sent, and the UI shows
+it — like `model`, don't drop it to tidy a payload. `privacy.test.ts` is the
+guard, including the scrubber tests that keep lab values and dates intact.
+
+**The medical desk is Gemini-only, and the model label is visible.**
+`server/src/health/reasoning.ts` calls the Gemini API with `GEMINI_API_KEY`.
+Self-hosted MedGemma and Vertex AI were removed in Sept 2026 (their GCP
+resources, service account and keys are deleted — see
+`wiki/MedGemma-Decommission.md`); leftover `MEDICAL_AI_PROVIDER`/`VERTEX_*`
+env vars are ignored and named in a boot warning. Every reply carries the model
+that actually answered and the UI prints it — don't drop that field to tidy a
+payload, it's the only thing telling the user which model replied.
 
 **Red flags are screened in code, not delegated to the prompt.** `detectRedFlags`
 runs on the user's message *and* the model's reply, and still fires when the model
 call fails. Widening `RED_FLAGS` is cheap; a miss is not.
 
-**Timeouts have to clear a cold start, at both ends.** A self-hosted medical
-model that has scaled to zero takes 1-2 minutes to load. `MEDICAL_AI_TIMEOUT_MS`
-defaults to 180s and the web client uses `MEDICAL_REQUEST_TIMEOUT_MS` (180s) for
-the health routes only — the training coach keeps the 60s
-`AI_REQUEST_TIMEOUT_MS`, since it talks to an always-warm hosted model. Lower
-either below a cold start and the first question of the day silently falls back
-to Gemini, or aborts in the browser while the server is still happily working.
-
-**Warm on intent, never on app start.** `POST /health/warm` is called when the
-health desk opens, so the boot overlaps with typing. Do not move this to app
-launch or a timer: Cloud Run bills instance lifetime, so frequent pinging stops
-the instance ever scaling to zero and silently costs `--min-instances=1` money
-without the reliability of having chosen it. The route is deliberately the one
-medical route with no consent gate — it runs no inference and sends nothing
-about the user — but it keeps `aiLimiter` and the entitlement, because a
-spin-up costs GPU time.
+**The browser must outlast the server.** `MEDICAL_AI_TIMEOUT_MS` is 90s; the
+web client's `MEDICAL_REQUEST_TIMEOUT_MS` (120s) sits above it for the health
+routes only. Lower it below the server's deadline and the browser aborts a
+request the server is still answering.
 
 **Rules are the user's list, not the AI's.** `upsertAiRules` in
-`routes/health.ts` may refresh a rule the AI wrote under the same `(user_id,
+`health/memoryStore.ts` may refresh a rule the AI wrote under the same `(user_id,
 key)`, but skips any rule with `user_edited` set or `status = 'archived'` —
 silently, so an edit or an archive is permanent against later chat turns. Any
 PATCH to `/health/rules/:id` sets `user_edited`; that is the whole mechanism.
@@ -158,7 +153,8 @@ marker and the naive version would swallow it.
 contract: the AI may rewrite an issue's wording/plan/severity under the same
 `key`, but `status` and `progress` are user-owned, ticked steps stay ticked,
 metric readings survive, and resolved/dismissed issues are never reopened.
-`server/src/medical.test.ts` is the guard.
+It lives in `server/src/health/memory.ts`; `server/src/health/medical.test.ts`
+is the guard.
 
 **Health data never reaches localStorage.** The store's `partialize` allowlist
 deliberately omits `health`/`healthIssues`/`healthRecords`, and `logout` clears

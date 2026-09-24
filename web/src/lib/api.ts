@@ -4,7 +4,7 @@
 
 import type {
   Exercise, ExerciseVideo, FoodLookupResult, HealthIssue, HealthIssueEvent,
-  HealthProfile, HealthRecord, HealthRule, MedicalAiStatus, NutritionPlan, Plan, PlanInfo,
+  HealthProfile, HealthRecord, HealthRule, MedicalAiStatus, CloudDisclosure, NutritionPlan, Plan, PlanInfo,
   Program, Routine, Subscription, UserProfile, WorkoutSession,
 } from "./types";
 
@@ -102,12 +102,10 @@ const REQUEST_TIMEOUT_MS = 15_000;
 // routinely takes longer than a normal CRUD round trip — give them more room
 // before the client gives up on them.
 const AI_REQUEST_TIMEOUT_MS = 60_000;
-// The medical desk can be answered by a self-hosted model that scales to zero,
-// where a cold start alone is 1-2 minutes. At 60s the browser would abort a
-// request the server was still handling perfectly well, and the user would see
-// an error for a reply that then arrived nowhere. Only the health routes get
-// this — the training coach talks to an always-warm hosted model.
-const MEDICAL_REQUEST_TIMEOUT_MS = 180_000;
+// The health routes run a reasoning model with a 90s server-side deadline
+// (MEDICAL_AI_TIMEOUT_MS), plus the database work around it. At 60s the browser
+// would abort a request the server was still handling perfectly well.
+const MEDICAL_REQUEST_TIMEOUT_MS = 120_000;
 
 async function rawRequest(
   base: string,
@@ -236,6 +234,8 @@ export interface HealthReviewResult {
   resolvedSuggestions: string[];
   issues: HealthIssue[];
   disclaimer: string;
+  /** What the cloud model was given for this review. */
+  disclosure?: CloudDisclosure;
 }
 
 // `rules` can ride along with any reply type — the chat may set standing
@@ -247,6 +247,8 @@ interface MedicalReplyCommon {
   model: string;
   disclaimer: string;
   rules?: HealthRule[];
+  /** What the cloud model was given for this turn — absent if nothing was sent. */
+  disclosure?: CloudDisclosure;
 }
 
 export type MedicalChatReply =
@@ -522,17 +524,6 @@ export const api = {
 
   deleteHealthRecord: (id: string) =>
     request<void>(`/api/health/records/${id}`, { method: "DELETE" }),
-
-  /**
-   * Wakes a self-hosted medical model that has scaled to zero. Cheap, runs no
-   * inference, and returns immediately with "warming" if the boot is underway.
-   */
-  warmMedical: () =>
-    request<{ status: "ready" | "warming" | "unavailable"; model: string; provider: string }>(
-      "/api/health/warm",
-      { method: "POST" },
-      true, API_BASE, 20_000
-    ),
 
   /** Re-runs the medical review and folds the result into the tracked issues. */
   reviewHealth: () =>

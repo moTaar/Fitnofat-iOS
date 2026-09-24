@@ -197,7 +197,6 @@ model over the largest context in the app.
 | POST/DELETE | `/health/records[/:id]` | medical history entries |
 | POST/PATCH/DELETE | `/health/rules[/:id]` | the do & don't list |
 | POST | `/health/review` `/health/chat` | AI health review / medical + nutrition chat |
-| POST | `/health/warm` | wake a scaled-to-zero self-hosted model |
 
 `/exercises/videos` is served from a global cache keyed on the exercise slug.
 A YouTube `search.list` costs 100 units of a default 10,000/day allocation — a
@@ -224,46 +223,63 @@ inside the browser's quota for long-time users.
 ## Medical & health
 The Medical tab and the coach chat's **Health** desk share one record, stored in
 the same database as everything else (`health_profile`, `health_issues`,
-`health_issue_events`, `health_records`). Four rules shape the design:
+`health_issue_events`, `health_records`, `health_rules`). The code is split into
+six layers, five of them in `server/src/health/`:
+
+| Layer | Where | Job |
+| --- | --- | --- |
+| 1. Health memory | `memory.ts`, `memoryStore.ts` | the longitudinal record, its persistence, and who owns which fields |
+| 2. Reasoning | `reasoning.ts` | the cloud model: prompts, provider fallback, parsing replies |
+| 3. Safety | `safety.ts` | red-flag escalation, disclaimers, clamping model output before it is stored |
+| 4. Anatomy & mobility | `anatomy.ts` | body regions, metric trends, check-in staleness, BMI and similar |
+| 5. Chat + logging | `routes/health.ts`, web UI | HTTP, validation, the tracker and history CRUD |
+| 6. Privacy | `privacy.ts` (+ consent gate in the route) | what may leave the server, and in what form |
+
+```
+user ─► health app ─► TLS ─► Postgres (owner RLS, encrypted at rest)
+                                │
+                     local memory (one request)
+                ┌───────────────┴────────────────┐
+        local processing                     cloud AI
+  anatomy: trends, BMI, regions      reasons over the BRIEF only:
+  privacy: relevance, scrubbing      conversation, synthesis,
+  safety:  red flags, clamping       difficult questions
+                └───────────────┬────────────────┘
+                            AI coach
+```
+
+**The cloud model never receives the health record.** Each request loads the
+whole record into memory on the server; the privacy layer then builds a brief of
+only what the question is about. A knee question carries the knee issue and its
+trend, the matching history and rules, past surgeries and sleep, and not the
+lipid panel, the family history or last year's dermatology note. Trends are
+computed locally and sent as conclusions ("pain 7 → 4 over 3 weeks, improving;
+target < 2 not yet met"), dates become relative, and the person's name, emails,
+phone and ID numbers and links are scrubbed from both the brief and the
+transcript. Only the last 12 turns are re-sent, with photos kept on the newest
+turn only. One deliberate exception: conditions, medications and allergies are
+always sent, because deciding whether one bears on a question is itself a
+clinical judgement. A review gets more (every open issue, six months of
+history), but older history travels only as counts, closed issues as a key and a
+title, and the rules not at all. Every reply carries a `disclosure` of what was
+sent and held back, and the UI prints it under the reply.
 
 **Consent gates the model, not the data.** The CRUD routes always work — it is the
 user's record, in the user's database. The two AI routes (`/health/review`,
 `/health/chat`) return 403 `medical_consent_required` until the user opts in,
-because those are the only paths that send health data to a model provider.
-Consent is a timestamp on `health_profile` and can be revoked from the Medical tab.
+because those are the only paths that send anything derived from health data to
+a model provider. Consent is a timestamp on `health_profile` and can be revoked
+from the Medical tab.
 
-**The model is pluggable and the fallback is visible.** `MEDICAL_AI_PROVIDER=auto`
-picks the first configured of **cloudrun → vertex → gemini**, and falls back down
-that chain per request when one fails (or when the turn carries a photo the
-text-only `:predict` contract can't take). Every reply reports the model that
-actually answered, so a fallback is never silent — `medgemma-1.5-4b-it (self-hosted)`
-in the chat footer means the medical model answered, `(Gemini)` means it didn't.
-
-**`cloudrun` is the option to reach for if you don't want a general model.**
-It points at any OpenAI-compatible server you host — vLLM, Ollama, TGI — so the
-weights and the inference both stay on infrastructure you control.
-[`wiki/MedGemma-Cloud-Run-Deployment.md`](wiki/MedGemma-Cloud-Run-Deployment.md) is a full runbook for
-MedGemma (Google's open-weights medical model) on Cloud Run with an L4 GPU:
-~$10–15/month because it scales to zero, authenticated with a Cloud Run ID token
-minted from the same service-account key Vertex uses.
-
-Running on Vertex is worth the setup even for a Gemini model: the request stays
-inside your own Google Cloud project, under your IAM and data-residency rules,
-instead of going to a shared API-key endpoint. Point `MEDICAL_AI_MODEL` at a
-medical-tuned publisher model if your project serves one — `usesPredictShape()`
-picks the request contract from the model id, so no code changes. Note that
-MedLM, the productized Med-PaLM 2 (`medlm-medium`/`medlm-large`), was
-[retired by Google on 2025-09-29](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/release-notes),
-which is why the default is a general Gemini model.
-
-Vertex needs OAuth rather than an API key; `server/src/vertex.ts` mints tokens
-from the service-account key directly, with no Google SDK. Two setup gotchas:
-the service account needs `roles/aiplatform.user` (**not** the Vertex AI Service
-Agent role, which is for Google's own service agents), and since Vertex AI was
-[renamed to Gemini Enterprise Agent Platform in April 2026](https://cloud.google.com/products/gemini-enterprise-agent-platform)
-searching the console API Library for "vertex" finds nothing — the service name
-is unchanged, so enable it directly at
-`console.cloud.google.com/apis/library/aiplatform.googleapis.com`.
+**The medical desk runs on the Gemini API**, with `GEMINI_API_KEY` and
+`MEDICAL_AI_GEMINI_MODEL` (default: the coach model). Every reply reports the
+model that answered, and the UI prints it. Self-hosted MedGemma and Vertex AI
+were both supported once and were removed in Sept 2026;
+[`wiki/MedGemma-Decommission.md`](wiki/MedGemma-Decommission.md) records how
+their Google Cloud resources were torn down. Because the brief is health data,
+however minimised, the Gemini key should belong to a **paid** (billing-enabled)
+project: Google's terms for the unpaid tier allow prompts to be used to improve
+its products.
 
 **Emergencies are screened for in code, not left to the model.** `detectRedFlags`
 runs over both the user's message and the model's reply; a hit prepends emergency
@@ -282,18 +298,7 @@ severity by reusing its `key`; `status` and `progress` stay user-owned, ticked
 steps stay ticked, metric readings survive a rewrite, and issues the user resolved
 or dismissed are never reopened. "This looks resolved" comes back as a suggestion
 the user confirms with one tap. The rules live in `reconcileIssues`
-(`server/src/medical.ts`) and are covered by `server/src/medical.test.ts`.
-
-**A self-hosted model is woken before it is needed.** A Cloud Run GPU that has
-scaled to zero takes 1–2 minutes to load, which is longer than anyone will wait
-at a chat box. Opening the health desk (or the Medical tab, once the AI is
-usable) calls `POST /health/warm`, so the boot overlaps with the user typing
-instead of following it. That route runs no inference and sends nothing about
-the user — so unlike every other route here it carries no consent gate — but it
-does cost GPU time, so it is rate-limited and Pro-gated. Warming is per-visit by
-design: pinging from app start would keep the instance from ever sleeping and
-quietly cost `--min-instances=1` money (~$480/month) without the reliability of
-having chosen it.
+(`server/src/health/memory.ts`) and are covered by `server/src/health/medical.test.ts`.
 
 Health data is also the one thing the web client does **not** mirror to
 `localStorage` — it is fetched per session and dropped on logout.
@@ -316,16 +321,8 @@ Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 | `QUOTA_LOOKUP_FREE` / `_PRO` | server | `25` / `250` | daily food lookups |
 | `QUOTA_MEDICAL_FREE` / `_PRO` | server | `0` / `60` | daily medical AI calls (Pro-only feature) |
 | `BOOTSTRAP_HISTORY_DAYS` | server | `120` | history window returned on cold start |
-| `MEDICAL_AI_PROVIDER` | server | `auto` | `auto` / `cloudrun` / `vertex` / `gemini` — who answers medical questions |
-| `MEDICAL_AI_BASE_URL` | server | — | self-hosted OpenAI-compatible endpoint, incl. `/v1` (turns on `cloudrun`) |
-| `MEDICAL_AI_SELF_HOSTED_MODEL` | server | `MEDICAL_AI_MODEL` | model name the self-hosted server expects |
-| `MEDICAL_AI_API_KEY` | server | — | static bearer for a self-hosted endpoint that isn't on Cloud Run |
-| `MEDICAL_AI_MODEL` | server | coach model | Vertex publisher model for the medical desk |
-| `MEDICAL_AI_GEMINI_MODEL` | server | coach model | model used when the medical desk runs on Gemini |
-| `MEDICAL_AI_TIMEOUT_MS` | server | `180000` | hard deadline on medical model calls (must exceed a cold start) |
-| `MEDICAL_AI_WARM_PROBE_MS` | server | `8000` | how long `/health/warm` waits before reporting "warming" |
-| `VERTEX_PROJECT_ID` / `VERTEX_LOCATION` | server | — / `us-central1` | Vertex AI project and region |
-| `VERTEX_SERVICE_ACCOUNT_JSON` | server | — | service-account key JSON (raw or base64) for Vertex OAuth |
+| `MEDICAL_AI_GEMINI_MODEL` | server | coach model | Gemini model for the medical desk |
+| `MEDICAL_AI_TIMEOUT_MS` | server | `90000` | hard deadline per medical model attempt |
 | `YOUTUBE_API_KEY` | server | — | YouTube Data API v3 key; unset disables the demo-video picker |
 | `YOUTUBE_DAILY_BUDGET` | server | `90` | **global** searches per UTC day (Google's hard ceiling is ~100) |
 | `YOUTUBE_CHANNEL_ALLOWLIST` | server | — | channel IDs promoted to the top of every result set |
