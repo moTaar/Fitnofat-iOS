@@ -1,16 +1,37 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+/**
+ * Reads an env var, trimmed, with surrounding quotes removed.
+ *
+ * Hosting dashboards and `.env` files both routinely hand back a value the user
+ * typed with quotes around it. For a string that produces a URL nothing can
+ * fetch; for a number `parseInt` sees the quote, returns NaN, and the setting
+ * silently does nothing while looking correct in the dashboard.
+ */
+function text(name: string, fallback = ""): string {
+  const raw = (process.env[name] ?? "").trim();
+  const unquoted = raw.replace(/^(["'])([\s\S]*)\1$/, "$2").trim();
+  return unquoted || fallback;
+}
+
 function required(name: string): string {
-  const v = process.env[name];
+  const v = text(name);
   if (!v) {
     console.warn(`[config] Missing env var ${name} — some features will fail.`);
   }
-  return v ?? "";
+  return v;
 }
 
 function num(name: string, fallback: number): number {
-  const parsed = parseInt(process.env[name] ?? "", 10);
+  const raw = text(name);
+  const parsed = parseInt(raw, 10);
+  if (raw && !(Number.isFinite(parsed) && parsed >= 0)) {
+    // Say so rather than quietly using the default: a mistyped timeout looks
+    // exactly like a correct one from the outside.
+    console.warn(`[config] ${name}="${raw}" is not a non-negative number — using ${fallback}.`);
+    return fallback;
+  }
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
@@ -36,7 +57,7 @@ export const config = {
   // don't need this — those verify against the published JWKS automatically.
   supabaseJwtSecret: process.env.SUPABASE_JWT_SECRET ?? "",
 
-  geminiApiKey: process.env.GEMINI_API_KEY ?? "",
+  geminiApiKey: text("GEMINI_API_KEY"),
   geminiModel: process.env.GEMINI_MODEL ?? "gemini-3.6-flash",
   // Stronger model with thinking + search grounding for routine-adjustment coaching.
   coachModel: COACH_MODEL,
@@ -64,7 +85,7 @@ export const config = {
   // Vertex is never a hard requirement: a medical request degrades to Gemini
   // rather than failing, because a health question going unanswered is worse
   // than one answered by the general model (the reply says which model ran).
-  medicalProvider: (process.env.MEDICAL_AI_PROVIDER ?? "auto") as
+  medicalProvider: (text("MEDICAL_AI_PROVIDER", "auto")) as
     | "auto"
     | "cloudrun"
     | "vertex"
@@ -72,14 +93,14 @@ export const config = {
   // Base URL of a self-hosted OpenAI-compatible server, INCLUDING the version
   // path — e.g. https://medgemma-xxxxx.europe-west1.run.app/v1. Setting this is
   // what turns the "cloudrun" provider on.
-  medicalBaseUrl: (process.env.MEDICAL_AI_BASE_URL ?? "").replace(/\/+$/, ""),
+  medicalBaseUrl: text("MEDICAL_AI_BASE_URL").replace(/\/+$/, ""),
   // Model name the self-hosted server expects in the request body (vLLM echoes
   // whatever `--served-model-name` was set to). Defaults to `medicalModel`.
-  medicalSelfHostedModel: process.env.MEDICAL_AI_SELF_HOSTED_MODEL ?? "",
+  medicalSelfHostedModel: text("MEDICAL_AI_SELF_HOSTED_MODEL"),
   // Optional static bearer token for a self-hosted endpoint that isn't on Cloud
   // Run. Leave unset for Cloud Run: the service account mints an ID token, which
   // is the better credential — short-lived and audience-scoped.
-  medicalApiKey: process.env.MEDICAL_AI_API_KEY ?? "",
+  medicalApiKey: text("MEDICAL_AI_API_KEY"),
   // Vertex publisher model id. The caller picks the request shape from the id
   // (see server/src/medical.ts), so both families work:
   //   `gemini-*`  → the modern `:generateContent` contract. This is the default
@@ -89,9 +110,9 @@ export const config = {
   //   `medlm-*`   → the PaLM-era `:predict` contract, kept for any project that
   //                 still has a medical-tuned model served under it.
   // Point this at a medical-tuned publisher model if your project has one.
-  medicalModel: process.env.MEDICAL_AI_MODEL ?? COACH_MODEL,
+  medicalModel: text("MEDICAL_AI_MODEL", COACH_MODEL),
   // Model used when the request runs on the Gemini provider.
-  medicalGeminiModel: process.env.MEDICAL_AI_GEMINI_MODEL ?? COACH_MODEL,
+  medicalGeminiModel: text("MEDICAL_AI_GEMINI_MODEL", COACH_MODEL),
   // Medical answers are longer and reasoned, and a self-hosted model that has
   // scaled to zero needs 1-2 minutes to load before it answers at all. 90s was
   // shorter than a cold start, so the first question of the day fell back to
@@ -105,8 +126,8 @@ export const config = {
 
   // Vertex AI credentials. `VERTEX_SERVICE_ACCOUNT_JSON` takes the key JSON
   // inline (raw or base64); `GOOGLE_APPLICATION_CREDENTIALS` points at a file.
-  vertexProjectId: process.env.VERTEX_PROJECT_ID ?? "",
-  vertexLocation: process.env.VERTEX_LOCATION ?? "us-central1",
+  vertexProjectId: text("VERTEX_PROJECT_ID"),
+  vertexLocation: text("VERTEX_LOCATION", "us-central1"),
   vertexServiceAccountJson: process.env.VERTEX_SERVICE_ACCOUNT_JSON ?? "",
   googleCredentialsPath: process.env.GOOGLE_APPLICATION_CREDENTIALS ?? "",
 

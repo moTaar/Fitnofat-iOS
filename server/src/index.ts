@@ -8,6 +8,7 @@ import { apiLimiter, readYoutubeBudget } from "./ratelimit";
 import { dataRouter } from "./routes/data";
 import { healthRouter } from "./routes/health";
 import { chatOnboarding } from "./gemini";
+import { activeProvider, modelLabel } from "./medical";
 
 const app = express();
 
@@ -91,6 +92,13 @@ if (require.main === module) {
     console.log(`Fitnofat API listening on :${config.port}`);
     console.log(`  CORS origins: ${config.corsOrigins.join(", ")}`);
     console.log(`  AI engine: ${config.geminiApiKey ? "Gemini" : "local fallback"}`);
+    // The medical desk falls back silently by design, so the only way to know
+    // what it will actually use is to say so at boot — including the deadline,
+    // which is the setting most likely to be quietly wrong.
+    console.log(
+      `  Medical desk: ${modelLabel(activeProvider())} · timeout ${config.medicalTimeoutMs}ms` +
+        (config.medicalBaseUrl ? ` · ${config.medicalBaseUrl}` : "")
+    );
     console.log(`  JWT verification: ${config.supabaseJwtSecret ? "local (HS256) + JWKS" : "JWKS + network fallback"}`);
   });
 }
