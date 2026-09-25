@@ -8,7 +8,7 @@ import { apiLimiter, readYoutubeBudget } from "./ratelimit";
 import { dataRouter } from "./routes/data";
 import { healthRouter } from "./routes/health";
 import { chatOnboarding } from "./gemini";
-import { activeProvider, modelLabel } from "./medical";
+import { activeProvider, modelLabel } from "./health/reasoning";
 
 const app = express();
 
@@ -96,8 +96,7 @@ if (require.main === module) {
     // what it will actually use is to say so at boot — including the deadline,
     // which is the setting most likely to be quietly wrong.
     console.log(
-      `  Medical desk: ${modelLabel(activeProvider())} · timeout ${config.medicalTimeoutMs}ms` +
-        (config.medicalBaseUrl ? ` · ${config.medicalBaseUrl}` : "")
+      `  Medical desk: ${modelLabel(activeProvider())} · timeout ${config.medicalTimeoutMs}ms`
     );
     console.log(`  JWT verification: ${config.supabaseJwtSecret ? "local (HS256) + JWKS" : "JWKS + network fallback"}`);
   });

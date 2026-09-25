@@ -9,7 +9,9 @@ import { api, ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/misc";
+import { CloudDisclosureNote } from "@/components/CloudDisclosureNote";
 import { cn } from "@/lib/utils";
+import type { CloudDisclosure } from "@/lib/types";
 
 type ChatImage = { mimeType: string; data: string };
 type ChatMsg = {
@@ -19,14 +21,17 @@ type ChatMsg = {
   images?: ChatImage[];
   /** Health mode: the emergency screen fired on this turn. */
   urgent?: boolean;
-  /** Health mode: which model answered, e.g. "medlm-medium (Vertex AI)". */
+  /** Health mode: which model answered, e.g. "gemini-2.5-pro (Gemini)". */
   model?: string;
+  /** Health mode: what the cloud model was given for this turn. */
+  disclosure?: CloudDisclosure;
 };
 
 // The coach chat has two desks. "training" is the original coach (programming,
-// logging, routine edits); "health" routes to the medical model instead, with
-// the athlete's medical record as context — a different backend, a different
-// system prompt, and its own consent gate.
+// logging, routine edits); "health" routes to the medical model instead, with a
+// server-built brief of the athlete's medical record as context (never the
+// record itself) — a different backend, a different system prompt, and its own
+// consent gate.
 type CoachDesk = "training" | "health";
 
 const MAX_IMAGES_PER_MESSAGE = 4;
@@ -103,8 +108,6 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
   const receiveHealthIssue = useStore((s) => s.receiveHealthIssue);
   const receiveHealthRecord = useStore((s) => s.receiveHealthRecord);
   const receiveHealthRules = useStore((s) => s.receiveHealthRules);
-  const warmMedical = useStore((s) => s.warmMedical);
-  const medicalWarm = useStore((s) => s.medicalWarm);
 
   // Coach mode for onboarded users; onboarding interview otherwise (or when
   // explicitly restarted from Settings via ?restart=1).
@@ -145,15 +148,10 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
 
   // The health desk needs to know whether consent has been given before the
   // first message, so the opt-in can be shown up front rather than as an error.
-  //
-  // Switching here also starts waking a self-hosted model, so its 1-2 minute
-  // cold start overlaps with the user typing rather than following it. It is a
-  // no-op when the model is hosted (nothing to wake) or already up.
   useEffect(() => {
     if (desk !== "health") return;
     void loadHealth();
-    warmMedical();
-  }, [desk, loadHealth, warmMedical]);
+  }, [desk, loadHealth]);
 
   useEffect(() => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
@@ -238,6 +236,7 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
           content: reply.text,
           urgent: reply.urgent,
           model: reply.model,
+          disclosure: reply.disclosure,
         };
 
         // Rules can accompany any reply type, so they're merged before the
@@ -534,10 +533,12 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
             <div>
               <p className="font-semibold text-amber-500">Turn on AI health analysis</p>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                Your medical record lives in your own database. To answer health questions it has to
-                be sent to {medicalAi?.model ?? "the medical model"} for the length of the request.
-                Nothing is sent until you allow it, and you can turn it off again from the Medical
-                tab.
+                Your medical record stays in your own database. To answer a question, the app's
+                server prepares a short summary of only the parts that question is about — with your
+                name and contact details removed — and sends that to{" "}
+                {medicalAi?.model ?? "the medical model"}. Your conditions, medications and allergies
+                are always included, for safety. Nothing is sent until you allow it, and you can turn
+                it off again from the Medical tab.
               </p>
             </div>
           </div>
@@ -663,6 +664,7 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
                         {m.model} · not a diagnosis
                       </span>
                     )}
+                    {m.disclosure && <CloudDisclosureNote disclosure={m.disclosure} className="mt-1" />}
                   </div>
                   {m.role === "user" && !loading && !done && !generating && editingIdx === null && (
                     <button
@@ -839,16 +841,6 @@ export function AiCoach({ embedded = false, onClose }: { embedded?: boolean; onC
               </button>
             </div>
           ))}
-        </div>
-      )}
-
-      {/* Waking the self-hosted model. Not an error, and not blocking: the user
-          can type and send — the request simply waits for the model. */}
-      {coachMode && desk === "health" && medicalWarm === "warming" && (
-        <div className="flex items-center gap-2 pt-2 text-[11px] text-muted-foreground">
-          <Spinner className="h-3 w-3" />
-          Waking {medicalAi?.model ?? "the medical model"} — the first answer after a
-          quiet spell takes a minute.
         </div>
       )}
 
