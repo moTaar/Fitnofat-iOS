@@ -83,6 +83,8 @@ interface AppState {
   logout: () => void;
   bootstrap: () => Promise<void>;
   loadOlderHistory: () => Promise<void>;
+  /** Pull-to-refresh on History: flushes the offline queue, then re-reads the newest page. */
+  refreshHistory: () => Promise<void>;
   // Escape hatch for the launch splash: proceed with whatever's cached instead
   // of waiting on a bootstrap request that's taking too long or is stuck.
   skipBootstrap: () => void;
@@ -109,6 +111,10 @@ interface AppState {
   // health / medical
   loadHealth: (force?: boolean) => Promise<void>;
   updateHealthProfile: (patch: Partial<HealthProfile>) => Promise<void>;
+  /** Age / height / weight / sex live on the training profile, but the medical desk edits them too. */
+  updateBodyStats: (
+    patch: Partial<Pick<UserProfile, "bodyweightKg" | "heightCm" | "age" | "sex">>
+  ) => Promise<void>;
   setHealthConsent: (granted: boolean) => Promise<void>;
   /** Re-runs the AI review and folds the result into the tracked issues. */
   runHealthReview: () => Promise<HealthReviewResult>;
@@ -547,6 +553,38 @@ export const useStore = create<AppState>()(
         }
       },
 
+      refreshHistory: async () => {
+        if (!auth.isAuthenticated()) return;
+        // Push first, so a session logged offline comes back with its server id
+        // instead of being shown twice.
+        await get().syncPending();
+        const page = await api.workoutHistory();
+        set((cur) => {
+          // The page is the server's truth for everything from its oldest
+          // session onwards — that's what drops a session deleted on another
+          // device. Older pages the user already scrolled in are kept.
+          const cutoff = page.hasMore
+            ? page.workouts.reduce((min, w) => Math.min(min, w.startedAt), Number.POSITIVE_INFINITY)
+            : Number.NEGATIVE_INFINITY;
+          const fresh = new Set(page.workouts.map((w) => w.id));
+          const freshClientIds = new Set(
+            page.workouts.map((w) => w.clientId).filter(Boolean) as string[]
+          );
+          const kept = cur.history.filter((w) => {
+            if (fresh.has(w.id)) return false;
+            // Unsynced sessions exist nowhere else — never drop one.
+            if (!w.synced) return !freshClientIds.has(w.clientId ?? w.id);
+            return w.startedAt < cutoff;
+          });
+          return {
+            history: [...kept, ...page.workouts].sort((a, b) => b.startedAt - a.startedAt),
+            // Sessions older than this page are whatever was already paged in,
+            // so the existing flag still describes them.
+            historyHasMore: page.hasMore ? cur.historyHasMore : false,
+          };
+        });
+      },
+
       skipBootstrap: () => set({ bootstrapped: true }),
 
       // ── AI / onboarding ─────────────────────────────────────────────────
@@ -676,6 +714,12 @@ export const useStore = create<AppState>()(
       updateHealthProfile: async (patch) => {
         const health = await api.updateHealthProfile(patch);
         set({ health });
+      },
+
+      updateBodyStats: async (patch) => {
+        await api.updateProfile(patch);
+        const p = get().profile;
+        if (p) set({ profile: { ...p, ...patch } });
       },
 
       setHealthConsent: async (granted) => {

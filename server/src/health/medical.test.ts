@@ -9,7 +9,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { config } from "../config";
 import { reconcileIssues } from "./memory";
 import { buildChatBrief } from "./privacy";
-import { __reasoning, activeProvider, localReview, modelLabel, parseMedicalReply } from "./reasoning";
+import {
+  __reasoning, activeProvider, localReview, modelLabel, parseMedicalReply, profileGaps,
+} from "./reasoning";
 import {
   boundedData, detectRedFlags, EMERGENCY_NOTICE, issueKey, normalizeIssue, normalizeRecord,
   normalizeRule, normalizeRules,
@@ -405,6 +407,21 @@ describe("localReview (no-model fallback)", () => {
   it("asks for the missing profile fields any real reasoning depends on", () => {
     const result = localReview(ctx({ profile: profile(), health: healthProfile() }));
     expect(result.issues.map((i) => i.key)).toContain("complete-health-profile");
+  });
+
+  it("accepts a background with no conditions once any question is answered", () => {
+    // A healthy athlete has nothing to list under conditions — that must not
+    // leave "complete your profile" open forever.
+    const result = localReview(ctx({ health: healthProfile({ smoking: "never" }) }));
+    expect(result.issues.map((i) => i.key)).not.toContain("complete-health-profile");
+  });
+
+  it("names exactly what is missing", () => {
+    expect(profileGaps(ctx({ health: healthProfile() }))).toEqual(["medical background"]);
+    expect(profileGaps(ctx({ profile: profile({ bodyweightKg: 80, heightCm: 180 }) }))).toEqual([
+      "body stats",
+    ]);
+    expect(profileGaps(ctx())).toEqual([]);
   });
 
   it("never proposes resolving anything on its own", () => {

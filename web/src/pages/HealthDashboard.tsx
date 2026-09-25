@@ -2,22 +2,23 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertTriangle, ArrowDown, ArrowUp, Ban, CalendarClock, Check, ChevronDown,
   ClipboardList, CircleCheck, HeartPulse, Loader2, Lock, PlayCircle, Plus, RefreshCw,
-  ShieldCheck, Stethoscope, Trash2, X,
+  ShieldCheck, Stethoscope, Trash2, UserRound, X,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useStore } from "@/lib/store";
 import { toast } from "@/lib/toast";
 import { isEntitled } from "@/lib/entitlements";
+import { PROFILE_ISSUE_KEY, profileGaps } from "@/lib/healthProfile";
 import { UpgradeRequiredError } from "@/lib/api";
 import type {
   HealthIssue, HealthIssueCategory, HealthIssueSeverity, HealthIssueStatus, HealthRecordKind,
-  HealthRule, RuleDirection, RuleDomain, CloudDisclosure,
+  HealthRule, RuleDirection, RuleDomain, CloudDisclosure, Sex,
 } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
-import { Badge, EmptyState, Progress, Spinner } from "@/components/ui/misc";
+import { Badge, EmptyState, Progress, SegmentedControl, Spinner } from "@/components/ui/misc";
 import { CloudDisclosureNote } from "@/components/CloudDisclosureNote";
 import { cn } from "@/lib/utils";
 
@@ -73,6 +74,7 @@ type Tab = "issues" | "rules" | "history" | "background";
 export function HealthDashboard() {
   const navigate = useNavigate();
   const health = useStore((s) => s.health);
+  const profile = useStore((s) => s.profile);
   const issues = useStore((s) => s.healthIssues);
   const records = useStore((s) => s.healthRecords);
   const rules = useStore((s) => s.healthRules);
@@ -96,6 +98,11 @@ export function HealthDashboard() {
 
   const entitled = isEntitled(subscription, "ai_medical");
   const consented = !!health?.aiConsentAt;
+  const gaps = profileGaps(profile, health);
+  const openBackground = () => {
+    setTab("background");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   useEffect(() => {
     void loadHealth();
@@ -284,6 +291,27 @@ export function HealthDashboard() {
         </Card>
       )}
 
+      {/* Profile gaps — the review keeps asking for these, so say exactly where
+          they're filled in rather than leaving the user to hunt for it. */}
+      {loaded && gaps.length > 0 && tab !== "background" && (
+        <Card className="border-sky-500/40 bg-sky-500/5">
+          <CardContent className="flex gap-3 p-4">
+            <UserRound className="mt-0.5 h-5 w-5 shrink-0 text-sky-500" />
+            <div className="flex-1">
+              <p className="font-semibold">Your health profile is incomplete</p>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Missing: {gaps.join(" and ")}. It's all on the{" "}
+                <b className="text-foreground">Background</b> tab — nutrition targets and reviews
+                are guesswork without it.
+              </p>
+              <Button size="sm" className="mt-3" onClick={openBackground}>
+                Complete profile
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Tabs */}
       <div className="grid grid-cols-4 gap-1 rounded-xl bg-secondary p-1">
         {([
@@ -333,7 +361,17 @@ export function HealthDashboard() {
               }
             />
           ) : (
-            visible.map((issue) => <IssueCard key={issue.id} issue={issue} />)
+            visible.map((issue) => (
+              <IssueCard
+                key={issue.id}
+                issue={issue}
+                profileAction={
+                  issue.key === PROFILE_ISSUE_KEY
+                    ? { complete: gaps.length === 0, open: openBackground }
+                    : undefined
+                }
+              />
+            ))
           )}
         </div>
       )}
@@ -353,7 +391,14 @@ export function HealthDashboard() {
 }
 
 // ── One tracked issue ────────────────────────────────────────────────────────
-function IssueCard({ issue }: { issue: HealthIssue }) {
+function IssueCard({
+  issue,
+  profileAction,
+}: {
+  issue: HealthIssue;
+  /** Set only on the "complete your profile" reminder: where to go, and whether it's done. */
+  profileAction?: { complete: boolean; open: () => void };
+}) {
   const toggleIssueStep = useStore((s) => s.toggleIssueStep);
   const updateHealthIssue = useStore((s) => s.updateHealthIssue);
   const deleteHealthIssue = useStore((s) => s.deleteHealthIssue);
@@ -431,6 +476,26 @@ function IssueCard({ issue }: { issue: HealthIssue }) {
           </div>
         </div>
       </button>
+
+      {profileAction && OPEN_STATUSES.includes(issue.status) && (
+        <div className="-mt-1 flex flex-wrap gap-2 px-4 pb-4 pl-[2.375rem]">
+          {profileAction.complete ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void updateHealthIssue(issue.id, { status: "resolved", progress: 100 })}
+            >
+              <Check className="h-4 w-4" />
+              All filled in — close this
+            </Button>
+          ) : (
+            <Button size="sm" onClick={profileAction.open}>
+              <UserRound className="h-4 w-4" />
+              Fill it in
+            </Button>
+          )}
+        </div>
+      )}
 
       {open && (
         <CardContent className="space-y-4 border-t border-border p-4">
@@ -1116,6 +1181,13 @@ function BackgroundTab({ onRevokeConsent }: { onRevokeConsent: () => void }) {
 
   return (
     <div className="space-y-4">
+      <BodyStats />
+
+      <p className="text-xs text-muted-foreground">
+        Nothing to list under conditions? That's fine — answering smoking and alcohol below is
+        enough for the review to know you've filled this in.
+      </p>
+
       <ChipList
         label="Conditions"
         placeholder="e.g. Asthma"
@@ -1230,6 +1302,93 @@ function BackgroundTab({ onRevokeConsent }: { onRevokeConsent: () => void }) {
 
       {busy && <p className="text-center text-xs text-muted-foreground">Saving…</p>}
     </div>
+  );
+}
+
+// Age, height and weight live on the training profile (onboarding and the
+// nutrition planner write them too), but they're the first thing the review asks
+// for — so they're editable here rather than sending the user to another screen.
+function BodyStats() {
+  const profile = useStore((s) => s.profile);
+  const updateBodyStats = useStore((s) => s.updateBodyStats);
+  const [weight, setWeight] = useState(profile?.bodyweightKg?.toString() ?? "");
+  const [height, setHeight] = useState(profile?.heightCm?.toString() ?? "");
+  const [age, setAge] = useState(profile?.age?.toString() ?? "");
+
+  const save = async (patch: Parameters<typeof updateBodyStats>[0]) => {
+    try {
+      await updateBodyStats(patch);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't save that.");
+    }
+  };
+
+  // Saves on blur, and only a real change — an empty or out-of-range box is left alone.
+  const commit = (
+    raw: string,
+    current: number | undefined,
+    key: "bodyweightKg" | "heightCm" | "age",
+    max: number
+  ) => {
+    const n = key === "age" ? Math.round(Number(raw)) : Number(raw);
+    if (!raw.trim() || !Number.isFinite(n) || n <= 0 || n > max || n === current) return;
+    void save({ [key]: n });
+  };
+
+  if (!profile) return null;
+
+  return (
+    <Card>
+      <CardContent className="space-y-3 p-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Body stats
+        </p>
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <Label htmlFor="bs-weight">Weight (kg)</Label>
+            <Input
+              id="bs-weight" type="number" inputMode="decimal" placeholder="75" className="mt-1.5"
+              value={weight}
+              onChange={(e) => setWeight(e.target.value)}
+              onBlur={() => commit(weight, profile.bodyweightKg, "bodyweightKg", 400)}
+            />
+          </div>
+          <div>
+            <Label htmlFor="bs-height">Height (cm)</Label>
+            <Input
+              id="bs-height" type="number" inputMode="decimal" placeholder="178" className="mt-1.5"
+              value={height}
+              onChange={(e) => setHeight(e.target.value)}
+              onBlur={() => commit(height, profile.heightCm, "heightCm", 260)}
+            />
+          </div>
+          <div>
+            <Label htmlFor="bs-age">Age</Label>
+            <Input
+              id="bs-age" type="number" inputMode="numeric" placeholder="28" className="mt-1.5"
+              value={age}
+              onChange={(e) => setAge(e.target.value)}
+              onBlur={() => commit(age, profile.age, "age", 120)}
+            />
+          </div>
+        </div>
+        <div>
+          <Label>Sex</Label>
+          <div className="mt-1.5">
+            <SegmentedControl<Sex>
+              columns={3}
+              value={profile.sex as Sex}
+              onChange={(sex) => void save({ sex })}
+              options={[
+                { label: "Male", value: "male" },
+                { label: "Female", value: "female" },
+                { label: "Other", value: "other" },
+              ]}
+            />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

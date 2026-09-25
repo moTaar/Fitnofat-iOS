@@ -478,6 +478,7 @@ Rules:
 - Every issue needs an actionPlan of 2-5 concrete steps the person can start this week, and at least one metric they can actually measure at home (or "lab: X" when it needs a test).
 - severity "urgent" is reserved for things needing care within days — use redFlags to say what would escalate it.
 - You do not diagnose and you do not prescribe. Frame medical items as "worth investigating with a clinician, here's what to bring them".
+- If body stats (age, height, weight) or the medical background are missing and that limits the review, raise it under the key "complete-health-profile" and point the person to "Medical → Background", where all of those fields are edited.
 - "summary" is 2-3 sentences: the overall picture and the single highest-leverage change.`;
 
 /**
@@ -486,6 +487,26 @@ Rules:
  * full memory — nothing here leaves the server. It can't reason; it just makes
  * sure the obvious, already-recorded things don't silently go untracked.
  */
+/**
+ * What's missing from the background, in the words the issue shows. Mirrored by
+ * `profileGaps` in `web/src/lib/healthProfile.ts`, which drives the "finish your
+ * profile" card — keep the two rules identical or the card and the issue disagree.
+ *
+ * Any answered background question counts: someone healthy has no conditions to
+ * list, and demanding one would leave the item open forever.
+ */
+export function profileGaps(memory: Pick<HealthMemory, "profile" | "health">): string[] {
+  const { profile: p, health: h } = memory;
+  const missing: string[] = [];
+  if (!p.bodyweightKg || !p.heightCm || !p.age) missing.push("body stats");
+  const answered =
+    h.conditions.length > 0 || h.allergies.length > 0 || h.medications.length > 0 ||
+    h.surgeries.length > 0 || h.familyHistory.length > 0 ||
+    !!h.smoking || !!h.alcohol || !!h.notes?.trim();
+  if (!answered) missing.push("medical background");
+  return missing;
+}
+
 export function localReview(memory: HealthMemory): AIHealthReview {
   const issues: AIHealthIssue[] = [];
   const tracked = new Set(memory.issues.filter((i) => i.status !== "resolved").map((i) => i.key));
@@ -512,9 +533,7 @@ export function localReview(memory: HealthMemory): AIHealthReview {
   }
 
   // Gaps in the background that block any useful nutrition/health reasoning.
-  const missing: string[] = [];
-  if (!memory.profile.bodyweightKg || !memory.profile.heightCm || !memory.profile.age) missing.push("body stats");
-  if (!memory.health.conditions.length && !memory.health.notes) missing.push("medical background");
+  const missing = profileGaps(memory);
   if (missing.length && !tracked.has("complete-health-profile")) {
     issues.push({
       key: "complete-health-profile",
@@ -522,7 +541,7 @@ export function localReview(memory: HealthMemory): AIHealthReview {
       category: "lifestyle",
       severity: "low",
       summary: `Missing: ${missing.join(", ")}. Nutrition targets and any health review are guesswork without these.`,
-      actionPlan: [{ step: `Fill in your ${missing.join(" and ")} on the Medical tab` }],
+      actionPlan: [{ step: `Open Medical → Background and fill in your ${missing.join(" and ")}` }],
       metrics: [{ label: "Profile fields completed", target: "all" }],
       redFlags: [],
       confidence: "high",

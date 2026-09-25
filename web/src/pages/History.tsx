@@ -6,7 +6,7 @@ import {
   Calendar, Clock, TrendingUp, Dumbbell, Flame, ChevronRight, Plus, HeartPulse,
   Timer, Copy, Pencil, RotateCw, Trash2, Trophy, Activity,
 } from "lucide-react";
-import { format } from "date-fns";
+import { format, formatDistanceToNowStrict } from "date-fns";
 import { useNavigate } from "react-router-dom";
 import { useStore } from "@/lib/store";
 import { formatDuration, formatVolume, formatCalories, minutesLabel, distanceUnit, formatDistance, kmToDisplayDistance } from "@/lib/utils";
@@ -15,12 +15,18 @@ import {
   type TrendMetric,
 } from "@/lib/analytics";
 import { resolveKind, exerciseDuration } from "@/lib/calories";
+import {
+  HALF_LIFE_DAYS, REGION_LABEL, REGIONS, muscleLoads, type MuscleLoad, type MuscleRegion,
+} from "@/lib/muscles";
+import { toast } from "@/lib/toast";
 import type { ExerciseKind, LoggedExercise, WorkoutSession } from "@/lib/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge, EmptyState } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { SessionEditor } from "@/components/SessionEditor";
+import { MuscleHeatMap } from "@/components/MuscleMap";
+import { PullToRefresh } from "@/components/PullToRefresh";
 
 const KIND_ICON: Record<ExerciseKind, typeof Dumbbell> = {
   strength: Dumbbell,
@@ -51,22 +57,94 @@ export function History() {
     mode: "create" | "edit";
   }>({ open: false, initial: null, mode: "create" });
   const closeEditor = () => setEditor({ open: false, initial: null, mode: "create" });
+  const refreshHistory = useStore((s) => s.refreshHistory);
+
+  // Pull-down on the page: re-read the newest sessions (and push anything
+  // logged offline first), e.g. after logging on another device.
+  const refresh = async () => {
+    if (!navigator.onLine) {
+      toast.error("You're offline — showing what's saved on this device.");
+      return;
+    }
+    try {
+      await refreshHistory();
+    } catch {
+      toast.error("Couldn't refresh your history. Try again shortly.");
+    }
+  };
 
   if (history.length === 0) {
     return (
+      <PullToRefresh onRefresh={refresh}>
+        <div className="space-y-4">
+          <h1 className="pt-2 text-2xl font-extrabold tracking-tight">History</h1>
+          <EmptyState
+            icon={<Calendar className="h-6 w-6" />}
+            title="No workouts logged yet"
+            description="Finish a workout, tell the AI coach what you did, or log one manually — it’ll show up here with calories and progress charts."
+            action={
+              <Button onClick={() => setEditor({ open: true, initial: null, mode: "create" })}>
+                <Plus className="h-4 w-4" />
+                Log a workout
+              </Button>
+            }
+          />
+          <SessionEditor
+            open={editor.open}
+            initial={editor.initial}
+            mode={editor.mode}
+            onClose={closeEditor}
+          />
+        </div>
+      </PullToRefresh>
+    );
+  }
+
+  return (
+    <PullToRefresh onRefresh={refresh}>
       <div className="space-y-4">
-        <h1 className="pt-2 text-2xl font-extrabold tracking-tight">History</h1>
-        <EmptyState
-          icon={<Calendar className="h-6 w-6" />}
-          title="No workouts logged yet"
-          description="Finish a workout, tell the AI coach what you did, or log one manually — it’ll show up here with calories and progress charts."
-          action={
-            <Button onClick={() => setEditor({ open: true, initial: null, mode: "create" })}>
-              <Plus className="h-4 w-4" />
-              Log a workout
-            </Button>
-          }
+        <div className="flex items-center justify-between pt-2">
+          <h1 className="text-2xl font-extrabold tracking-tight">History</h1>
+          <Button size="sm" variant="outline" onClick={() => setEditor({ open: true, initial: null, mode: "create" })}>
+            <Plus className="h-4 w-4" />
+            Log
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-1 rounded-xl bg-secondary p-1">
+          {(["sessions", "progress"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`rounded-lg py-2 text-sm font-medium capitalize tap ${
+                tab === t ? "bg-card shadow-sm" : "text-muted-foreground"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {tab === "sessions" ? (
+          <SessionsTab history={history} units={units} onOpen={setDetail} />
+        ) : (
+          <ProgressTab history={history} units={units} />
+        )}
+
+        <SessionDetail
+          session={detail}
+          units={units}
+          onClose={() => setDetail(null)}
+          onEdit={(s) => {
+            setDetail(null);
+            setEditor({ open: true, initial: s, mode: "edit" });
+          }}
+          onClone={(s) => {
+            setDetail(null);
+            setEditor({ open: true, initial: s, mode: "create" });
+          }}
         />
+
         <SessionEditor
           open={editor.open}
           initial={editor.initial}
@@ -74,60 +152,7 @@ export function History() {
           onClose={closeEditor}
         />
       </div>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between pt-2">
-        <h1 className="text-2xl font-extrabold tracking-tight">History</h1>
-        <Button size="sm" variant="outline" onClick={() => setEditor({ open: true, initial: null, mode: "create" })}>
-          <Plus className="h-4 w-4" />
-          Log
-        </Button>
-      </div>
-
-      <div className="grid grid-cols-2 gap-1 rounded-xl bg-secondary p-1">
-        {(["sessions", "progress"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`rounded-lg py-2 text-sm font-medium capitalize tap ${
-              tab === t ? "bg-card shadow-sm" : "text-muted-foreground"
-            }`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
-
-      {tab === "sessions" ? (
-        <SessionsTab history={history} units={units} onOpen={setDetail} />
-      ) : (
-        <ProgressTab history={history} units={units} />
-      )}
-
-      <SessionDetail
-        session={detail}
-        units={units}
-        onClose={() => setDetail(null)}
-        onEdit={(s) => {
-          setDetail(null);
-          setEditor({ open: true, initial: s, mode: "edit" });
-        }}
-        onClone={(s) => {
-          setDetail(null);
-          setEditor({ open: true, initial: s, mode: "create" });
-        }}
-      />
-
-      <SessionEditor
-        open={editor.open}
-        initial={editor.initial}
-        mode={editor.mode}
-        onClose={closeEditor}
-      />
-    </div>
+    </PullToRefresh>
   );
 }
 
@@ -390,6 +415,10 @@ function ProgressTab({ history, units }: { history: WorkoutSession[]; units: "kg
         <SummaryCard icon={HeartPulse} label="Cardio" value={`${summary.cardioMin} min`} />
       </div>
 
+      {/* Which muscles are getting the work — independent of the range above,
+          since it's a decaying picture of right now rather than a total. */}
+      <MuscleBalanceCard history={history} />
+
       {/* Calories chart */}
       <ChartCard title="Calories burned / week" icon={Flame}>
         <BarChart data={series} margin={{ top: 5, right: 8, left: -22, bottom: 0 }}>
@@ -496,6 +525,108 @@ function ProgressTab({ history, units }: { history: WorkoutSession[]; units: "kg
           </ResponsiveContainer>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+// ── Muscle balance heatmap ────────────────────────────────────────────────────
+function lastTrainedLabel(at?: number): string {
+  return at ? `last trained ${formatDistanceToNowStrict(at, { addSuffix: true })}` : "not trained lately";
+}
+
+function MuscleBalanceCard({ history }: { history: WorkoutSession[] }) {
+  const library = useStore((s) => s.exercises);
+  const [selected, setSelected] = useState<MuscleRegion | null>(null);
+
+  const loads = useMemo(() => muscleLoads(history, library), [history, library]);
+  const intensity = useMemo(
+    () => Object.fromEntries(REGIONS.map((r) => [r, loads[r].intensity])) as Record<MuscleRegion, number>,
+    [loads]
+  );
+  const ranked = useMemo(() => REGIONS.map((r) => loads[r]).sort((a, b) => b.load - a.load), [loads]);
+  const anyLoad = ranked[0].load > 0;
+  const leading = ranked.filter((m) => m.load > 0).slice(0, 3);
+  const behind = [...ranked].reverse().slice(0, 3);
+  const pick = selected ? loads[selected] : null;
+
+  return (
+    <div className="rounded-2xl border border-border bg-card p-3">
+      <div className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+        <Dumbbell className="h-4 w-4 text-primary" />
+        Muscle balance
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Brighter = trained harder lately. Colour fades by half every {HALF_LIFE_DAYS} days without
+        work. Tap a muscle for detail.
+      </p>
+
+      <MuscleHeatMap
+        intensity={intensity}
+        selected={selected}
+        onSelect={(id) => setSelected((cur) => (cur === id ? null : id))}
+        className="mx-auto mt-2 h-60 w-full max-w-xs"
+      />
+
+      {/* Legend */}
+      <div className="mx-auto mt-1 flex max-w-xs items-center gap-2 text-[10px] text-muted-foreground">
+        <span>Fading</span>
+        <span
+          className="h-1.5 flex-1 rounded-full"
+          style={{
+            background:
+              "linear-gradient(to right, hsl(var(--muted-foreground) / 0.2), hsl(var(--primary)))",
+          }}
+        />
+        <span>Well trained</span>
+      </div>
+
+      {pick ? (
+        <div className="mt-3 rounded-xl bg-secondary px-3 py-2 text-sm">
+          <span className="font-semibold">{REGION_LABEL[pick.region]}</span>
+          <span className="text-muted-foreground">
+            {" · "}
+            {pick.setsThisWeek} direct set{pick.setsThisWeek === 1 ? "" : "s"} this week ·{" "}
+            {lastTrainedLabel(pick.lastTrainedAt)}
+          </span>
+        </div>
+      ) : !anyLoad ? (
+        <p className="mt-3 text-center text-sm text-muted-foreground">
+          Nothing logged in the last few weeks — train and the map fills in.
+        </p>
+      ) : (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <MuscleList title="Getting the most" items={leading} />
+          <MuscleList title="Falling behind" items={behind} muted />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MuscleList({
+  title,
+  items,
+  muted,
+}: {
+  title: string;
+  items: MuscleLoad[];
+  muted?: boolean;
+}) {
+  return (
+    <div className="rounded-xl bg-secondary p-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
+      <ul className="mt-1.5 space-y-1">
+        {items.map((m) => (
+          <li key={m.region} className="text-xs leading-tight">
+            <span className={muted ? "font-medium" : "font-semibold text-primary"}>
+              {REGION_LABEL[m.region]}
+            </span>
+            <span className="block text-[10px] text-muted-foreground">
+              {muted ? lastTrainedLabel(m.lastTrainedAt) : `${m.setsThisWeek} sets this week`}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
