@@ -123,6 +123,8 @@ security allows a signed-in user to do to their own rows. **Never** put the
 
 ## Installing on your iPhone
 
+Publishing on the App Store as well? Follow [wiki/iOS-App-Store-Guide.md](wiki/iOS-App-Store-Guide.md) end to end.
+
 Apple only lets apps onto an iPhone through Xcode (which needs a Mac) or
 TestFlight/the App Store (which needs a paid developer account). Pick one:
 
