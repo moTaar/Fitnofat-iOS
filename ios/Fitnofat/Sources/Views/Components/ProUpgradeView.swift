@@ -54,6 +54,7 @@ struct ProUpgradeView: View {
         case .aiNutrition: return "Get personalized meal plans and nutrition guidance tailored to your goals."
         case .programRefresh: return "Refresh your training program with AI-generated updates based on your progress."
         case .aiExercise: return "AI-powered exercise lookup and form guidance for any exercise."
+        case .aiMedical: return "An AI nutritionist and medical helper that reviews your health record and keeps your do & don't list."
         }
     }
 

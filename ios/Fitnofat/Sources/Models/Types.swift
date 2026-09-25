@@ -109,6 +109,7 @@ enum Plan: String, Codable {
 enum Feature: String, Codable {
     case aiCoach = "ai_coach", aiNutrition = "ai_nutrition"
     case programRefresh = "program_refresh", aiExercise = "ai_exercise"
+    case aiMedical = "ai_medical"
 }
 
 enum RoutineSource: String, Codable {

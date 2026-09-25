@@ -16,14 +16,48 @@ aside for the duration of the install. Keep both in sync when adding a dependenc
 to `server/` or `web/`, or CI (`npm ci` per package) will fail while local dev
 passes.
 
+`ios/Fitnofat` is the native SwiftUI client (Swift package, iOS 17). It is not an
+npm package and can't be built on Windows; see "Web and iOS" below.
+
 ## Commands
 ```bash
 npm test --workspace=server      # vitest
 npm test --workspace=web
 npm run typecheck --workspace=server
 npm run lint --workspace=web     # tsc --noEmit
+npm run parity                   # web ⇄ iOS drift check; --backlog lists known gaps
 ```
-CI runs typecheck + test + build for all four packages on every PR.
+CI runs typecheck + test + build for all four packages, plus the parity check,
+on every PR.
+
+## Web and iOS are two clients of one API
+
+`web/` and `ios/Fitnofat` share no code, so nothing keeps them in step except
+this rule: **a change to what users can do, or to what data crosses the API,
+lands on both clients or is recorded in `parity.json`.** `pending` is the
+lagging platform's backlog; `skip` is a deliberate difference, with the reason.
+The `port-feature` skill has the web ↔ Swift file map and the porting steps.
+
+- **Run `npm run parity` after touching either client or any route.** It
+  compares server/accounts routes against both clients' calls, web string
+  unions against Swift enums, Swift `Codable` structs against web's interfaces,
+  and every copy of the entitlement map. CI fails on anything unrecorded, and on
+  a `parity.json` entry that no longer differs, so ported work has to be
+  crossed off.
+- **iOS decoding is all-or-nothing.** One unknown enum value or one missing
+  required field fails the whole response, so a server change that is harmless
+  to web can blank the iOS app. A field the API may omit must be `T?` in Swift
+  (`var x: T = default` is still required), and an enum over values the server
+  doesn't control needs an `init(from:)` fallback. Entries marked DECODE BREAK
+  in `parity.json` are live iOS failures of exactly this kind.
+- **Web's types are the contract the check reads.** If web's type for a
+  response is looser or stricter than what the server really sends, fix the
+  type rather than recording around it.
+- A Stop hook (`.claude/hooks/parity-reminder.mjs`) sends Claude back once per
+  session when the work changed one client but not the other, or left the check
+  failing. Answering "no iOS counterpart" in one line is a valid response for
+  styling or platform plumbing.
+- Swift written here is uncompiled. Say so when handing off iOS changes.
 
 ## Things that will bite you
 
@@ -31,10 +65,13 @@ CI runs typecheck + test + build for all four packages on every PR.
 `accounts/src/jwt.ts` are intentional copies (separate npm projects, no shared
 package). Change one, change the other.
 
-**The entitlement map is mirrored three times**: `accounts/src/entitlements.ts`
-(authority), `server/src/entitlements.ts`, and `web/src/lib/entitlements.ts`
-(UI hints only). Adding a Feature means touching all three (plus the `Feature`
-union in `web/src/lib/types.ts`).
+**The entitlement map is mirrored four times**: `accounts/src/entitlements.ts`
+(authority), `server/src/entitlements.ts`, `web/src/lib/entitlements.ts` and
+`ios/Fitnofat/Sources/Services/EntitlementService.swift` (the last two are UI
+hints only). Adding a Feature means touching all four, plus the `Feature` union
+in `web/src/lib/types.ts`, the `Feature` enum in `Models/Types.swift` and the
+`switch` in `ProUpgradeView.swift`. `npm run parity` fails if the copies
+disagree, and this is the one gap `parity.json` can't excuse.
 
 **Plans are cached for 60s** in the data API (`resolvePlan`). A Stripe upgrade
 can take up to a minute to unlock a feature; that's deliberate, not a bug.

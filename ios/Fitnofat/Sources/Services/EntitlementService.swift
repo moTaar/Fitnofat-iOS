@@ -7,7 +7,7 @@ final class EntitlementService {
 
     private let planFeatures: [Plan: Set<Feature>] = [
         .free: [],
-        .pro: [.aiCoach, .aiNutrition, .programRefresh, .aiExercise],
+        .pro: [.aiCoach, .aiNutrition, .programRefresh, .aiExercise, .aiMedical],
     ]
 
     private let liveStatuses: Set<SubscriptionStatus> = [.active, .trialing, .pastDue]
