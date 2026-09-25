@@ -1,0 +1,70 @@
+name: iOS build
+
+# Compiles the iOS app (unsigned, for the simulator) so a change that breaks
+# the native project is caught without anyone opening Xcode. macOS runners are
+# billed at 10× Linux minutes on private repos, so this runs only when the web
+# app or the native project changes, not on every push.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "web/ios/**"
+      - "web/capacitor.config.ts"
+      - "web/package.json"
+      - "web/package-lock.json"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      # Capacitor 8 needs Xcode 26+.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Build the app bundle (iOS mode — no service worker)
+        run: npm run build:ios
+        env:
+          # Inlined at compile time; they only need to be present here.
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_ANON_KEY: ci-placeholder
+          VITE_API_URL: https://example.invalid
+          VITE_ACCOUNTS_URL: https://example.invalid
+
+      - name: Copy it into the native project
+        run: npx cap sync ios
+
+      - name: Compile for the simulator
+        run: |
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build

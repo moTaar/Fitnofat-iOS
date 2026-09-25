@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { isNative } from "./platform";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -96,8 +97,22 @@ export function goalLabel(goal: string): string {
   return GOAL_LABELS[goal] ?? goal;
 }
 
-/** Trigger a tiny haptic pulse where supported (Android/Chrome). */
+/**
+ * Trigger a haptic pulse. In the iOS app this is the Taptic Engine (Safari has
+ * no Vibration API at all); in a browser it's navigator.vibrate where supported.
+ * `ms` is the web vibration length, used on iOS to pick a strength.
+ */
 export function haptic(ms = 12) {
+  if (isNative()) {
+    void import("@capacitor/haptics")
+      .then(({ Haptics, ImpactStyle, NotificationType }) =>
+        ms >= 150
+          ? Haptics.notification({ type: NotificationType.Warning })
+          : Haptics.impact({ style: ms >= 40 ? ImpactStyle.Medium : ImpactStyle.Light })
+      )
+      .catch(() => {});
+    return;
+  }
   try {
     navigator.vibrate?.(ms);
   } catch {

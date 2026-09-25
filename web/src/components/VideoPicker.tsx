@@ -4,6 +4,8 @@ import type { ExerciseVideo } from "@/lib/types";
 import { api, type VideoUnavailable } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { Spinner } from "@/components/ui/misc";
+import { isNative } from "@/lib/platform";
+import { openExternal } from "@/lib/native";
 
 // The demo-video picker for "How to perform".
 //
@@ -142,18 +144,38 @@ export function VideoPicker({
   if (playing && current) {
     return (
       <div className="space-y-2">
-        <div className="overflow-hidden rounded-2xl border border-border bg-black">
-          <iframe
-            key={playing}
-            src={`https://www.youtube-nocookie.com/embed/${playing}?rel=0&modestbranding=1&playsinline=1`}
-            title={current.title}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowFullScreen
-            referrerPolicy="strict-origin-when-cross-origin"
-            loading="lazy"
-            className="aspect-video w-full border-0"
-          />
-        </div>
+        {isNative() ? (
+          // YouTube refuses to play embeds whose page has no web origin, and the
+          // iOS app's pages come from its own capacitor:// scheme. So in the app
+          // the pick shows as a poster that opens the video in a Safari sheet.
+          <button
+            onClick={() => void openExternal(`https://www.youtube.com/watch?v=${playing}`)}
+            className="relative block aspect-video w-full overflow-hidden rounded-2xl border border-border bg-black tap"
+          >
+            <img
+              src={current.thumbnail || PLACEHOLDER_BLUR}
+              alt=""
+              decoding="async"
+              className="h-full w-full object-cover opacity-90"
+            />
+            <span className="absolute inset-0 flex items-center justify-center bg-black/30">
+              <Play className="h-10 w-10 fill-white text-white drop-shadow" />
+            </span>
+          </button>
+        ) : (
+          <div className="overflow-hidden rounded-2xl border border-border bg-black">
+            <iframe
+              key={playing}
+              src={`https://www.youtube-nocookie.com/embed/${playing}?rel=0&modestbranding=1&playsinline=1`}
+              title={current.title}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+              referrerPolicy="strict-origin-when-cross-origin"
+              loading="lazy"
+              className="aspect-video w-full border-0"
+            />
+          </div>
+        )}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{current.title}</p>

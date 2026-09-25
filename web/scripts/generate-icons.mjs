@@ -2,7 +2,7 @@
 // Draws a dumbbell mark on a vertical orange gradient.
 import zlib from "node:zlib";
 import { writeFileSync, mkdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -14,7 +14,7 @@ function lerp(a, b, t) {
 }
 
 // Build RGBA pixel buffer for one icon.
-function render(size, { maskable }) {
+export function render(size, { maskable }) {
   const buf = Buffer.alloc(size * size * 4);
   const top = [249, 115, 22]; // #f97316
   const bot = [234, 88, 12]; // #ea580c
@@ -67,12 +67,24 @@ function render(size, { maskable }) {
   return buf;
 }
 
-// Minimal PNG encoder (truecolor + alpha, 8-bit).
-function encodePNG(size, rgba) {
-  const raw = Buffer.alloc((size * 4 + 1) * size);
+// Minimal PNG encoder (8-bit truecolor, with alpha unless `alpha` is false —
+// iOS app icons must be opaque).
+export function encodePNG(size, rgba, { alpha = true } = {}) {
+  const bpp = alpha ? 4 : 3;
+  const raw = Buffer.alloc((size * bpp + 1) * size);
   for (let y = 0; y < size; y++) {
-    raw[y * (size * 4 + 1)] = 0; // filter: none
-    rgba.copy(raw, y * (size * 4 + 1) + 1, y * size * 4, (y + 1) * size * 4);
+    const row = y * (size * bpp + 1);
+    raw[row] = 0; // filter: none
+    if (alpha) {
+      rgba.copy(raw, row + 1, y * size * 4, (y + 1) * size * 4);
+    } else {
+      for (let x = 0; x < size; x++) {
+        const i = (y * size + x) * 4;
+        raw[row + 1 + x * 3] = rgba[i];
+        raw[row + 2 + x * 3] = rgba[i + 1];
+        raw[row + 3 + x * 3] = rgba[i + 2];
+      }
+    }
   }
   const idat = zlib.deflateSync(raw, { level: 9 });
 
@@ -90,7 +102,7 @@ function encodePNG(size, rgba) {
   ihdr.writeUInt32BE(size, 0);
   ihdr.writeUInt32BE(size, 4);
   ihdr[8] = 8; // bit depth
-  ihdr[9] = 6; // color type RGBA
+  ihdr[9] = alpha ? 6 : 2; // color type RGBA / RGB
   ihdr[10] = 0;
   ihdr[11] = 0;
   ihdr[12] = 0;
@@ -108,8 +120,11 @@ const targets = [
   { file: "favicon-32.png", size: 32, maskable: false },
 ];
 
-for (const t of targets) {
-  const png = encodePNG(t.size, render(t.size, { maskable: t.maskable }));
-  writeFileSync(path.join(OUT, t.file), png);
-  console.log("wrote", t.file, png.length, "bytes");
+// Only when run directly — generate-ios-assets.mjs imports render/encodePNG.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  for (const t of targets) {
+    const png = encodePNG(t.size, render(t.size, { maskable: t.maskable }));
+    writeFileSync(path.join(OUT, t.file), png);
+    console.log("wrote", t.file, png.length, "bytes");
+  }
 }

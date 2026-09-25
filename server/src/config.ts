@@ -55,13 +55,21 @@ if (leftover.length) {
 // rather than duplicated in the object below.
 const COACH_MODEL = process.env.GEMINI_COACH_MODEL ?? "gemini-2.5-pro";
 
+/** Origins the Capacitor iOS shell sends (see web/capacitor.config.ts). */
+export const NATIVE_APP_ORIGINS = ["capacitor://localhost"];
+
 export const config = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   isProd: process.env.NODE_ENV === "production",
   port: parseInt(process.env.PORT ?? "8080", 10),
-  // Comma-separated list of allowed origins for CORS (the web app URL).
-  corsOrigins: (process.env.CORS_ORIGIN ?? "http://localhost:5173")
-    .split(",")
+  // Comma-separated list of allowed origins for CORS (the web app URL), plus
+  // the iOS app's own origin: Capacitor serves the app from capacitor://localhost,
+  // and its requests carry that as Origin. CORS isn't access control here —
+  // every route still needs a valid Supabase JWT.
+  corsOrigins: [
+    ...(process.env.CORS_ORIGIN ?? "http://localhost:5173").split(","),
+    ...NATIVE_APP_ORIGINS,
+  ]
     .map((s) => s.trim())
     .filter(Boolean),
   supabaseUrl: required("SUPABASE_URL"),

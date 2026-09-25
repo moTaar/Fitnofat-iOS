@@ -9,6 +9,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/misc";
 import { toast } from "@/lib/toast";
+import { openExternal } from "@/lib/native";
+import { isNative } from "@/lib/platform";
 
 const FEATURE_LABELS: Record<string, string> = {
   ai_coach: "AI Coach chat & program tweaks",
@@ -28,6 +30,16 @@ export function Billing() {
   const plan = effectivePlan(subscription);
   const isPro = plan === "pro";
 
+  // Re-read the subscription a few times after returning from Stripe: the
+  // webhook that flips the row usually lands within seconds, not instantly.
+  const refreshAfterStripe = async () => {
+    if (!isNative()) return;
+    for (const wait of [0, 3000, 8000]) {
+      await new Promise((r) => setTimeout(r, wait));
+      await loadSubscription();
+    }
+  };
+
   useEffect(() => {
     void loadSubscription();
     api
@@ -40,7 +52,12 @@ export function Billing() {
     setBusy("checkout");
     try {
       const { url } = await api.startCheckout("pro");
-      window.location.href = url;
+      // In the iOS app Checkout opens in a Safari sheet over the app; when it's
+      // closed, pick up the new plan (the Stripe webhook may land a moment later).
+      await openExternal(url, () => {
+        setBusy(null);
+        void refreshAfterStripe();
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not start checkout");
       setBusy(null);
@@ -51,7 +68,10 @@ export function Billing() {
     setBusy("portal");
     try {
       const { url } = await api.openBillingPortal();
-      window.location.href = url;
+      await openExternal(url, () => {
+        setBusy(null);
+        void refreshAfterStripe();
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not open billing portal");
       setBusy(null);

@@ -1,0 +1,121 @@
+name: iOS → TestFlight
+
+# Builds, signs and uploads the app to TestFlight from GitHub — the way to get
+# it onto an iPhone without owning a Mac. Run it by hand (Actions → iOS →
+# TestFlight → Run workflow). Needs a paid Apple Developer account; the one-time
+# setup is in IOS.md ("Option B").
+#
+# Repository VARIABLES (Settings → Secrets and variables → Actions → Variables):
+#   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_API_URL, VITE_ACCOUNTS_URL
+#   APP_BUNDLE_ID          optional, defaults to com.fitnofat.app
+# Repository SECRETS:
+#   APPLE_TEAM_ID          10-character team id (developer.apple.com → Membership)
+#   ASC_KEY_ID             App Store Connect API key id (role: Admin)
+#   ASC_ISSUER_ID          App Store Connect API issuer id
+#   ASC_KEY_P8_BASE64      the downloaded AuthKey_XXXX.p8, base64-encoded
+on:
+  workflow_dispatch:
+
+jobs:
+  testflight:
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: web
+    env:
+      BUNDLE_ID: ${{ vars.APP_BUNDLE_ID || 'com.fitnofat.app' }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        run: |
+          missing=""
+          for v in APPLE_TEAM_ID ASC_KEY_ID ASC_ISSUER_ID; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          [ -n "${{ secrets.ASC_KEY_P8_BASE64 }}" ] || missing="$missing ASC_KEY_P8_BASE64"
+          [ -n "${{ vars.VITE_SUPABASE_URL }}" ] || missing="$missing VITE_SUPABASE_URL(var)"
+          [ -n "${{ vars.VITE_SUPABASE_ANON_KEY }}" ] || missing="$missing VITE_SUPABASE_ANON_KEY(var)"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing:$missing — see IOS.md, Option B."
+            exit 1
+          fi
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Build the app bundle
+        run: npm run build:ios
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_ACCOUNTS_URL: ${{ vars.VITE_ACCOUNTS_URL }}
+
+      - run: npx cap sync ios
+
+      - name: Install the App Store Connect API key
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          echo "${{ secrets.ASC_KEY_P8_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8"
+
+      # Automatic signing with the API key: Xcode creates/fetches the
+      # certificate and provisioning profile itself, so no .p12 or profile has
+      # to be stored in the repo's secrets.
+      - name: Archive
+        run: |
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            archive
+
+      - name: Upload to TestFlight
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Remove the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"

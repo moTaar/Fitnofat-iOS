@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Download, Share, Plus, X } from "lucide-react";
 import { Button } from "./ui/button";
+import { isNative } from "@/lib/platform";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -10,6 +11,8 @@ interface BeforeInstallPromptEvent extends Event {
 const DISMISS_KEY = "forgefit-install-dismissed";
 
 function isStandalone() {
+  // Inside the iOS app there is nothing to install — it already is the app.
+  if (isNative()) return true;
   return (
     window.matchMedia("(display-mode: standalone)").matches ||
     // @ts-expect-error iOS Safari

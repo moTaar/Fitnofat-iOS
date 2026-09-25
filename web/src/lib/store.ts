@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { createJSONStorage, persist, type PersistStorage } from "zustand/middleware";
 import { format } from "date-fns";
 import type {
   ActiveWorkout, Cuisine, EquipmentPrefCategory, EquipmentPreference, Exercise,
@@ -11,6 +11,8 @@ import { SEED_EXERCISES } from "./exercises";
 import { sessionVolume, uid } from "./utils";
 import { estimateSessionCalories, needsAiMet, resolveKind } from "./calories";
 import { api, auth, AuthExpiredError, type HealthReviewResult, type Session } from "./api";
+import { capacitorFileBackend, createSplitStorage, lazyBackend, type SplitStorage } from "./deviceStorage";
+import { isNative } from "./platform";
 import { toast } from "./toast";
 
 // Cached METs keyed by exercise id/slug, for reusing known values in calorie
@@ -33,13 +35,19 @@ export interface ManualSessionDraft {
   notes?: string;
 }
 
-interface Settings {
+export interface Settings {
   theme: "dark" | "light";
   defaultRestSeconds: number;
   remindersEnabled: boolean;
   // Smart Rep Counter
   repSensitivity: RepSensitivity; // accelerometer detection sensitivity
   repSound: boolean; // audible "tick" cue on each logged rep
+  // Notifications (local, scheduled on the phone — see lib/notifications.ts).
+  // `remindersEnabled` above is the training-reminder switch.
+  reminderDays: number[] | null; // 0=Sun…6=Sat; null = derive from profile.daysPerWeek
+  reminderTime: string; // "HH:mm", local time
+  restTimerAlerts: boolean; // "rest over" alert when the app isn't on screen
+  healthCheckinReminder: boolean; // weekly, generic wording
 }
 
 interface AppState {
@@ -81,6 +89,13 @@ interface AppState {
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => void;
+  /**
+   * The session ended without the user asking (refresh token rejected, signed
+   * out elsewhere on this device). Unlike logout, keeps the training data —
+   * unsynced sessions exist nowhere else, and sync resumes when the same
+   * account signs back in. Health data is still dropped.
+   */
+  sessionLost: () => void;
   bootstrap: () => Promise<void>;
   loadOlderHistory: () => Promise<void>;
   // Escape hatch for the launch splash: proceed with whatever's cached instead
@@ -342,6 +357,56 @@ const resilientStorage = {
   },
 };
 
+/** Everything user-scoped, reset on sign-out or when another account signs in. */
+function signedOutState(): Partial<AppState> {
+  return {
+    user: null,
+    bootstrapped: false,
+    historyHasMore: false,
+    profile: null,
+    onboarded: false,
+    routines: [],
+    program: null,
+    nutritionPlan: null,
+    nutritionLog: null,
+    history: [],
+    active: null,
+    subscription: null,
+    exercises: SEED_EXERCISES,
+    hiddenExerciseIds: [],
+    // Medical data is never left behind on the device after a logout.
+    health: null,
+    healthIssues: [],
+    healthRecords: [],
+    healthRules: [],
+    medicalAi: null,
+    healthLoaded: false,
+  };
+}
+
+/**
+ * In the iOS app the store lives in files in the app sandbox (see
+ * deviceStorage.ts): no 5MB cap, not evictable like WKWebView localStorage, and
+ * split so a set logged mid-workout doesn't rewrite the whole history. The
+ * browser build keeps the quota-aware localStorage mirror above.
+ */
+type Persisted = Record<string, unknown>;
+const nativeStorage: SplitStorage<Persisted> | null = isNative()
+  ? createSplitStorage<Persisted>(lazyBackend(capacitorFileBackend), {
+      history: ["history"],
+      library: ["exercises", "routines", "program", "nutritionPlan"],
+      session: [
+        "active", "settings", "nutritionLog", "hiddenExerciseIds", "user", "profile",
+        "onboarded", "subscription", "historyHasMore",
+      ],
+    })
+  : null;
+
+/** Wait for pending on-device writes — called when the app is backgrounded. */
+export async function flushStorage(): Promise<void> {
+  await nativeStorage?.flush();
+}
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -375,35 +440,39 @@ export const useStore = create<AppState>()(
         remindersEnabled: false,
         repSensitivity: "medium",
         repSound: true,
+        reminderDays: null,
+        reminderTime: "18:00",
+        restTimerAlerts: true,
+        healthCheckinReminder: false,
       },
 
       // ── auth ────────────────────────────────────────────────────────────
       login: async (email, password) => {
         const s = await api.login(email, password);
+        // A different account on this device must not inherit the previous
+        // one's cached history (which now outlives the bootstrap window).
+        if (get().user && get().user!.id !== s.user.id) set(signedOutState());
         set({ user: s.user, bootstrapped: false });
         await get().bootstrap();
       },
       signup: async (email, password, name) => {
         const s = await api.signup(email, password, name);
+        if (get().user && get().user!.id !== s.user.id) set(signedOutState());
         set({ user: s.user, bootstrapped: false, onboarded: false });
         await get().bootstrap();
       },
       logout: () => {
-        api.logout();
+        // State first, then the session: auth.onChange (below) signs the store
+        // out when the session vanishes, and must find it already signed out.
+        set(signedOutState());
+        void api.logout();
+      },
+      sessionLost: () => {
+        // `user` is kept so the next sign-in can tell whether it's the same
+        // account (keep + sync the cache) or another one (wipe it first). The
+        // router shows the login screen because auth.isAuthenticated() is false.
         set({
-          user: null,
           bootstrapped: false,
-          profile: null,
-          onboarded: false,
-          routines: [],
-          program: null,
-          nutritionPlan: null,
-          nutritionLog: null,
-          history: [],
-          active: null,
-          subscription: null,
-          exercises: SEED_EXERCISES,
-          // Medical data is never left behind on the device after a logout.
           health: null,
           healthIssues: [],
           healthRecords: [],
@@ -458,6 +527,16 @@ export const useStore = create<AppState>()(
           const pendingLocal = get().history.filter(
             (w) => !w.synced && !serverClientIds.has(w.clientId ?? w.id)
           );
+          // The bootstrap window is authoritative only for the span it covers.
+          // Older sessions this device already holds stay here rather than being
+          // dropped and re-downloaded page by page — storage on the phone is
+          // cheap, round trips aren't.
+          const windowStart = data.history.windowStart;
+          const serverIds = new Set(data.workouts.map((w) => w.id));
+          const olderLocal = get().history.filter(
+            (w) => w.synced && w.startedAt < windowStart && !serverIds.has(w.id)
+          );
+          const heldSynced = data.workouts.length + olderLocal.length;
 
           set({
             bootstrapped: true,
@@ -490,15 +569,17 @@ export const useStore = create<AppState>()(
             nutritionPlan: data.nutritionPlan ?? get().nutritionPlan,
             routines: data.routines,
             exercises: [...SEED_EXERCISES, ...customs],
-            history: [...pendingLocal, ...data.workouts],
-            historyHasMore: data.history?.hasMore ?? false,
+            history: [...pendingLocal, ...data.workouts, ...olderLocal].sort(
+              (a, b) => b.startedAt - a.startedAt
+            ),
+            historyHasMore: data.history.total > heldSynced,
           });
 
           // If the user hasn't trained inside the bootstrap window, the recent
           // slice comes back empty even though they have history. Pull one page
           // immediately so the dashboard and analytics aren't blank for someone
           // returning after a long layoff.
-          if (data.workouts.length === 0 && data.history?.hasMore) {
+          if (data.workouts.length === 0 && olderLocal.length === 0 && data.history.hasMore) {
             void get().loadOlderHistory();
           }
 
@@ -507,7 +588,7 @@ export const useStore = create<AppState>()(
           // Pull billing tier/status from the accounts service (non-blocking).
           void get().loadSubscription();
         } catch (err) {
-          if (err instanceof AuthExpiredError) get().logout();
+          if (err instanceof AuthExpiredError) get().sessionLost();
           // Offline or transient error: keep the cached state, mark hydrated.
           set({ bootstrapped: true });
         } finally {
@@ -661,7 +742,8 @@ export const useStore = create<AppState>()(
             healthIssues: data.issues,
             healthRecords: data.records,
             healthRules: data.rules ?? [],
-            medicalAi: data.ai,
+            // Null when the data API couldn't be reached: keep whatever we knew.
+            medicalAi: data.ai ?? get().medicalAi,
             healthLoaded: true,
           });
         } catch (e) {
@@ -1311,7 +1393,9 @@ export const useStore = create<AppState>()(
     }),
     {
       name: "forgefit-store-v2",
-      storage: createJSONStorage(() => resilientStorage),
+      storage: nativeStorage
+        ? (nativeStorage as unknown as PersistStorage<unknown>)
+        : createJSONStorage(() => resilientStorage),
       // Explicit allowlist. Health/medical state is deliberately absent: it is
       // fetched per session instead of cached on the device (see the comment on
       // the health slice above).
@@ -1325,13 +1409,19 @@ export const useStore = create<AppState>()(
         nutritionPlan: s.nutritionPlan,
         nutritionLog: s.nutritionLog,
         history: s.history,
+        historyHasMore: s.historyHasMore,
         active: s.active,
         subscription: s.subscription,
         settings: s.settings,
         user: s.user,
       }),
-      onRehydrateStorage: () => (state) => {
-        if (state) state.hydrated = true;
+      // Through setState, not by mutating `state`: on iOS the saved state
+      // loads asynchronously, after the first render, so the splash screen has
+      // to be told. A failed read still lets the app start (on defaults, in
+      // memory — deviceStorage refuses to overwrite the files that session).
+      onRehydrateStorage: () => (_state, error) => {
+        if (error) console.error("[store] could not load saved state:", error);
+        queueMicrotask(() => useStore.setState({ hydrated: true }));
       },
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<AppState>;
@@ -1358,3 +1448,11 @@ export const useStore = create<AppState>()(
     }
   )
 );
+
+// The session can vanish underneath the app — a refresh token revoked, or
+// rejected after iOS suspended the app mid-refresh. Follow it, so the UI never
+// sits signed-in on a session every request would reject — but softly: an
+// explicit logout has already cleared the store before the session goes.
+auth.onChange((session) => {
+  if (!session && useStore.getState().user) useStore.getState().sessionLost();
+});
