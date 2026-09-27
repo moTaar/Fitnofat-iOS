@@ -14,7 +14,6 @@
     "server:dev": "npm run dev --workspace=server",
     "web:dev": "npm run dev --workspace=web",
     "server:build": "npm run build --workspace=server",
-    "web:build": "npm run build --workspace=web",
-    "parity": "node scripts/parity.mjs"
+    "web:build": "npm run build --workspace=web"
   }
 }

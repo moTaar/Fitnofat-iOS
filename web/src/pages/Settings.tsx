@@ -2,12 +2,18 @@ import { useEffect, useState } from "react";
 import {
   Moon, Sun, Timer, Bell, Trash2, Weight, User, LogOut, Mail, Sparkles,
   Activity, Volume2, Crown, ChevronRight, ChevronDown, KeyRound, UserX, Dumbbell,
+  CalendarClock, HeartPulse, BellRing,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "@/lib/store";
 import { useTheme } from "@/lib/hooks";
 import { effectivePlan } from "@/lib/entitlements";
-import { requestNotificationPermission, notificationsSupported } from "@/lib/notifications";
+import {
+  describeReminderDays, notificationPermission, notificationsSupported, requestNotificationPermission,
+  type PermissionState,
+} from "@/lib/notifications";
+import { effectiveReminderDays } from "@/lib/reminders";
+import { isNative } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import type { EquipmentPrefCategory } from "@/lib/types";
 import { Card, CardContent } from "@/components/ui/card";
@@ -58,16 +64,55 @@ export function SettingsPage() {
     if (!settings.remindersEnabled) {
       const perm = await requestNotificationPermission();
       setSetting("remindersEnabled", perm === "granted");
+      if (perm === "granted" && isNative()) {
+        toast.success(`Reminders on — ${describeReminderDays(reminderDays, settings.reminderTime)}.`);
+      }
     } else {
       setSetting("remindersEnabled", false);
     }
   };
 
-  const resetAll = () => {
+  // iOS asks once; after a "Don't Allow" only the Settings app can undo it,
+  // so say that instead of silently leaving a switch that won't stay on.
+  const [permission, setPermission] = useState<PermissionState>("prompt");
+  useEffect(() => {
+    void notificationPermission().then(setPermission);
+  }, [settings.remindersEnabled, settings.restTimerAlerts, settings.healthCheckinReminder]);
+
+  /** Turn a notification setting on, asking for permission first if needed. */
+  const enableNotification = async (
+    key: "restTimerAlerts" | "healthCheckinReminder",
+    on: boolean
+  ) => {
+    if (!on) {
+      setSetting(key, false);
+      return;
+    }
+    const perm = await requestNotificationPermission();
+    setSetting(key, perm === "granted");
+  };
+
+  const reminderDays = effectiveReminderDays(settings, profile);
+  const toggleDay = (day: number) => {
+    const next = reminderDays.includes(day)
+      ? reminderDays.filter((d) => d !== day)
+      : [...reminderDays, day];
+    // Never leave an empty set — that reads as "on, but never".
+    if (next.length) setSetting("reminderDays", next.sort((a, b) => a - b));
+  };
+
+  const resetAll = async () => {
     logout();
-    localStorage.removeItem("forgefit-store-v2");
-    localStorage.removeItem("forgefit-session-v1");
-    localStorage.removeItem("forgefit-install-dismissed");
+    // Wipes the on-device store — the files in the iOS app, localStorage on
+    // the web — not just the in-memory state.
+    await useStore.persist.clearStorage();
+    try {
+      localStorage.removeItem("forgefit-store-v2");
+      localStorage.removeItem("forgefit-session-v1");
+      localStorage.removeItem("forgefit-install-dismissed");
+    } catch {
+      /* storage unavailable */
+    }
     location.href = "/";
   };
 
@@ -151,12 +196,98 @@ export function SettingsPage() {
             />
           </div>
         </Row>
-        {notificationsSupported() && (
+        {notificationsSupported() && !isNative() && (
           <Row icon={<Bell className="h-5 w-5" />} label="Reminders" desc="Local workout nudges">
             <Toggle on={settings.remindersEnabled} onClick={toggleReminders} />
           </Row>
         )}
       </SettingGroup>
+
+      {/* Notifications — scheduled on the phone itself; nothing is sent from a server. */}
+      {isNative() && (
+        <SettingGroup title="Notifications">
+          {permission === "denied" && (
+            <p className="bg-amber-500/10 p-4 text-xs text-amber-600 dark:text-amber-400">
+              Notifications are turned off for Fitnofat. Turn them on in the iPhone&apos;s
+              Settings → Notifications → Fitnofat, then come back here.
+            </p>
+          )}
+          <Row
+            icon={<Bell className="h-5 w-5" />}
+            label="Training reminders"
+            desc={
+              settings.remindersEnabled
+                ? describeReminderDays(reminderDays, settings.reminderTime)
+                : "A nudge on your training days"
+            }
+          >
+            <Toggle on={settings.remindersEnabled} onClick={toggleReminders} />
+          </Row>
+          {settings.remindersEnabled && (
+            <div className="space-y-3 p-4">
+              <div className="flex items-center gap-3">
+                <div className="rounded-lg bg-secondary p-2 text-muted-foreground">
+                  <CalendarClock className="h-5 w-5" />
+                </div>
+                <div className="grid flex-1 grid-cols-7 gap-1">
+                  {["S", "M", "T", "W", "T", "F", "S"].map((letter, day) => (
+                    <button
+                      key={day}
+                      onClick={() => toggleDay(day)}
+                      aria-pressed={reminderDays.includes(day)}
+                      className={cn(
+                        "h-9 rounded-lg text-sm font-semibold transition-colors tap",
+                        reminderDays.includes(day)
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-secondary text-muted-foreground"
+                      )}
+                    >
+                      {letter}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-3 pl-12">
+                <Label htmlFor="reminder-time" className="text-sm text-muted-foreground">
+                  Remind me at
+                </Label>
+                <Input
+                  id="reminder-time"
+                  type="time"
+                  className="w-32"
+                  value={settings.reminderTime}
+                  onChange={(e) => e.target.value && setSetting("reminderTime", e.target.value)}
+                />
+              </div>
+              <p className="pl-12 text-xs text-muted-foreground">
+                Skipped automatically on days you&apos;ve already trained.
+              </p>
+            </div>
+          )}
+          <Row
+            icon={<BellRing className="h-5 w-5" />}
+            label="Rest timer alert"
+            desc="When rest ends and the app isn't open"
+          >
+            <Toggle
+              on={settings.restTimerAlerts}
+              onClick={() => void enableNotification("restTimerAlerts", !settings.restTimerAlerts)}
+            />
+          </Row>
+          <Row
+            icon={<HeartPulse className="h-5 w-5" />}
+            label="Weekly health check-in"
+            desc="Sundays — the wording never names a condition"
+          >
+            <Toggle
+              on={settings.healthCheckinReminder}
+              onClick={() =>
+                void enableNotification("healthCheckinReminder", !settings.healthCheckinReminder)
+              }
+            />
+          </Row>
+        </SettingGroup>
+      )}
 
       {/* Smart rep counter */}
       <SettingGroup title="Smart rep counter">

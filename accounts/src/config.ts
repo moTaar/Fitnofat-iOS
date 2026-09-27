@@ -14,13 +14,21 @@ function num(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+/** Origins the Capacitor iOS shell sends (see web/capacitor.config.ts). */
+export const NATIVE_APP_ORIGINS = ["capacitor://localhost"];
+
 export const config = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   isProd: process.env.NODE_ENV === "production",
   port: parseInt(process.env.PORT ?? "8090", 10),
-  // Comma-separated list of allowed origins for CORS (the web app URL).
-  corsOrigins: (process.env.CORS_ORIGIN ?? "http://localhost:5173")
-    .split(",")
+  // Comma-separated list of allowed origins for CORS (the web app URL), plus
+  // the iOS app's own origin: Capacitor serves the app from capacitor://localhost,
+  // and its requests carry that as Origin. CORS isn't access control here —
+  // every route still needs a valid Supabase JWT.
+  corsOrigins: [
+    ...(process.env.CORS_ORIGIN ?? "http://localhost:5173").split(","),
+    ...NATIVE_APP_ORIGINS,
+  ]
     .map((s) => s.trim())
     .filter(Boolean),
   // Public URL of the web app — Stripe Checkout/Portal redirect back here.

@@ -1,6 +1,12 @@
 # Render Blueprint — deploys the Fitnofat API (web service) and the PWA (static site).
 # In the Render dashboard: New → Blueprint, point it at this repo.
 # Fill in the Supabase + Gemini values (marked sync:false) per environment.
+#
+# The iOS app (web/ios, see IOS.md) reads and writes Supabase directly, so the
+# two web services only see AI, billing and account-admin calls from it — they
+# can stay on the free plan. The app's own origin (capacitor://localhost) is
+# always allowed by CORS; it doesn't need adding to CORS_ORIGIN. The two static
+# sites are optional for iPhone-only use (Render static sites are free anyway).
 
 services:
   # ── Backend API ─────────────────────────────────────────────────────────
@@ -128,6 +134,12 @@ services:
     buildCommand: npm install && npm run build
     staticPublishPath: dist
     envVars:
+      # Same Supabase project as the services. The browser signs in and reads
+      # the user's own rows directly (row-level security), like the iOS app.
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
       # Set to the deployed API URL, e.g. https://fitnofat-api.onrender.com
       - key: VITE_API_URL
         sync: false

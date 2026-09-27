@@ -1,8 +1,14 @@
-# Fitnofat — AI Workout, Nutrition & Coaching Tracker (PWA)
+# Fitnofat — AI Workout, Nutrition & Coaching Tracker (iPhone app + PWA)
 
 A minimalist, dark-mode-first, mobile-optimized training app with AI-driven
 program personalization, adaptive progression, an AI coach, macro-matched
 nutrition planning, and full offline-capable PWA support.
+
+> **This repository is the iPhone edition.** The same React app ships as a
+> native iOS app (Capacitor, in `web/ios/`) that talks to Supabase directly,
+> keeps your data on the phone, and adds local notifications — so the hosted
+> services are only needed for AI, billing and account admin.
+> **To install it on your iPhone, start with [IOS.md](IOS.md).**
 
 Four deployable pieces, with **Supabase Postgres** for data + auth, designed to
 deploy on **Render**.
@@ -28,13 +34,19 @@ deploy on **Render**.
 └────────────┘
 ```
 
-The browser **never** touches Supabase, Gemini or Stripe directly — the two
-services are the sole gateways and hold the service-role, Gemini and Stripe keys.
+The client (browser or iOS app) talks to **Supabase directly** for sign-in and
+for every read and write of the user's own rows — row-level security is the
+access control (see `supabase/migrations/native_client_access.sql`, guarded by
+`web/src/lib/rls.test.ts`). It **never** touches Gemini, YouTube or Stripe: the
+two services are the only holders of those keys and of the Supabase service
+role, so every AI call, the shared AI caches, the AI quota, sign-up, billing
+and account deletion still go through them.
 
 ## Repository layout
 | Path | What |
 | --- | --- |
-| `web/` | Vite + React + TS PWA (Tailwind, shadcn-style UI, Zustand, Recharts) |
+| `web/` | Vite + React + TS app (Tailwind, shadcn-style UI, Zustand, Recharts) — the PWA and the iOS app |
+| `web/ios/` | Capacitor iOS project (Xcode, Swift Package Manager) — see [IOS.md](IOS.md) |
 | `server/` | Express + TS data API (Supabase + Gemini, zod-validated) |
 | `accounts/` | Express + TS auth / account / Stripe-billing microservice |
 | `admin/` | Vite + React admin panel (talks to `accounts/`, gated on `ADMIN_API_KEY`) |
@@ -76,7 +88,7 @@ npm run dev              # http://localhost:8090
 ### 4. Frontend
 ```bash
 cd web
-cp .env.example .env     # VITE_API_URL, VITE_ACCOUNTS_URL
+cp .env.example .env     # VITE_SUPABASE_URL/ANON_KEY, VITE_API_URL, VITE_ACCOUNTS_URL
 npm install
 npm run dev              # http://localhost:5173
 ```
@@ -88,9 +100,13 @@ npm test --workspace=web
 ```
 
 ## Auth
-Email/password via **Supabase Auth**, handled by `accounts/`. The frontend stores
-the session and sends the access token as a `Bearer` header; both services verify
-it on every request and the client transparently refreshes once on a 401.
+Email/password via **Supabase Auth**. The client signs in with supabase-js
+directly and supabase-js owns the session (refresh included); on iOS it is kept
+in native Preferences. Sign-up still goes through `accounts/`, which creates the
+user pre-confirmed and seeds the profile, free subscription and Stripe customer
+with the service role. Calls to the services send the access token as a
+`Bearer` header; both services verify it on every request and the client
+refreshes once on a 401.
 
 Token verification is **local by default**: the services check the JWT signature
 in-process rather than calling Supabase on every request, which removes a network
@@ -107,8 +123,9 @@ The tradeoff: a token stays valid until it expires (1h by default) even if the
 session is revoked server-side. Refreshing still goes through Supabase.
 
 ## Key behaviors
-- **Backend is the only gateway** — all CRUD + AI flows go through the services,
-  which scope every query to the authenticated `user_id`.
+- **Supabase for data, services for secrets** — plain CRUD goes straight to
+  Postgres under owner-only RLS (no hosted hop); AI flows go through the
+  services, which scope every query to the authenticated `user_id`.
 - **AI program generation** (`POST /api/program/generate`) and **adaptive refresh**
   (`POST /api/program/refresh`) run server-side. Refresh compiles a per-exercise 1RM /
   consistency summary from history and asks Gemini to apply progressive overload and
@@ -139,6 +156,12 @@ session is revoked server-side. Refreshing still goes through Supabase.
   Workouts finished offline are queued with a `clientId` and **auto-synced** (idempotent
   upsert) when connectivity returns. When the cache exceeds the browser's storage
   quota, old *synced* history is shed first — unsynced sessions are never dropped.
+  In the iOS app the store lives in files in the app sandbox instead
+  (`web/src/lib/deviceStorage.ts`): no quota, split per slice so a logged set
+  doesn't rewrite the history, and older sessions stay on the phone once loaded.
+- **Local notifications (iOS)** — rest-over alerts, training-day reminders that
+  skip days you've trained, and a weekly health check-in with deliberately
+  generic wording. Scheduled on the device; no push service.
 - **Installable** — manifest (`standalone`/`portrait`), maskable icons, and a custom
   A2HS banner (Android `beforeinstallprompt` + guided iOS steps).
 - **Controlled updates** — the service worker runs in `prompt` mode: a new build
@@ -300,8 +323,9 @@ or dismissed are never reopened. "This looks resolved" comes back as a suggestio
 the user confirms with one tap. The rules live in `reconcileIssues`
 (`server/src/health/memory.ts`) and are covered by `server/src/health/medical.test.ts`.
 
-Health data is also the one thing the web client does **not** mirror to
-`localStorage` — it is fetched per session and dropped on logout.
+Health data is also the one thing the client does **not** persist on the
+device — not to `localStorage` on the web, not to the app's files on iOS. It is
+fetched per session (straight from Supabase) and dropped on logout.
 
 ## Environment reference
 Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
@@ -334,12 +358,13 @@ Beyond the obvious `SUPABASE_*`, `GEMINI_API_KEY` and `STRIPE_*` values:
 1. Push this repo to GitHub.
 2. Render → **New → Blueprint** → select the repo (`render.yaml` is detected).
 3. Fill the secrets marked `sync: false` on each service.
-4. Set `VITE_API_URL` and `VITE_ACCOUNTS_URL` on **fitnofat-web**.
+4. Set `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_API_URL` and `VITE_ACCOUNTS_URL` on **fitnofat-web** (only needed if you use the browser version too).
 5. Deploy. Update `CORS_ORIGIN` once the web URL is final, then redeploy.
 6. Point the Stripe webhook at `<accounts URL>/webhooks/stripe`.
 
 ## Tech stack
-**Frontend:** Vite, React, TypeScript, Tailwind, Lucide, Zustand, Recharts, vite-plugin-pwa.
+**Frontend:** Vite, React, TypeScript, Tailwind, Lucide, Zustand, Recharts, vite-plugin-pwa, supabase-js.
+**iOS:** Capacitor 8 (App, Filesystem, Preferences, Local Notifications, Haptics, Browser, Network, Status Bar, Splash Screen, Keyboard).
 **Backend:** Node, Express, TypeScript, @supabase/supabase-js, zod, helmet, express-rate-limit.
 **Data/Auth:** Supabase (Postgres + Auth). **AI:** Google Gemini. **Billing:** Stripe.
 **Tests:** Vitest (`server/`, `web/`), GitHub Actions CI across all four packages.

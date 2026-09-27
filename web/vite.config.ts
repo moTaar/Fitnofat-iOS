@@ -13,13 +13,22 @@ function buildVersion(): string {
   }
 }
 
-export default defineConfig({
+// `vite build --mode ios` produces the bundle the iOS app ships (see
+// capacitor.config.ts). It is the same app minus the service worker, which has
+// no job inside a native shell: assets are in the app bundle and updates
+// arrive as new builds. main.tsx never registers it there either.
+const IOS_MODE = "ios";
+
+export default defineConfig(({ mode }) => ({
   define: {
     __APP_VERSION__: JSON.stringify(buildVersion()),
   },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      ...(mode === IOS_MODE
+        ? { "virtual:pwa-register": path.resolve(__dirname, "./src/lib/pwaRegisterNoop.ts") }
+        : {}),
     },
   },
   build: {
@@ -32,6 +41,10 @@ export default defineConfig({
         manualChunks: {
           "vendor-react": ["react", "react-dom", "react-router-dom"],
           "vendor-charts": ["recharts"],
+          // Needed before first render (the session is restored from it), so it
+          // can't be lazy — but as its own chunk it caches independently of
+          // app code and keeps the entry chunk inside the size budget.
+          "vendor-supabase": ["@supabase/supabase-js"],
         },
       },
     },
@@ -41,6 +54,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    mode !== IOS_MODE &&
     VitePWA({
       // "prompt", not "autoUpdate": a new worker installs and then waits,
       // instead of claiming the open tab and deleting the hashed chunks that
@@ -131,4 +145,4 @@ export default defineConfig({
       },
     }),
   ],
-});
+}));

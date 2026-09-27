@@ -170,6 +170,25 @@ const requireHealthConsent = asyncHandler(async (req, _res, next) => {
   next();
 });
 
+// ── GET /ai : which model backs the medical desk ─────────────────────────────
+// The iOS app reads the health record straight from Supabase (owner RLS), so
+// the one part of /overview only this server knows — which model would answer —
+// is served on its own. No database access: the client adds `consented` from
+// the health profile it already holds. The consent gate itself stays on the
+// AI routes below.
+healthRouter.get(
+  "/ai",
+  asyncHandler(async (_req, res) => {
+    const provider = activeProvider();
+    res.json({
+      available: provider !== "none",
+      model: modelLabel(provider),
+      provider,
+      disclaimer: MEDICAL_DISCLAIMER,
+    });
+  })
+);
+
 // ── GET /overview : everything the Medical dashboard renders ─────────────────
 healthRouter.get(
   "/overview",

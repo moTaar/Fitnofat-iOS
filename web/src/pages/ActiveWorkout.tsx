@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Check, Plus, X, Timer, MoreVertical, Trash2, Flag, ChevronLeft, Info, Activity,
@@ -59,11 +59,23 @@ export function ActiveWorkout() {
 
   const prev = usePrevious(history);
   const now = useNow(!!active, 1000);
+  // Running calorie estimate over completed sets only (mirrors how finishWorkout saves).
+  const metMap = useMemo(() => {
+    const m: Record<string, number | undefined> = {};
+    for (const e of exercises) if (e.met != null) m[e.id] = e.met;
+    return m;
+  }, [exercises]);
 
-  if (!active) {
-    navigate("/", { replace: true });
-    return null;
-  }
+  // Every hook above this line: finishing a workout clears `active` while this
+  // screen is still mounted, and an early return ahead of a hook changes the
+  // hook count between renders ("Rendered fewer hooks than expected"). The
+  // redirect is an effect for the same reason — navigating during render is a
+  // state update in another component.
+  useEffect(() => {
+    if (!active) navigate("/", { replace: true });
+  }, [active, navigate]);
+
+  if (!active) return null;
 
   const elapsed = Math.floor((now - active.startedAt) / 1000);
   const completedSets = active.exercises.reduce(
@@ -71,12 +83,6 @@ export function ActiveWorkout() {
     0
   );
   const volume = sessionVolume(active.exercises);
-  // Running calorie estimate over completed sets only (mirrors how finishWorkout saves).
-  const metMap = useMemo(() => {
-    const m: Record<string, number | undefined> = {};
-    for (const e of exercises) if (e.met != null) m[e.id] = e.met;
-    return m;
-  }, [exercises]);
   const calories = estimateSessionCalories(
     active.exercises.map((ex) => ({ ...ex, sets: ex.sets.filter((s) => s.completed) })),
     bodyweightKg ?? undefined,

@@ -8,7 +8,7 @@ import { useStore } from "@/lib/store";
 import { weekStats, currentStreak } from "@/lib/analytics";
 import { formatVolume, formatCalories, cn } from "@/lib/utils";
 import {
-  requestNotificationPermission, scheduleReminder, notificationsSupported,
+  requestNotificationPermission, scheduleReminder, notificationsSupported, describeReminderDays,
 } from "@/lib/notifications";
 import type { Routine } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge, Progress, Spinner } from "@/components/ui/misc";
 import { Modal } from "@/components/ui/modal";
 import { toast } from "@/lib/toast";
+import { isNative } from "@/lib/platform";
+import { effectiveReminderDays } from "@/lib/reminders";
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -70,7 +72,18 @@ export function Dashboard() {
     const perm = await requestNotificationPermission();
     if (perm === "granted") {
       setSetting("remindersEnabled", true);
-      // Demo: schedule a nudge in ~5s so the user sees it works, plus a daily-style cue.
+      if (isNative()) {
+        // The real schedule is planned by NativeBridge from Settings → Notifications.
+        const s = useStore.getState();
+        toast.success(
+          `Reminders on — ${describeReminderDays(
+            effectiveReminderDays(s.settings, s.profile),
+            s.settings.reminderTime
+          )}. Change it in Settings.`
+        );
+        return;
+      }
+      // Browser demo: schedule a nudge in ~5s so the user sees it works.
       scheduleReminder(
         "next-workout",
         5000,
