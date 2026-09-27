@@ -76,6 +76,11 @@ shows how to upload builds without one.)
    first), or the installer from nodejs.org.
 5. Git: comes with the command-line tools.
 
+Mac too old for macOS 15 (for example a 2015 MacBook Air, which stops at
+Monterey and Xcode 14)? You can still run the app on your iPhone and in that
+Mac's Simulator: see [IOS.md → Option C](../IOS.md#option-c--an-older-mac-or-windows-free).
+Uploading to the App Store then goes through Stage 8B, which needs no Mac.
+
 ## Stage 3 — Build the app bundle
 
 ```bash

@@ -125,13 +125,21 @@ security allows a signed-in user to do to their own rows. **Never** put the
 
 Publishing on the App Store as well? Follow [wiki/iOS-App-Store-Guide.md](wiki/iOS-App-Store-Guide.md) end to end.
 
-Apple only lets apps onto an iPhone through Xcode (which needs a Mac) or
-TestFlight/the App Store (which needs a paid developer account). Pick one:
+Pick one:
+
+| | You need | Signing |
+| --- | --- | --- |
+| **A** — build on your Mac | a Mac that runs **Xcode 26** (macOS Sequoia or newer) | free Apple ID |
+| **B** — TestFlight | nothing local | paid developer account |
+| **C** — build on GitHub, sideload | an **older Mac** (e.g. Xcode 14 on Monterey) **or a Windows PC** | free Apple ID |
 
 ### Option A — with a Mac (free)
 
 You need a Mac with **Xcode 26 or newer** (free, Mac App Store) and
-**Node.js 22** (`brew install node@22` or nodejs.org).
+**Node.js 22** (`brew install node@22` or nodejs.org). Xcode 26 needs macOS
+Sequoia; if your Mac can't run it (a 2015 MacBook Air stops at Monterey and
+Xcode 14), use Option C — this project can't be built with an older Xcode,
+because Capacitor 8 needs Xcode 26.
 
 ```bash
 git clone <this repo>
@@ -193,6 +201,52 @@ Each time you want a new build: **Actions → iOS → TestFlight → Run workflo
 After ~15 minutes (plus Apple's processing) it appears in the **TestFlight**
 app on your iPhone. TestFlight builds last 90 days.
 
+### Option C — an older Mac, or Windows (free)
+
+GitHub's Macs build the app (they have Xcode 26); you install the result with
+[Sideloadly](https://sideloadly.io), which signs it with a free Apple ID.
+Sideloadly runs on macOS 10.12+ and Windows, so a Mac that's stuck on Xcode 14
+is fine — it never builds anything.
+
+One-time:
+
+1. In this GitHub repo → **Settings → Secrets and variables → Actions →
+   Variables**, add `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`,
+   `VITE_API_URL` and `VITE_ACCOUNTS_URL` (the values from step 3 above; the
+   TestFlight workflow reads the same ones). No secrets are needed.
+2. Install Sideloadly on the Mac or PC.
+
+Each time you want a new build:
+
+1. **Actions → iOS → sideload build → Run workflow**. It takes ~15 minutes.
+2. At the bottom of the finished run, under **Artifacts**, download
+   **Fitnofat-iphone** and unzip it to get `Fitnofat.ipa`.
+3. Plug in the iPhone (tap **Trust** on the phone), open Sideloadly, drag
+   `Fitnofat.ipa` onto it, enter your Apple ID and press **Start**.
+4. First time only, on the iPhone: turn on **Developer Mode** and **Trust**
+   your Apple ID, exactly as in Option A.
+
+Good to know:
+
+- Sideloadly signs in to Apple with your Apple ID to get the free signing
+  certificate. It's a third-party tool, so using a secondary Apple ID for it is
+  a reasonable precaution.
+- If it reports that the bundle identifier isn't available, set a unique one
+  in Sideloadly's advanced options, e.g. `com.yourname.fitnofat`.
+- The same 7-day limit as any free signing applies: sideload the same file
+  again and your data is kept. Sideloadly can also refresh it over Wi-Fi while
+  the computer is on.
+- On a private repo, macOS build minutes count 10× against GitHub's free
+  allowance — which is why this workflow only runs when you start it.
+
+**Trying it in the Simulator.** Each run also uploads **Fitnofat-simulator**,
+which runs in Xcode 14's Simulator even though Xcode 14 can't build the
+project. Unzip it, then unzip the `Fitnofat-simulator.zip` inside to get
+`App.app`. Open **Xcode → Open Developer Tool → Simulator**, wait for the
+phone to boot, and drag `App.app` onto its window. (Terminal alternative:
+`xcrun simctl install booted App.app`.) The app's minimum is iOS 15, so Xcode
+14's iOS 16 simulators can run it.
+
 ---
 
 ## Updating the app
@@ -204,7 +258,8 @@ cd web
 npm run ios:sync     # rebuild + copy into Xcode
 ```
 
-then **Run** again in Xcode (Option A) or re-run the workflow (Option B). The
+then **Run** again in Xcode (Option A), or re-run the workflow (Option B; for
+Option C, re-run it and sideload the new `.ipa` — no `ios:sync` needed). The
 app has no service worker and no "new version" banner — updates arrive as new
 builds.
 
@@ -248,4 +303,8 @@ turn it back on in the iPhone's **Settings → Notifications → Fitnofat**.
 | Password-reset email opens a web page instead of the app | Add `fitnofat://reset-password` to Supabase's Redirect URLs. |
 | Xcode: "No such module 'Capacitor'" / package errors | Run `npm ci` at the repo root, then `npm run ios:sync` in `web/`, then **File → Packages → Reset Package Caches**. |
 | Xcode: "Failed to register bundle identifier" | Choose a unique bundle ID (step 3 of Option A). |
-| App won't open after a week | Free Apple ID signing expired — Run from Xcode again. |
+| App won't open after a week | Free Apple ID signing expired — Run from Xcode again (Option A) or sideload the `.ipa` again (Option C). |
+| Xcode 14/15: "cannot be opened because the project file format is too new", or package errors | This project needs Xcode 26. On an older Mac, use Option C. |
+| Sideload build fails at "Check configuration" | The repository variables from Option C step 1 are missing. |
+| Sideload run has no **Fitnofat-simulator** artifact | The Simulator step is best-effort; the iPhone build is unaffected. Its log in the run says why. |
+| Simulator: the app icon appears but won't open | Make sure you dragged `App.app` (from the inner zip), not a zip file. |

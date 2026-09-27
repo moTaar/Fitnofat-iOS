@@ -1,0 +1,123 @@
+name: iOS → sideload build
+
+# Builds the app on GitHub's Macs for anyone who can't build it locally: a Mac
+# stuck on an older macOS (Capacitor 8 needs Xcode 26, which needs macOS
+# Sequoia — a 2015 MacBook Air stops at Monterey and Xcode 14), or no Mac at
+# all. No Apple account or secrets are involved; each run produces two
+# downloads:
+#
+#   Fitnofat-iphone      an unsigned .ipa. Sideloadly (macOS 10.12+ or
+#                        Windows) signs it with a free Apple ID and installs
+#                        it on the iPhone. IOS.md, "Option C".
+#   Fitnofat-simulator   the app for the iOS Simulator, Intel and Apple
+#                        Silicon; drag App.app onto a running Simulator,
+#                        Xcode 14 or newer.
+#
+# Both are zipped before upload because artifact uploads drop the executable
+# bit, and an .app without it won't launch.
+#
+# Manual only (Actions → "iOS → sideload build" → Run workflow): macOS runners
+# cost 10× Linux minutes on private repos. Uses the same repository variables
+# as the TestFlight workflow: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY,
+# VITE_API_URL, VITE_ACCOUNTS_URL.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        run: |
+          missing=""
+          [ -n "${{ vars.VITE_SUPABASE_URL }}" ] || missing="$missing VITE_SUPABASE_URL"
+          [ -n "${{ vars.VITE_SUPABASE_ANON_KEY }}" ] || missing="$missing VITE_SUPABASE_ANON_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository variables:$missing — see IOS.md, Option C."
+            exit 1
+          fi
+          for v in VITE_API_URL VITE_ACCOUNTS_URL; do
+            [ -n "${!v}" ] || echo "::warning::$v is not set — AI features and sign-up/billing won't reach a server."
+          done
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_ACCOUNTS_URL: ${{ vars.VITE_ACCOUNTS_URL }}
+
+      # Capacitor 8 needs Xcode 26+.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Build the app bundle
+        run: npm run build:ios
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_ACCOUNTS_URL: ${{ vars.VITE_ACCOUNTS_URL }}
+
+      - run: npx cap sync ios
+
+      # Unsigned: Sideloadly signs it with whatever Apple ID the user gives it,
+      # so nothing here needs to know about a team or a certificate.
+      - name: Build for iPhone
+        run: |
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/device" \
+            CODE_SIGNING_ALLOWED=NO \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            build
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$RUNNER_TEMP/device/Build/Products/Release-iphoneos/App.app" "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa"
+          zip -qry "$RUNNER_TEMP/Fitnofat.ipa" Payload
+
+      # Both architectures, so it runs in the Simulator on an Intel Mac too.
+      # Best effort: if a prebuilt dependency ever drops its Intel slice, the
+      # iPhone build above still gets uploaded.
+      - name: Build for the Simulator
+        continue-on-error: true
+        run: |
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/sim" \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+          cd "$RUNNER_TEMP/sim/Build/Products/Release-iphonesimulator"
+          zip -qry "$RUNNER_TEMP/Fitnofat-simulator.zip" App.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fitnofat-iphone
+          path: ${{ runner.temp }}/Fitnofat.ipa
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fitnofat-simulator
+          path: ${{ runner.temp }}/Fitnofat-simulator.zip
+          if-no-files-found: warn
+          retention-days: 14
