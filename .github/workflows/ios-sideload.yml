@@ -31,7 +31,7 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check configuration
         run: |
@@ -54,7 +54,7 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -109,13 +109,13 @@ jobs:
           cd "$RUNNER_TEMP/sim/Build/Products/Release-iphonesimulator"
           zip -qry "$RUNNER_TEMP/Fitnofat-simulator.zip" App.app
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: Fitnofat-iphone
           path: ${{ runner.temp }}/Fitnofat.ipa
           retention-days: 14
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: Fitnofat-simulator
           path: ${{ runner.temp }}/Fitnofat-simulator.zip
