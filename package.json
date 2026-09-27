@@ -15,5 +15,8 @@
     "web:dev": "npm run dev --workspace=web",
     "server:build": "npm run build --workspace=server",
     "web:build": "npm run build --workspace=web"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.2"
   }
 }
