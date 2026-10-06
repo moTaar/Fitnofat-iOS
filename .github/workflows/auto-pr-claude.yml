@@ -5,32 +5,39 @@ on:
     branches:
       - claude-*  # Triggers when Claude pushes to any "claude-*" branch
 
+permissions:
+  contents: read
+
 jobs:
   create-pr:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
+      # The GitHub CLI that ships on the runner, rather than a third-party
+      # action: repo-sync/pull-request-action, used before, no longer exists.
       - name: Create Pull Request
-        uses: repo-sync/pull-request-action@v2
-        with:
-          source_branch: ${{ github.ref_name }}
-          destination_branch: master
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          pr_title: "Review: Changes from Claude (${{ github.ref_name }})"
-          pr_body: |
-            ## Claude-Generated Changes
-            
-            **Branch:** ${{ github.ref_name }}
-            
-            Please review the changes below before merging to master.
-            
-            ✅ Approve this PR to merge to master
-            ❌ Request changes if needed
-          pr_reviewer: ${{ github.actor }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          if [ -n "$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            echo "A pull request for $BRANCH is already open."
+            exit 0
+          fi
+          gh pr create --repo "$GITHUB_REPOSITORY" \
+            --head "$BRANCH" --base main \
+            --title "Review: Changes from Claude ($BRANCH)" \
+            --reviewer "$ACTOR" \
+            --body "## Claude-Generated Changes
+
+          **Branch:** $BRANCH
+
+          Please review the changes below before merging to main.
+
+          ✅ Approve this PR to merge to main
+          ❌ Request changes if needed"
