@@ -1,0 +1,45 @@
+# Keeps dependencies, and the pinned versions of the actions that check them,
+# current. Minor and patch updates arrive as one grouped pull request a week
+# per package; majors come one at a time, since those are the ones that need
+# reading. Security updates are not batched: Dependabot opens them as soon as
+# they exist.
+
+version: 2
+updates:
+  - package-ecosystem: npm
+    # The root (npm workspaces for server/ and web/, local development) and
+    # each package's own lockfile, which is what Render and CI install.
+    directories: ["/", "/server", "/web", "/accounts", "/admin"]
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    # Nothing under a week old, which is when most malicious releases are
+    # caught and pulled.
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Tailwind 4 needs Safari 16.4+ (cascade layers, @property, color-mix);
+      # the iOS app supports iOS 15. The build would pass and the app would
+      # render unstyled on older iPhones, so this major is a decision, not a
+      # weekly pull request.
+      - dependency-name: tailwindcss
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci

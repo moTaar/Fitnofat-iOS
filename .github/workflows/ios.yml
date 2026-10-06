@@ -23,6 +23,11 @@ concurrency:
   group: ios-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only token: the job only reads the code. Artifact uploads and App
+# Store Connect use their own credentials, not this token.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: macos-15
@@ -31,14 +36,16 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       # Capacitor 8 needs Xcode 26+.
-      - uses: maxim-lobanov/setup-xcode@v1
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: latest-stable
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: "22"
           cache: npm
