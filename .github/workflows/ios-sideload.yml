@@ -36,7 +36,7 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -61,7 +61,7 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: npm
@@ -116,13 +116,13 @@ jobs:
           cd "$RUNNER_TEMP/sim/Build/Products/Release-iphonesimulator"
           zip -qry "$RUNNER_TEMP/Fitnofat-simulator.zip" App.app
 
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Fitnofat-iphone
           path: ${{ runner.temp }}/Fitnofat.ipa
           retention-days: 14
 
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Fitnofat-simulator
           path: ${{ runner.temp }}/Fitnofat-simulator.zip
