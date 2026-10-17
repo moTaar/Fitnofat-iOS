@@ -17,7 +17,7 @@
     "web:build": "npm run build --workspace=web"
   },
   "devDependencies": {
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.3"
   },
   "overrides": {
     "compression": "^1.8.2"
